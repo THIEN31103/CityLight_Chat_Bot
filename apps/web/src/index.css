@@ -1,0 +1,88 @@
+@import 'maplibre-gl/dist/maplibre-gl.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 244 246 250;
+  --panel: 255 255 255;
+  --muted: 238 241 246;
+  --border: 222 227 235;
+  --fg: 17 24 39;
+  --subtle: 100 112 132;
+  --primary: 37 99 235;
+  --st-offline: 220 38 38;
+  --st-fault: 234 88 12;
+  --st-dimming: 217 119 6;
+  --st-on: 22 163 74;
+  --st-off: 113 122 138;
+  --st-unknown: 147 51 234;
+  color-scheme: light;
+}
+
+.dark {
+  --bg: 11 15 23;
+  --panel: 19 25 36;
+  --muted: 29 37 51;
+  --border: 41 51 68;
+  --fg: 229 234 242;
+  --subtle: 145 156 176;
+  --primary: 96 150 250;
+  --st-offline: 248 90 90;
+  --st-fault: 251 146 60;
+  --st-dimming: 251 191 36;
+  --st-on: 74 222 128;
+  --st-off: 140 150 168;
+  --st-unknown: 192 132 252;
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg text-fg antialiased;
+  font-size: 14px;
+}
+
+* {
+  @apply border-border;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  @apply rounded bg-border;
+}
+
+.maplibregl-popup-content {
+  @apply rounded-md bg-panel text-fg shadow-lg;
+  padding: 8px 10px;
+}
+.maplibregl-popup-tip {
+  display: none;
+}
+.maplibregl-ctrl-group {
+  @apply bg-panel;
+}
+
+/* Energised conductors in the cabinet diagram */
+.diagram-flow {
+  stroke-dasharray: 10 7;
+  animation: diagram-flow 1.1s linear infinite;
+}
+@keyframes diagram-flow {
+  to {
+    stroke-dashoffset: -17;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .diagram-flow {
+    animation: none;
+  }
+}
