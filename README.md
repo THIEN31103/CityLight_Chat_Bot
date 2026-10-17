@@ -26,19 +26,19 @@ npm run dev:web
 
 Mở http://localhost:5173. Mặc định chạy **mock API** (handler MSW gọi trực tiếp trong trang qua `getResponse`, không dùng Service Worker vì trình duyệt tắt SW sau ~30 s idle làm app ngừng tải), không cần backend. Khi có API thật: `VITE_USE_MOCK=false npm run dev:web` (Vite proxy `/api` → `localhost:3000`).
 
-### Deploy bản demo (Cloudflare Pages)
+### Deploy bản demo (Cloudflare Workers – static assets)
 
-Repo GitHub private `dgbao2704/server_citylight` nối với Cloudflare Pages: mỗi lần push `main` → tự build + deploy lên `https://<project>.pages.dev`.
+Repo GitHub private `dgbao2704/server_citylight` nối với Cloudflare (Workers Builds, project `citylight-demo`): mỗi lần push `main` → tự build + `npx wrangler deploy` theo `wrangler.jsonc` (thư mục `apps/web/dist`, SPA fallback). Link dạng `https://citylight-demo.<subdomain>.workers.dev`.
 
 | Thiết lập Cloudflare | Giá trị |
 |---|---|
 | Framework preset | None |
 | Build command | `npm run build:web` |
-| Build output directory | `apps/web/dist` |
+| Deploy command | `npx wrangler deploy` (đọc `wrangler.jsonc`) |
 | Root directory | (để trống) |
 | Node | `.nvmrc` = 22 |
 
-- Chạy ở domain gốc nên không cần `VITE_BASE`. SPA: Cloudflare tự trả `index.html` cho đường dẫn sâu (không có `404.html`).
+- Chạy ở domain gốc nên không cần `VITE_BASE`. SPA fallback: `not_found_handling` trong `wrangler.jsonc`. Tên Worker trong `wrangler.jsonc` phải trùng tên project trên dashboard.
 - Header bảo mật/cache: `apps/web/public/_headers`.
 - Giới hạn người xem: Cloudflare Zero Trust → Access (chỉ email được mời).
 - Đây chỉ là bản giao diện + dữ liệu giả. Hệ thống thật (broker, API, DB) deploy lên VPS ở M11.
