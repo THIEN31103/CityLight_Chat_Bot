@@ -25,6 +25,14 @@ npm run dev:web
 
 Mở http://localhost:5173. Mặc định chạy **mock API** (handler MSW gọi trực tiếp trong trang qua `getResponse`, không dùng Service Worker vì trình duyệt tắt SW sau ~30 s idle làm app ngừng tải), không cần backend. Khi có API thật: `VITE_USE_MOCK=false npm run dev:web` (Vite proxy `/api` → `localhost:3000`).
 
+### Deploy bản demo (GitLab Pages)
+
+Mỗi lần push nhánh `server` lên GitLab, job `pages` trong `.gitlab-ci.yml` build web (mock, không backend) và publish. URL xem ở **Deploy → Pages** của project (thường `https://<namespace>.gitlab.io/city_light_v2/`, hoặc domain riêng nếu bật "unique domain"). Base path tự lấy từ `CI_PAGES_URL`.
+
+- Ai có link đều xem được nếu project public. Muốn giới hạn: **Settings → General → Visibility → Pages** = "Only project members".
+- Build thử local giống CI (Git Bash cần tắt đổi đường dẫn): `MSYS_NO_PATHCONV=1 VITE_BASE=/city_light_v2/ npm run build:web`.
+- Đây chỉ là bản giao diện + dữ liệu giả. Hệ thống thật (broker, API, DB) deploy lên VPS ở M11.
+
 ### Tài khoản mẫu (chỉ trong mock, `apps/web/src/mocks/seed.ts`)
 
 Mật khẩu chung: `demo`. Tài khoản có 2FA nhập mã `123456`.

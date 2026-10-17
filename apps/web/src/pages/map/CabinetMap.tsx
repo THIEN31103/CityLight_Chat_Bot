@@ -6,6 +6,11 @@ import { api, type PoleAsset } from '@/lib/api';
 import { useUi } from '@/stores/session';
 import { FONT_BOLD, FONT_REGULAR, resolveBasemap, type BasemapId } from './mapStyle';
 import { addMapIcons } from './mapIcons';
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
+
+// Ship the (self-contained) MapLibre worker as a build asset; its default import.meta.url lookup
+// is not followed by the bundler, so production builds would otherwise have no worker file.
+maplibregl.setWorkerUrl(workerUrl);
 
 export interface MapLayers {
   cabinets: boolean;

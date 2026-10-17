@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
+  // Sub-path hosting (GitLab Pages serves the site under /<project>/): CI passes VITE_BASE. Local dev = '/'.
+  base: process.env.VITE_BASE || '/',
   plugins: [react()],
   resolve: {
     alias: {

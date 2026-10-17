@@ -50,4 +50,7 @@ export const router = createBrowserRouter([
       { path: '*', element: <NotFoundPage /> },
     ],
   },
-]);
+], {
+  // Matches Vite `base` so routes work when the app is served under a sub-path (GitLab Pages).
+  basename: import.meta.env.BASE_URL.replace(/\/$/, '') || '/',
+});
