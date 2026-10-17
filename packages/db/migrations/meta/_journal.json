@@ -29,6 +29,13 @@
       "when": 1792246678756,
       "tag": "0003_routes_linestring",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792252447812,
+      "tag": "0004_auth_2fa_scope",
+      "breakpoints": true
     }
   ]
 }

@@ -361,11 +361,11 @@ for (const c of cabinets) {
 // ---------- Users ----------
 
 export const users: User[] = [
-  { id: 'u1', email: 'admin@citylight.local', fullName: 'Quản trị hệ thống', role: 'admin', scopeAreaIds: [], totpEnabled: true, active: true, lastLoginAt: iso(now - 3600000) },
-  { id: 'u2', email: 'dieuhanh@citylight.local', fullName: 'Nguyễn Văn Điều', role: 'operator', scopeAreaIds: [], totpEnabled: true, active: true, lastLoginAt: iso(now - 7200000) },
-  { id: 'u3', email: 'giamsat@citylight.local', fullName: 'Trần Thị Giám', role: 'viewer', scopeAreaIds: ['d1', 'd2'], totpEnabled: false, active: true, lastLoginAt: iso(now - 86400000) },
-  { id: 'u4', email: 'duytu@citylight.local', fullName: 'Lê Văn Tu', role: 'maintenance', scopeAreaIds: ['d12'], totpEnabled: false, active: true, lastLoginAt: null },
-  { id: 'u5', email: 'dieuhanh2@citylight.local', fullName: 'Phạm Minh Hành', role: 'operator', scopeAreaIds: ['d5', 'd6'], totpEnabled: false, active: false, lastLoginAt: iso(now - 40 * 86400000) },
+  { id: 'u1', email: 'admin@citylight.local', fullName: 'Quản trị hệ thống', role: 'admin', scopeAll: true, totpRequired: true, passwordChangeRequired: false, scopeAreaIds: [], totpEnabled: true, active: true, lastLoginAt: iso(now - 3600000) },
+  { id: 'u2', email: 'dieuhanh@citylight.local', fullName: 'Nguyễn Văn Điều', role: 'operator', scopeAll: true, totpRequired: true, passwordChangeRequired: false, scopeAreaIds: [], totpEnabled: true, active: true, lastLoginAt: iso(now - 7200000) },
+  { id: 'u3', email: 'giamsat@citylight.local', fullName: 'Trần Thị Giám', role: 'viewer', scopeAll: false, totpRequired: false, passwordChangeRequired: false, scopeAreaIds: ['d1', 'd2'], totpEnabled: false, active: true, lastLoginAt: iso(now - 86400000) },
+  { id: 'u4', email: 'duytu@citylight.local', fullName: 'Lê Văn Tu', role: 'maintenance', scopeAll: false, totpRequired: false, passwordChangeRequired: false, scopeAreaIds: ['d12'], totpEnabled: false, active: true, lastLoginAt: null },
+  { id: 'u5', email: 'dieuhanh2@citylight.local', fullName: 'Phạm Minh Hành', role: 'operator', scopeAll: false, totpRequired: true, passwordChangeRequired: false, scopeAreaIds: ['d5', 'd6'], totpEnabled: false, active: false, lastLoginAt: iso(now - 40 * 86400000) },
 ];
 
 // ---------- Incidents ----------

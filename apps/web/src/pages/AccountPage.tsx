@@ -2,47 +2,28 @@ import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { KeyRound, ShieldCheck, Bell } from 'lucide-react';
 import { ROLE_LABELS } from '@citylight/shared';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { fmtTime } from '@/lib/utils';
+import { ChangePasswordForm, TotpEnroll, scopeLabel, useAreaNames } from '@/components/security';
 import { Badge, Button, Card, CardHeader, Checkbox, Field, Input, KV, PageHeader, toast } from '@/components/ui';
 
 export function AccountPage() {
   const { user, setUser } = useSession();
-  const [oldPw, setOldPw] = useState('');
-  const [newPw, setNewPw] = useState('');
-  const [newPw2, setNewPw2] = useState('');
-  const [setup, setSetup] = useState<{ otpauthUrl: string; recoveryCodes: string[] } | null>(null);
+  const names = useAreaNames();
   const [channels, setChannels] = useState({ telegram: false, zalo: false, email: true });
-
-  const changePw = useMutation({
-    mutationFn: () => api.changePassword(oldPw, newPw),
-    onSuccess: () => {
-      toast('Đã đổi mật khẩu', 'success');
-      setOldPw('');
-      setNewPw('');
-      setNewPw2('');
-    },
-  });
-  const start2fa = useMutation({ mutationFn: api.setup2fa, onSuccess: setSetup });
-  const enable2fa = useMutation({
-    mutationFn: api.enable2fa,
-    onSuccess: (u) => {
-      setUser(u);
-      setSetup(null);
-      toast('Đã bật xác thực 2 lớp', 'success');
-    },
-  });
+  const [disablePw, setDisablePw] = useState('');
   const disable2fa = useMutation({
-    mutationFn: api.disable2fa,
+    mutationFn: () => api.disable2fa(disablePw),
     onSuccess: (u) => {
       setUser(u);
+      setDisablePw('');
       toast('Đã tắt xác thực 2 lớp');
     },
+    onError: (e) => toast(e instanceof ApiError ? e.message : 'Lỗi', 'error'),
   });
 
   if (!user) return null;
-  const pwOk = newPw.length >= 10 && newPw === newPw2;
 
   return (
     <div className="mx-auto max-w-4xl p-4">
@@ -54,39 +35,31 @@ export function AccountPage() {
             <KV label="Họ tên" value={user.fullName} />
             <KV label="Email" value={user.email} />
             <KV label="Vai trò" value={<Badge tone="blue">{ROLE_LABELS[user.role]}</Badge>} />
-            <KV label="Phạm vi" value={user.scopeAreaIds.length ? user.scopeAreaIds.join(', ') : 'Toàn hệ thống'} />
+            <KV label="Phạm vi" value={scopeLabel(user, names)} />
             <KV label="Đăng nhập gần nhất" value={fmtTime(user.lastLoginAt)} />
           </div>
         </Card>
         <Card>
           <CardHeader title={<span className="flex items-center gap-2"><KeyRound className="h-4 w-4" /> Đổi mật khẩu</span>} />
-          <div className="space-y-3 p-4">
-            <Field label="Mật khẩu hiện tại"><Input type="password" autoComplete="current-password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} /></Field>
-            <Field label="Mật khẩu mới" hint="Tối thiểu 10 ký tự"><Input type="password" autoComplete="new-password" value={newPw} onChange={(e) => setNewPw(e.target.value)} /></Field>
-            <Field label="Nhập lại mật khẩu mới"><Input type="password" autoComplete="new-password" value={newPw2} onChange={(e) => setNewPw2(e.target.value)} /></Field>
-            <Button disabled={!oldPw || !pwOk} loading={changePw.isPending} onClick={() => changePw.mutate()}>Đổi mật khẩu</Button>
+          <div className="p-4">
+            <ChangePasswordForm />
           </div>
         </Card>
         <Card>
           <CardHeader title={<span className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> Xác thực 2 lớp (TOTP)</span>} actions={user.totpEnabled ? <Badge tone="green">Đang bật</Badge> : <Badge>Đang tắt</Badge>} />
           <div className="space-y-3 p-4 text-sm">
-            {user.totpEnabled ? (
-              <>
-                <p className="text-subtle">Tài khoản có quyền điều khiển có thể bị bắt buộc 2FA theo vai trò.</p>
-                <Button variant="outline" onClick={() => disable2fa.mutate()} loading={disable2fa.isPending}>Tắt 2FA</Button>
-              </>
-            ) : setup ? (
-              <>
-                <div className="flex h-40 w-40 items-center justify-center rounded-md border border-dashed text-center text-xs text-subtle">Mã QR<br />(sinh từ otpauth URL ở M2)</div>
-                <code className="block break-all text-xs">{setup.otpauthUrl}</code>
-                <div>
-                  <div className="text-xs font-medium">Mã khôi phục (lưu lại ngay):</div>
-                  <div className="mt-1 grid grid-cols-2 gap-1 font-mono text-xs">{setup.recoveryCodes.map((c) => <span key={c}>{c}</span>)}</div>
-                </div>
-                <Button onClick={() => enable2fa.mutate()} loading={enable2fa.isPending}>Tôi đã quét mã — bật 2FA</Button>
-              </>
+            {!user.totpEnabled ? (
+              <TotpEnroll onDone={setUser} />
+            ) : user.totpRequired ? (
+              <p className="text-subtle">Vai trò {ROLE_LABELS[user.role]} bắt buộc 2FA nên không tắt được. Mất điện thoại: dùng mã khôi phục, hoặc nhờ quản trị viên đặt lại 2FA.</p>
             ) : (
-              <Button onClick={() => start2fa.mutate()} loading={start2fa.isPending}>Thiết lập 2FA</Button>
+              <>
+                <p className="text-subtle">Tắt 2FA cần nhập lại mật khẩu.</p>
+                <Field label="Mật khẩu">
+                  <Input type="password" autoComplete="current-password" value={disablePw} onChange={(e) => setDisablePw(e.target.value)} />
+                </Field>
+                <Button variant="outline" disabled={!disablePw} onClick={() => disable2fa.mutate()} loading={disable2fa.isPending}>Tắt 2FA</Button>
+              </>
             )}
           </div>
         </Card>

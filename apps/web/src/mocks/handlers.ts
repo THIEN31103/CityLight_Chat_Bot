@@ -137,21 +137,27 @@ export const handlers = [
   http.get(`${API}/auth/me`, wrap(() => HttpResponse.json(requireUser()))),
   http.post(`${API}/me/password`, wrap(() => {
     const u = requireUser();
+    u.passwordChangeRequired = false;
     addLog(u.email, 'Đổi mật khẩu', 'user', u.email, null, null);
     return new HttpResponse(null, { status: 204 });
   })),
   http.post(`${API}/auth/2fa/setup`, wrap(() =>
-    HttpResponse.json({ otpauthUrl: 'otpauth://totp/CityLight:demo?secret=JBSWY3DPEHPK3PXP&issuer=CityLight', recoveryCodes: ['8F2K-1LQA', 'Z0P9-77XC', 'M4T2-QQ81', 'R7YH-0B2D'] }),
+    HttpResponse.json({ otpauthUrl: 'otpauth://totp/CityLight:demo?secret=JBSWY3DPEHPK3PXP&issuer=CityLight', secret: 'JBSWY3DPEHPK3PXP' }),
   )),
-  http.post(`${API}/auth/2fa/disable`, wrap(() => {
+  http.post(`${API}/auth/2fa/disable`, wrap(async ({ request }: { request: Request }) => {
     const u = requireUser();
+    const body = (await request.json()) as { password?: string };
+    if (u.totpRequired) return problem(403, 'totp_required_by_role', 'Vai trò của bạn bắt buộc 2FA, không thể tắt');
+    if (body.password !== 'demo') return problem(422, 'invalid_password', 'Mật khẩu không đúng');
     u.totpEnabled = false;
     return HttpResponse.json(u);
   })),
-  http.post(`${API}/auth/2fa/enable`, wrap(() => {
+  http.post(`${API}/auth/2fa/enable`, wrap(async ({ request }: { request: Request }) => {
     const u = requireUser();
+    const body = (await request.json()) as { code?: string };
+    if (body.code !== '123456') return problem(422, 'invalid_totp', 'Mã xác thực không đúng (mock: 123456)');
     u.totpEnabled = true;
-    return HttpResponse.json(u);
+    return HttpResponse.json({ user: u, recoveryCodes: ['8F2K-MLQA', 'ZAP9-77XC', 'M4T2-QQ8H', 'R7YH-WB2D', 'K7QX-M2PA', 'H3NB-9TRE', 'PQ4W-ZX8C', 'L2DF-6YUJ'] });
   })),
 
   // ---------- Map ----------
@@ -500,17 +506,33 @@ export const handlers = [
   http.post(`${API}/users`, wrap(async ({ request }: { request: Request }) => {
     const u = requireUser();
     const body = (await request.json()) as Partial<User>;
-    const nu: User = { id: `u${Date.now()}`, email: body.email ?? '', fullName: body.fullName ?? '', role: body.role ?? 'viewer', scopeAreaIds: body.scopeAreaIds ?? [], totpEnabled: false, active: true, lastLoginAt: null };
+    const role = body.role ?? 'viewer';
+    const nu: User = {
+      id: `u${Date.now()}`, email: body.email ?? '', fullName: body.fullName ?? '', role, scopeAll: role === 'admin' || !!body.scopeAll, scopeAreaIds: body.scopeAreaIds ?? [],
+      totpEnabled: false, totpRequired: role === 'admin' || role === 'operator', passwordChangeRequired: true, active: true, lastLoginAt: null,
+    };
     users.push(nu);
     addLog(u.email, 'Tạo người dùng', 'user', nu.email, null, nu.role);
-    return HttpResponse.json(nu, { status: 201 });
+    return HttpResponse.json({ user: nu, tempPassword: 'demo' }, { status: 201 });
   })),
   http.patch(`${API}/users/:id`, wrap(async ({ params, request }: { params: Record<string, string>; request: Request }) => {
     const u = requireUser();
     const target = users.find((x) => x.id === params.id)!;
     const body = (await request.json()) as Partial<User>;
     Object.assign(target, body);
+    if (body.role) target.totpRequired = body.role === 'admin' || body.role === 'operator';
     addLog(u.email, 'Cập nhật người dùng', 'user', target.email, null, JSON.stringify(body));
+    return HttpResponse.json(target);
+  })),
+  http.post(`${API}/users/:id/reset-password`, wrap(({ params }: { params: Record<string, string> }) => {
+    const target = users.find((x) => x.id === params.id)!;
+    target.passwordChangeRequired = true;
+    return HttpResponse.json({ user: target, tempPassword: 'demo' });
+  })),
+  http.post(`${API}/users/:id/unlock`, wrap(({ params }: { params: Record<string, string> }) => HttpResponse.json(users.find((x) => x.id === params.id)))),
+  http.post(`${API}/users/:id/reset-2fa`, wrap(({ params }: { params: Record<string, string> }) => {
+    const target = users.find((x) => x.id === params.id)!;
+    target.totpEnabled = false;
     return HttpResponse.json(target);
   })),
   http.get(`${API}/devices/unknown`, wrap(() =>

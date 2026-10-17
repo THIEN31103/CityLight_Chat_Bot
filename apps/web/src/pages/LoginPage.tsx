@@ -18,6 +18,7 @@ export function LoginPage() {
   const [lang, setLang] = useState('vi');
   const [step, setStep] = useState<'creds' | 'totp'>('creds');
   const [code, setCode] = useState('');
+  const [useRecovery, setUseRecovery] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -32,15 +33,20 @@ export function LoginPage() {
     setLoading(true);
     try {
       if (step === 'creds') {
-        const r = await api.login(email, password);
+        const r = await api.login(email, password, remember);
         if (r.requires2fa) setStep('totp');
         else done(r.user!);
       } else {
-        const r = await api.verify2fa(code);
+        const r = await api.verify2fa(useRecovery ? { recoveryCode: code } : { code });
         done(r.user);
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Không kết nối được máy chủ');
+      // 5-minute 2FA window passed, or the account got locked: start again from the password
+      if (err instanceof ApiError && (err.code === 'challenge_expired' || err.code === 'account_locked')) {
+        setStep('creds');
+        setCode('');
+      }
     } finally {
       setLoading(false);
     }
@@ -77,16 +83,32 @@ export function LoginPage() {
                 <option value="en">English</option>
               </Select>
             </div>
-            <div className="rounded-md border border-dashed px-3 py-2 text-xs text-subtle">Captcha tự host (ALTCHA) — bật ở M2</div>
           </>
         ) : (
           <>
             <div className="flex items-center gap-2 text-sm">
-              <ShieldCheck className="h-5 w-5 text-st-on" /> Nhập mã 6 số từ ứng dụng xác thực
+              <ShieldCheck className="h-5 w-5 text-st-on" /> {useRecovery ? 'Nhập một mã khôi phục (dùng một lần)' : 'Nhập mã 6 số từ ứng dụng xác thực'}
             </div>
-            <Field label="Mã xác thực (2FA)">
-              <Input inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} autoFocus />
-            </Field>
+            {useRecovery ? (
+              <Field label="Mã khôi phục">
+                <Input key="rc" autoComplete="off" maxLength={12} placeholder="XXXX-XXXX" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} autoFocus className="font-mono" />
+              </Field>
+            ) : (
+              <Field label="Mã xác thực (2FA)">
+                <Input key="totp" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} autoFocus className="font-mono tracking-widest" />
+              </Field>
+            )}
+            <button
+              type="button"
+              className="text-xs text-primary hover:underline"
+              onClick={() => {
+                setUseRecovery(!useRecovery);
+                setCode('');
+                setError(null);
+              }}
+            >
+              {useRecovery ? 'Dùng mã từ ứng dụng xác thực' : 'Mất điện thoại? Dùng mã khôi phục'}
+            </button>
           </>
         )}
 

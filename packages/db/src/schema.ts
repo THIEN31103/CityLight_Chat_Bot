@@ -427,8 +427,15 @@ export const users = pgTable(
     fullName: text('full_name').notNull(),
     passwordHash: text('password_hash').notNull(),
     role: roleEnum('role').notNull().default('viewer'),
+    // AES-256-GCM ciphertext (apps/api totp.ts), never the raw base32 secret
     totpSecret: text('totp_secret'),
     totpEnabled: boolean('totp_enabled').notNull().default(false),
+    // last accepted 30 s step: a code is accepted once (replay protection)
+    totpLastStep: integer('totp_last_step'),
+    // true = every cabinet; false = only cabinets under user_scopes areas (none by default)
+    scopeAll: boolean('scope_all').notNull().default(false),
+    // set for admin-issued temporary passwords; API allows only /me/password until changed
+    passwordChangeRequired: boolean('password_change_required').notNull().default(false),
     active: boolean('active').notNull().default(true),
     failedLogins: integer('failed_logins').notNull().default(0),
     lockedUntil: tsz('locked_until'),
@@ -445,6 +452,19 @@ export const userScopes = pgTable(
     areaId: uuid('area_id').notNull().references(() => areas.id, { onDelete: 'cascade' }),
   },
   (t) => [primaryKey({ columns: [t.userId, t.areaId] })],
+);
+
+/** 2FA recovery codes, argon2id hashed, single use. */
+export const userRecoveryCodes = pgTable(
+  'user_recovery_codes',
+  {
+    id: id(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    codeHash: text('code_hash').notNull(),
+    usedAt: tsz('used_at'),
+    createdAt: createdAt(),
+  },
+  (t) => [index('user_recovery_codes_user_idx').on(t.userId)],
 );
 
 export const sessions = pgTable(

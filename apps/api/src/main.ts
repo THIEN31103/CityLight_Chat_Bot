@@ -11,14 +11,23 @@ import { ProblemFilter } from './errors';
 import { InfraModule } from './infra';
 import { RealtimeModule } from './realtime';
 import { SystemModule } from './system';
+import { UsersModule } from './users';
 
 @Module({
-  imports: [InfraModule, AuthModule, CabinetsModule, AlarmsModule, SystemModule, RealtimeModule],
+  imports: [InfraModule, AuthModule, CabinetsModule, AlarmsModule, UsersModule, SystemModule, RealtimeModule],
   providers: [{ provide: APP_FILTER, useClass: ProblemFilter }],
 })
 class AppModule {}
 
-const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter({ trustProxy: true, bodyLimit: 256 * 1024 }), {
+/** Trust X-Forwarded-For only behind a known proxy (Caddy on the VPS): TRUST_PROXY=true | IP/CIDR list | hop count. */
+function trustProxy(): boolean | string | number {
+  const v = process.env.TRUST_PROXY;
+  if (!v || v === 'false') return false; // otherwise anyone can fake their IP and dodge the login rate limit
+  if (v === 'true') return true;
+  return /^\d+$/.test(v) ? Number(v) : v;
+}
+
+const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter({ trustProxy: trustProxy(), bodyLimit: 256 * 1024 }), {
   logger: ['error', 'warn', 'log'],
 });
 await app.register(cookie);

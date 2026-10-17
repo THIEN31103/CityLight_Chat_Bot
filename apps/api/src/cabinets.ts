@@ -1,11 +1,13 @@
 // Map, hierarchy and cabinet read endpoints (spec 11). Shapes match apps/web/src/lib/api.ts.
-import { Controller, Get, HttpCode, Inject, Injectable, Module, Param, Post, Query } from '@nestjs/common';
+import { Controller, Get, HttpCode, Inject, Injectable, Module, Param, Post, Query, Req } from '@nestjs/common';
 import type { PendingQuery, Row } from 'postgres';
 import { z } from 'zod';
 import type { CabinetState, CabinetStatus, CabinetSummary, FwProfile, MapStats, Schedule, TelemetryPoint } from '@citylight/shared';
 import { buildDiagnostics, capabilitiesFor, decodeRs485SelfTest, defaultSchedule, defaultThresholds, type HealthInput } from '@citylight/shared';
+import type { AuthedRequest } from './auth';
 import { ApiError } from './errors';
 import { SQL, type Sql } from './infra';
+import { inScope, scopeWhere, type Scope } from './scope';
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 const uuid = z.string().uuid();
@@ -33,8 +35,13 @@ export class CabinetsService {
   private mapCache: { at: number; data: CabinetSummary[] } | null = null;
   constructor(@Inject(SQL) private readonly sql: Sql) {}
 
-  async mapCabinets(): Promise<CabinetSummary[]> {
-    // 10k rows: cache 2 s so a room full of operators does not hammer the DB
+  async mapCabinets(scope: Scope): Promise<CabinetSummary[]> {
+    const all = await this.allCabinets();
+    return scope.all ? all : all.filter((c) => inScope(scope, c.districtId, c.wardId));
+  }
+
+  private async allCabinets(): Promise<CabinetSummary[]> {
+    // 10k rows: cache 2 s so a room full of operators does not hammer the DB; scope is filtered per user
     if (this.mapCache && Date.now() - this.mapCache.at < 2000) return this.mapCache.data;
     const rows = await this.sql<StateRow[]>`
       SELECT c.id, c.ltid, c.code, c.name, c.district_id, c.ward_id, ST_Y(c.location) AS lat, ST_X(c.location) AS lng,
@@ -45,54 +52,70 @@ export class CabinetsService {
     return data;
   }
 
-  async stats(): Promise<MapStats> {
+  async stats(scope: Scope): Promise<MapStats> {
     const rows = await this.sql<{ status: CabinetStatus; n: number }[]>`
-      SELECT coalesce(s.status, 'offline') AS status, count(*)::int AS n FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id GROUP BY 1`;
+      SELECT coalesce(s.status, 'offline') AS status, count(*)::int AS n FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id
+      WHERE ${scopeWhere(this.sql, scope)} GROUP BY 1`;
     const counts = { offline: 0, fault: 0, dimming: 0, on: 0, off: 0, unknown: 0, total: 0 };
     for (const r of rows) {
       counts[r.status] += r.n;
       counts.total += r.n;
     }
     const online = counts.total - counts.offline;
-    const overdue = await this.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM incidents WHERE status = 'assigned' AND deadline < now()`;
+    const overdue = await this.sql<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM incidents i JOIN cabinets c ON c.id = i.cabinet_id
+      WHERE i.status = 'assigned' AND i.deadline < now() AND ${scopeWhere(this.sql, scope)}`;
     return { cabinets: counts, onlinePct: counts.total ? (online / counts.total) * 100 : 0, energyTodayKwh: null, energyYesterdayKwh: null, overdueIncidents: overdue[0]?.n ?? 0 };
   }
 
-  async search(q: string) {
+  async search(scope: Scope, q: string) {
     const like = `%${q.replace(/[%_]/g, '')}%`;
     const rows = await this.sql<StateRow[]>`
       SELECT c.id, c.ltid, c.code, c.name, c.district_id, c.ward_id, ST_Y(c.location) AS lat, ST_X(c.location) AS lng,
              s.status, s.online, s.branch1_on, s.branch2_on
       FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id
-      WHERE c.name ILIKE ${like} OR c.code ILIKE ${like} OR c.ltid ILIKE ${like} OR c.address ILIKE ${like}
+      WHERE (c.name ILIKE ${like} OR c.code ILIKE ${like} OR c.ltid ILIKE ${like} OR c.address ILIKE ${like}) AND ${scopeWhere(this.sql, scope)}
       ORDER BY c.code LIMIT 10`;
     return rows.map(summary);
   }
 
-  async nearby(lat: number, lng: number, radius: number) {
+  async nearby(scope: Scope, lat: number, lng: number, radius: number) {
     const rows = await this.sql<(StateRow & { distance_m: number })[]>`
       SELECT c.id, c.ltid, c.code, c.name, c.district_id, c.ward_id, ST_Y(c.location) AS lat, ST_X(c.location) AS lng,
              s.status, s.online, s.branch1_on, s.branch2_on,
              ST_Distance(c.location::geography, ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography) AS distance_m
       FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id
-      WHERE ST_DWithin(c.location::geography, ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography, ${radius})
+      WHERE ST_DWithin(c.location::geography, ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography, ${radius}) AND ${scopeWhere(this.sql, scope)}
       ORDER BY distance_m LIMIT 100`;
     return rows.map((r) => ({ ...summary(r), distanceM: Math.round(r.distance_m) }));
   }
 
-  async areaTree() {
+  /** Areas in scope plus their ancestors (so the tree keeps its parents); counts only cabinets in scope. */
+  async areaTree(scope: Scope) {
+    const visible = scope.all
+      ? this.sql`TRUE`
+      : scope.areaIds.length
+        ? this.sql`a.id IN (
+            WITH RECURSIVE up AS (
+              SELECT id, parent_id FROM areas WHERE id = ANY(${this.sql.array(scope.areaIds)}::uuid[])
+              UNION SELECT p.id, p.parent_id FROM areas p JOIN up ON p.id = up.parent_id
+            ) SELECT id FROM up)`
+        : this.sql`FALSE`;
     const areas = await this.sql<{ id: string; name: string; parent_id: string | null; kind: 'unit' | 'district' | 'ward'; n: number }[]>`
       SELECT a.id, a.name, a.parent_id, a.kind,
-        (SELECT count(*)::int FROM cabinets c WHERE c.ward_id = a.id OR c.district_id = a.id OR (a.kind = 'unit' AND c.organization_id = a.organization_id)) AS n
-      FROM areas a ORDER BY a.kind, a.name`;
-    const unassigned = await this.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM cabinets WHERE district_id IS NULL`;
+        (SELECT count(*)::int FROM cabinets c
+          WHERE (c.ward_id = a.id OR c.district_id = a.id OR (a.kind = 'unit' AND c.organization_id = a.organization_id))
+            AND ${scopeWhere(this.sql, scope)}) AS n
+      FROM areas a WHERE ${visible} ORDER BY a.kind, a.name`;
+    const unassigned = scope.all ? await this.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM cabinets WHERE district_id IS NULL` : [{ n: 0 }];
     return {
       areas: areas.map((a) => ({ id: a.id, name: a.name, parentId: a.parent_id, kind: a.kind, cabinetCount: a.n })),
       unassigned: unassigned[0]?.n ?? 0,
     };
   }
 
-  async areaCabinets(id: string) {
+  async areaCabinets(scope: Scope, id: string) {
+    if (id === 'unassigned' && !scope.all) return [];
     const rows =
       id === 'unassigned'
         ? await this.sql<StateRow[]>`
@@ -100,14 +123,15 @@ export class CabinetsService {
             FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE c.district_id IS NULL ORDER BY c.code`
         : await this.sql<StateRow[]>`
             SELECT c.id, c.ltid, c.code, c.name, c.district_id, c.ward_id, ST_Y(c.location) AS lat, ST_X(c.location) AS lng, s.status, s.online, s.branch1_on, s.branch2_on
-            FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE c.ward_id = ${uuid.parse(id)} ORDER BY c.code`;
+            FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE c.ward_id = ${uuid.parse(id)} AND ${scopeWhere(this.sql, scope)} ORDER BY c.code`;
     return rows.map(summary);
   }
 
-  async list(page: number, size: number, status?: string, q?: string) {
+  async list(scope: Scope, page: number, size: number, status?: string, q?: string) {
     const like = q ? `%${q.replace(/[%_]/g, '')}%` : null;
     const where = this.sql`WHERE (${status ?? null}::text IS NULL OR coalesce(s.status::text, 'offline') = ${status ?? null})
-      AND (${like}::text IS NULL OR c.name ILIKE ${like} OR c.ltid ILIKE ${like} OR c.code ILIKE ${like})`;
+      AND (${like}::text IS NULL OR c.name ILIKE ${like} OR c.ltid ILIKE ${like} OR c.code ILIKE ${like})
+      AND ${scopeWhere(this.sql, scope)}`;
     const rows = await this.sql<(StateRow & { district_name: string | null; fw_profile: string; last_seen_at: Date | null })[]>`
       SELECT c.id, c.ltid, c.code, c.name, c.district_id, c.ward_id, ST_Y(c.location) AS lat, ST_X(c.location) AS lng,
              s.status, s.online, s.branch1_on, s.branch2_on, d.name AS district_name, c.fw_profile, s.last_seen_at
@@ -118,6 +142,15 @@ export class CabinetsService {
       items: rows.map((r) => ({ ...summary(r), districtName: r.district_name ?? 'Chưa phân khu vực', fwProfile: r.fw_profile, lastSeenAt: iso(r.last_seen_at) })),
       total: total[0]?.n ?? 0, page, size,
     };
+  }
+
+  /** 404 when the cabinet does not exist, 403 forbidden_scope when it is outside the user's areas. */
+  async assertCabinet(scope: Scope, id: string): Promise<string> {
+    const cid = uuid.parse(id);
+    const rows = await this.sql<{ district_id: string | null; ward_id: string | null }[]>`SELECT district_id, ward_id FROM cabinets WHERE id = ${cid}`;
+    if (!rows[0]) throw new ApiError(404, 'not_found', 'Không tìm thấy tủ');
+    if (!inScope(scope, rows[0].district_id, rows[0].ward_id)) throw new ApiError(403, 'forbidden_scope', 'Tủ này nằm ngoài khu vực bạn được phân quyền');
+    return cid;
   }
 
   private async health(id: string): Promise<{ input: HealthInput; row: Record<string, unknown> }> {
@@ -149,8 +182,9 @@ export class CabinetsService {
     return { input, row: r };
   }
 
-  async detail(id: string) {
-    const { input: h, row: r } = await this.health(uuid.parse(id));
+  async detail(scope: Scope, id: string) {
+    id = await this.assertCabinet(scope, id);
+    const { input: h, row: r } = await this.health(id);
     const state: CabinetState = {
       cabinetId: id, status: (r.status as CabinetStatus) ?? 'offline', online: h.online, lastSeenAt: h.lastSeenAt,
       branch1On: h.branch1On, branch2On: h.branch2On, manualMode: (r.manual_mode as boolean) ?? null, plcOnline: h.plcOnline, pmOnline: h.pmOnline,
@@ -194,8 +228,9 @@ export class CabinetsService {
     };
   }
 
-  async diagnostics(id: string) {
-    const { input } = await this.health(uuid.parse(id));
+  async diagnostics(scope: Scope, id: string) {
+    id = await this.assertCabinet(scope, id);
+    const { input } = await this.health(id);
     const st = await this.sql<{ ts: Date; data: { summary?: string } }[]>`
       SELECT ts, data FROM device_events WHERE cabinet_id = ${id} AND kind = 'selftest' ORDER BY ts DESC LIMIT 1`;
     const selfTest = st[0]?.data.summary ? { at: st[0].ts.toISOString(), summary: st[0].data.summary, ...decodeRs485SelfTest(st[0].data.summary) } : null;
@@ -203,8 +238,8 @@ export class CabinetsService {
   }
 
   /** Raw hypertable with time_bucket up to 7 days (~300 points), hourly aggregate beyond. */
-  async telemetry(id: string, metrics: string[], from: Date, to: Date): Promise<TelemetryPoint[]> {
-    uuid.parse(id);
+  async telemetry(scope: Scope, id: string, metrics: string[], from: Date, to: Date): Promise<TelemetryPoint[]> {
+    id = await this.assertCabinet(scope, id);
     const cols = metrics.filter((m) => METRIC[m]);
     if (!cols.length) return [];
     const rangeMs = to.getTime() - from.getTime();
@@ -227,8 +262,8 @@ export class CabinetsService {
   }
 
   /** kWh estimate = average kW x hours, per hour (today) or per day (30 days), Asia/Ho_Chi_Minh. */
-  async energy(id: string, range: 'day' | '30d') {
-    uuid.parse(id);
+  async energy(scope: Scope, id: string, range: 'day' | '30d') {
+    id = await this.assertCabinet(scope, id);
     const rows =
       range === 'day'
         ? await this.sql<{ b: Date; kwh: number | null }[]>`
@@ -242,8 +277,9 @@ export class CabinetsService {
     return { estimated: true, points: rows.map((r) => ({ label: range === 'day' ? `${fmt.format(r.b)}h` : fmt.format(r.b), kwh: Math.round(Number(r.kwh ?? 0) * 10) / 10 })) };
   }
 
-  async cabinetAlarms(id: string, limit: number) {
-    return this.alarmRows(this.sql`WHERE a.cabinet_id = ${uuid.parse(id)}`, limit, 0);
+  async cabinetAlarms(scope: Scope, id: string, limit: number) {
+    id = await this.assertCabinet(scope, id);
+    return this.alarmRows(this.sql`WHERE a.cabinet_id = ${id}`, limit, 0);
   }
 
   alarmRows(where: PendingQuery<Row[]>, limit: number, offset: number) {
@@ -267,48 +303,48 @@ const PageQuery = z.object({ page: z.coerce.number().int().min(1).default(1), si
 export class CabinetsController {
   constructor(@Inject(CabinetsService) private readonly svc: CabinetsService) {}
 
-  @Get('map/cabinets') mapCabinets() { return this.svc.mapCabinets(); }
-  @Get('map/stats') stats() { return this.svc.stats(); }
-  @Get('search') search(@Query('q') q = '') { return q.trim().length >= 2 ? this.svc.search(q.trim()) : []; }
-  @Get('areas/tree') tree() { return this.svc.areaTree(); }
-  @Get('areas/:id/cabinets') areaCabinets(@Param('id') id: string) { return this.svc.areaCabinets(id); }
+  @Get('map/cabinets') mapCabinets(@Req() r: AuthedRequest) { return this.svc.mapCabinets(r.user!.scope); }
+  @Get('map/stats') stats(@Req() r: AuthedRequest) { return this.svc.stats(r.user!.scope); }
+  @Get('search') search(@Req() r: AuthedRequest, @Query('q') q = '') { return q.trim().length >= 2 ? this.svc.search(r.user!.scope, q.trim()) : []; }
+  @Get('areas/tree') tree(@Req() r: AuthedRequest) { return this.svc.areaTree(r.user!.scope); }
+  @Get('areas/:id/cabinets') areaCabinets(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.areaCabinets(r.user!.scope, id); }
 
   @Get('cabinets/nearby')
-  nearby(@Query() q: unknown) {
+  nearby(@Req() r: AuthedRequest, @Query() q: unknown) {
     const p = z.object({ lat: z.coerce.number().min(-90).max(90), lng: z.coerce.number().min(-180).max(180), radius: z.coerce.number().min(10).max(20_000).default(2000) }).parse(q);
-    return this.svc.nearby(p.lat, p.lng, p.radius);
+    return this.svc.nearby(r.user!.scope, p.lat, p.lng, p.radius);
   }
 
   @Get('cabinets')
-  list(@Query() q: unknown) {
+  list(@Req() r: AuthedRequest, @Query() q: unknown) {
     const p = PageQuery.extend({ status: z.string().optional(), q: z.string().max(100).optional() }).parse(q);
-    return this.svc.list(p.page, p.size, p.status || undefined, p.q || undefined);
+    return this.svc.list(r.user!.scope, p.page, p.size, p.status || undefined, p.q || undefined);
   }
 
-  @Get('cabinets/:id') detail(@Param('id') id: string) { return this.svc.detail(id); }
-  @Get('cabinets/:id/diagnostics') diagnostics(@Param('id') id: string) { return this.svc.diagnostics(id); }
+  @Get('cabinets/:id') detail(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.detail(r.user!.scope, id); }
+  @Get('cabinets/:id/diagnostics') diagnostics(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.diagnostics(r.user!.scope, id); }
 
   @Get('cabinets/:id/telemetry')
-  telemetry(@Param('id') id: string, @Query() q: unknown) {
+  telemetry(@Req() r: AuthedRequest, @Param('id') id: string, @Query() q: unknown) {
     const p = TelemetryQuery.parse(q);
     const to = p.to ?? new Date();
     const from = p.from ?? new Date(to.getTime() - 6 * 3_600_000);
-    return this.svc.telemetry(id, p.metrics.split(','), from, to);
+    return this.svc.telemetry(r.user!.scope, id, p.metrics.split(','), from, to);
   }
 
   @Get('cabinets/:id/energy')
-  energy(@Param('id') id: string, @Query('range') range = 'day') {
-    return this.svc.energy(id, range === '30d' ? '30d' : 'day');
+  energy(@Req() r: AuthedRequest, @Param('id') id: string, @Query('range') range = 'day') {
+    return this.svc.energy(r.user!.scope, id, range === '30d' ? '30d' : 'day');
   }
 
   @Get('cabinets/:id/alarms')
-  alarms(@Param('id') id: string, @Query('limit') limit = '20') {
-    return this.svc.cabinetAlarms(id, Math.min(100, Number(limit) || 20));
+  alarms(@Req() r: AuthedRequest, @Param('id') id: string, @Query('limit') limit = '20') {
+    return this.svc.cabinetAlarms(r.user!.scope, id, Math.min(100, Number(limit) || 20));
   }
 
   // Not built yet in M1: explicit answers so hybrid mode does not fall back to mock data for a real cabinet.
-  @Get('cabinets/:id/commands') commands() { return []; }
-  @Get('cabinets/:id/lamps') lamps() { return []; }
+  @Get('cabinets/:id/commands') async commands(@Req() r: AuthedRequest, @Param('id') id: string) { await this.svc.assertCabinet(r.user!.scope, id); return []; }
+  @Get('cabinets/:id/lamps') async lamps(@Req() r: AuthedRequest, @Param('id') id: string) { await this.svc.assertCabinet(r.user!.scope, id); return []; }
 
   @Post('cabinets/:id/commands')
   @HttpCode(501)

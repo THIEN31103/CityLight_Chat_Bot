@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { Spinner } from '../ui';
 import { ForbiddenPage } from '@/pages/ErrorPages';
+import { SecuritySetupPage } from '@/pages/SecuritySetupPage';
 
 export function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, setUser } = useSession();
@@ -27,6 +28,9 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
       </div>
     );
   if (!user) return <Navigate to={`/login?next=${encodeURIComponent(loc.pathname + loc.search)}`} replace />;
+  // forced steps come before the app (the API refuses everything else meanwhile)
+  if (user.passwordChangeRequired) return <SecuritySetupPage step="password" />;
+  if (user.totpRequired && !user.totpEnabled) return <SecuritySetupPage step="totp" />;
   return <>{children}</>;
 }
 

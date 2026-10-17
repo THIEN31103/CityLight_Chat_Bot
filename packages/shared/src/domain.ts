@@ -370,8 +370,14 @@ export interface User {
   email: string;
   fullName: string;
   role: RoleKey;
+  /** true = every cabinet; false = only cabinets under scopeAreaIds (empty = none). */
+  scopeAll: boolean;
   scopeAreaIds: string[];
   totpEnabled: boolean;
+  /** Role needs 2FA (permission cabinet.control) and the server enforces it: setup is forced until enabled. */
+  totpRequired: boolean;
+  /** Admin-issued temporary password: the user must change it before anything else. */
+  passwordChangeRequired: boolean;
   active: boolean;
   lastLoginAt: string | null;
 }

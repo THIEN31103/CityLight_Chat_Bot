@@ -4,6 +4,7 @@ import { AuthModule, AuthService, RequirePerm, type AuthedRequest } from './auth
 import { CabinetsModule, CabinetsService } from './cabinets';
 import { ApiError } from './errors';
 import { SQL, type Sql } from './infra';
+import { scopeWhere } from './scope';
 
 const AlarmQuery = z.object({
   active: z.enum(['true', 'false']).optional(),
@@ -26,10 +27,11 @@ export class AlarmsController {
 
   @Get('alarms')
   @RequirePerm('alarm.view')
-  async list(@Query() q: unknown) {
+  async list(@Query() q: unknown, @Req() req: AuthedRequest) {
     const p = AlarmQuery.parse(q);
     const where = this.sql`
-      WHERE (${p.active === 'true'}::boolean = false OR a.active)
+      WHERE ${scopeWhere(this.sql, req.user!.scope)}
+        AND (${p.active === 'true'}::boolean = false OR a.active)
         AND (${p.type ?? null}::text IS NULL OR a.type = ${p.type ?? null})
         AND (${p.severity ?? null}::text IS NULL OR a.severity::text = ${p.severity ?? null})
         AND (${p.district ?? null}::text IS NULL OR coalesce(d.name, 'Chưa phân khu vực') = ${p.district ?? null})
@@ -46,6 +48,9 @@ export class AlarmsController {
   @RequirePerm('alarm.ack')
   async ack(@Param('id') id: string, @Req() req: AuthedRequest) {
     const aid = z.string().uuid().parse(id);
+    const owner = await this.sql<{ cabinet_id: string }[]>`SELECT cabinet_id FROM alarms WHERE id = ${aid}`;
+    if (!owner[0]) throw new ApiError(404, 'not_found', 'Không tìm thấy cảnh báo');
+    await this.cabinets.assertCabinet(req.user!.scope, owner[0].cabinet_id);
     const rows = await this.sql<{ code: string; message: string; cabinet_code: string }[]>`
       UPDATE alarms a SET acked_by = ${req.user!.id}, acked_at = now() FROM cabinets c
       WHERE a.id = ${aid} AND c.id = a.cabinet_id AND a.acked_at IS NULL

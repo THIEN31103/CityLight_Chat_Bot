@@ -17,6 +17,9 @@
 | S11 | Stack BE: Bảo giao "miễn tối ưu" → spec v0.1 chọn **TypeScript monorepo: NestJS + Postgres/Timescale/PostGIS + Redis/BullMQ + EMQX + React/MapLibre** (thay đề xuất FastAPI P4). Chi tiết `spec.md` mục 2. |
 
 | S12 | M1: cảnh báo sức khỏe thiết bị (suy từ telemetry) làm ngay ở M1; gửi lệnh thật để M4 (Bảo đồng ý 2026-10-17). |
+| S14 | M2: TOTP (RFC 6238) tự viết trên `node:crypto` (~60 dòng, kiểm bằng vector RFC 4226/6238), **không** dùng otplib như spec ghi. Secret mã hóa AES-256-GCM bằng `TOTP_ENC_KEY`; mã khôi phục 8 cái, hash argon2id, dùng 1 lần; mỗi mã TOTP chỉ dùng 1 lần (`totp_last_step`). 2FA bắt buộc cho vai trò có `cabinet.control` (admin, operator); `AUTH_REQUIRE_2FA=false` chỉ để test local (Bảo duyệt 2026-10-17). |
+| S15 | M2: phạm vi = `users.scope_all` hoặc danh sách khu vực (`user_scopes`, gồm cả khu vực con). Admin luôn toàn hệ thống. **User mới mặc định không thấy tủ nào** tới khi được gán (Bảo duyệt 2026-10-17). Tủ chưa phân khu vực chỉ user toàn hệ thống thấy. Tủ ngoài phạm vi → `403 forbidden_scope`. Đổi vai trò/phạm vi/khóa → xóa session + ngắt socket ngay (Redis `cl:auth`). |
+| S16 | M2: CSRF double-submit, token = SHA-256(`csrf:`+session id) gửi trong cookie đọc được `cl_csrf`, web gửi lại ở header `X-CSRF-Token`. Chưa có dịch vụ email: tạo user / đặt lại mật khẩu trả **mật khẩu tạm hiện 1 lần**, user phải đổi ở lần đăng nhập đầu. `TRUST_PROXY` mặc định tắt (tránh giả IP để né rate limit). Captcha để khi lên VPS. |
 | S13 | Broker giai đoạn 1 giữ ACL dạng file + username bí mật cho backend; **không** dùng HTTP authn/authz của EMQX vì khiến mọi publish phụ thuộc API sống. Giai đoạn 2: EMQX built-in database cho tài khoản từng tủ, API đồng bộ qua REST quản trị EMQX. |
 
 ## Đề xuất, chờ Bảo chốt

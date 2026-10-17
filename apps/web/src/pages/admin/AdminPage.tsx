@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
-import type { RoleKey, User } from '@citylight/shared';
-import { ALARM_TYPE_LABELS, LAMP_GROUP_LABELS, ROLE_LABELS, ROLE_PERMISSIONS, SEVERITY_LABELS } from '@citylight/shared';
-import { api } from '@/lib/api';
+import type { RoleKey } from '@citylight/shared';
+import { ALARM_TYPE_LABELS, LAMP_GROUP_LABELS, ROLE_LABELS, ROLE_PERMISSIONS, SEVERITY_LABELS, roleRequires2fa } from '@citylight/shared';
+import { api, ApiError, type AdminUser } from '@/lib/api';
+import { useSession } from '@/stores/session';
+import { ScopePicker, scopeLabel, useAreaNames, type ScopeValue } from '@/components/security';
 import { cn, fmtTime } from '@/lib/utils';
-import { Badge, Button, Card, CardHeader, Field, Input, Modal, PageHeader, Select, Spinner, Toggle, toast } from '@/components/ui';
+import { Badge, Button, Card, CardHeader, Field, Input, Modal, PageHeader, Select, Spinner, Toggle, confirm, toast } from '@/components/ui';
 import { ErrorCatalogTable } from '@/components/ErrorHelp';
 
 const TABS = [
@@ -48,61 +50,148 @@ export function AdminPage() {
 
 function UsersAdmin() {
   const qc = useQueryClient();
+  const me = useSession((s) => s.user);
+  const names = useAreaNames();
   const { data, isLoading } = useQuery({ queryKey: ['users'], queryFn: api.users });
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<Partial<User>>({ role: 'viewer' });
+  const blank = { email: '', fullName: '', role: 'viewer' as RoleKey, scopeAll: false, scopeAreaIds: [] as string[] };
+  const [form, setForm] = useState(blank);
+  const [scopeEdit, setScopeEdit] = useState<{ user: AdminUser; value: ScopeValue } | null>(null);
+  const [secret, setSecret] = useState<{ email: string; tempPassword: string; created: boolean } | null>(null);
+  const refresh = () => qc.invalidateQueries({ queryKey: ['users'] });
+  const fail = (e: unknown) => toast(e instanceof ApiError ? e.message : 'Lỗi', 'error');
+
   const create = useMutation({
     mutationFn: () => api.createUser(form),
-    onSuccess: () => {
-      toast('Đã tạo người dùng', 'success');
+    onSuccess: (r) => {
       setOpen(false);
-      setForm({ role: 'viewer' });
-      qc.invalidateQueries({ queryKey: ['users'] });
+      setForm(blank);
+      setSecret({ email: r.user.email, tempPassword: r.tempPassword, created: true });
+      refresh();
     },
+    onError: fail,
   });
-  const update = useMutation({ mutationFn: (p: { id: string; patch: Partial<User> }) => api.updateUser(p.id, p.patch), onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }) });
+  const update = useMutation({
+    mutationFn: (p: { id: string; patch: Parameters<typeof api.updateUser>[1] }) => api.updateUser(p.id, p.patch),
+    onSuccess: () => {
+      setScopeEdit(null);
+      refresh();
+    },
+    onError: fail,
+  });
+  const resetPw = useMutation({
+    mutationFn: (u: AdminUser) => api.resetUserPassword(u.id),
+    onSuccess: (r) => {
+      setSecret({ email: r.user.email, tempPassword: r.tempPassword, created: false });
+      refresh();
+    },
+    onError: fail,
+  });
+  const unlock = useMutation({ mutationFn: (u: AdminUser) => api.unlockUser(u.id), onSuccess: () => { toast('Đã mở khóa đăng nhập', 'success'); refresh(); }, onError: fail });
+  const reset2fa = useMutation({ mutationFn: (u: AdminUser) => api.resetUser2fa(u.id), onSuccess: () => { toast('Đã đặt lại 2FA', 'success'); refresh(); }, onError: fail });
+
+  const ask = async (title: string, body: string, run: () => void) => {
+    if (await confirm({ title, body, danger: true })) run();
+  };
+
   return (
     <>
-      <PageHeader title="Người dùng" actions={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Thêm người dùng</Button>} />
-      <Card>
+      <PageHeader
+        title="Người dùng"
+        subtitle="Đổi vai trò, phạm vi hoặc khóa tài khoản sẽ đăng xuất người đó ngay"
+        actions={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Thêm người dùng</Button>}
+      />
+      <Card className="overflow-x-auto">
         {isLoading ? (
           <div className="p-6"><Spinner /></div>
         ) : (
           <table className="w-full text-sm">
             <thead className="bg-muted/60 text-left text-xs text-subtle">
-              <tr><th className="px-3 py-2">Họ tên</th><th className="px-3 py-2">Email</th><th className="px-3 py-2">Vai trò</th><th className="px-3 py-2">Phạm vi</th><th className="px-3 py-2">2FA</th><th className="px-3 py-2">Đăng nhập gần nhất</th><th className="px-3 py-2">Hoạt động</th></tr>
+              <tr><th className="px-3 py-2">Họ tên</th><th className="px-3 py-2">Email</th><th className="px-3 py-2">Vai trò</th><th className="px-3 py-2">Phạm vi</th><th className="px-3 py-2">2FA</th><th className="px-3 py-2">Đăng nhập gần nhất</th><th className="px-3 py-2">Hoạt động</th><th className="px-3 py-2" /></tr>
             </thead>
             <tbody>
-              {data?.map((u) => (
-                <tr key={u.id} className="border-t">
-                  <td className="px-3 py-2 font-medium">{u.fullName}</td>
-                  <td className="px-3 py-2">{u.email}</td>
-                  <td className="px-3 py-2">
-                    <Select value={u.role} onChange={(e) => update.mutate({ id: u.id, patch: { role: e.target.value as RoleKey } })} className="h-8">
-                      {Object.entries(ROLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                    </Select>
-                  </td>
-                  <td className="px-3 py-2 text-xs">{u.scopeAreaIds.length ? u.scopeAreaIds.join(', ') : 'Toàn hệ thống'}</td>
-                  <td className="px-3 py-2">{u.totpEnabled ? <Badge tone="green">Bật</Badge> : <Badge>Tắt</Badge>}</td>
-                  <td className="px-3 py-2 text-xs">{fmtTime(u.lastLoginAt)}</td>
-                  <td className="px-3 py-2"><Toggle checked={u.active} onChange={(v) => update.mutate({ id: u.id, patch: { active: v } })} label="Kích hoạt" /></td>
-                </tr>
-              ))}
+              {data?.map((u) => {
+                const self = u.id === me?.id;
+                return (
+                  <tr key={u.id} className="border-t align-top">
+                    <td className="px-3 py-2 font-medium">
+                      {u.fullName} {self && <Badge tone="blue">Bạn</Badge>}
+                      {u.passwordChangeRequired && <div className="text-xs font-normal text-st-fault">Chưa đổi mật khẩu tạm</div>}
+                      {u.lockedUntil && <div className="text-xs font-normal text-st-offline">Tạm khóa tới {fmtTime(u.lockedUntil)}</div>}
+                    </td>
+                    <td className="px-3 py-2">{u.email}</td>
+                    <td className="px-3 py-2">
+                      <Select value={u.role} disabled={self} onChange={(e) => update.mutate({ id: u.id, patch: { role: e.target.value as RoleKey } })} className="h-8">
+                        {Object.entries(ROLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </Select>
+                    </td>
+                    <td className="max-w-[16rem] px-3 py-2 text-xs">
+                      <span className={cn(!u.scopeAll && !u.scopeAreaIds.length && 'text-st-fault')}>{u.role === 'admin' ? 'Toàn hệ thống (quản trị)' : scopeLabel(u, names)}</span>
+                      {!self && u.role !== 'admin' && (
+                        <button className="ml-1 text-primary hover:underline" onClick={() => setScopeEdit({ user: u, value: { scopeAll: u.scopeAll, scopeAreaIds: u.scopeAreaIds } })}>Sửa</button>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {u.totpEnabled ? <Badge tone="green">Bật</Badge> : u.totpRequired ? <Badge tone="orange">Bắt buộc, chưa bật</Badge> : <Badge>Tắt</Badge>}
+                    </td>
+                    <td className="px-3 py-2 text-xs">{fmtTime(u.lastLoginAt)}</td>
+                    <td className="px-3 py-2"><Toggle checked={u.active} disabled={self} onChange={(v) => update.mutate({ id: u.id, patch: { active: v } })} label="Kích hoạt" /></td>
+                    <td className="whitespace-nowrap px-3 py-2 text-xs">
+                      {!self && (
+                        <div className="flex flex-col items-start gap-1">
+                          <button className="text-primary hover:underline" onClick={() => ask('Đặt lại mật khẩu?', `${u.email} sẽ bị đăng xuất và nhận mật khẩu tạm mới.`, () => resetPw.mutate(u))}>Đặt lại mật khẩu</button>
+                          {u.totpEnabled && <button className="text-primary hover:underline" onClick={() => ask('Đặt lại 2FA?', `Xóa 2FA của ${u.email} (ví dụ khi mất điện thoại). Người đó sẽ bị đăng xuất và phải thiết lập lại.`, () => reset2fa.mutate(u))}>Đặt lại 2FA</button>}
+                          {u.lockedUntil && <button className="text-primary hover:underline" onClick={() => unlock.mutate(u)}>Mở khóa đăng nhập</button>}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
       </Card>
+
       <Modal open={open} onOpenChange={setOpen} title="Thêm người dùng" footer={<><Button variant="outline" onClick={() => setOpen(false)}>Hủy</Button><Button disabled={!form.email || !form.fullName} loading={create.isPending} onClick={() => create.mutate()}>Tạo</Button></>}>
         <div className="space-y-3">
-          <Field label="Họ tên"><Input value={form.fullName ?? ''} onChange={(e) => setForm({ ...form, fullName: e.target.value })} /></Field>
-          <Field label="Email"><Input type="email" value={form.email ?? ''} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-          <Field label="Vai trò">
+          <Field label="Họ tên"><Input value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} /></Field>
+          <Field label="Email"><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+          <Field label="Vai trò" hint={roleRequires2fa(form.role) ? 'Vai trò này bắt buộc 2FA ở lần đăng nhập đầu' : undefined}>
             <Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as RoleKey })} className="w-full">
               {Object.entries(ROLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </Select>
           </Field>
-          <p className="text-xs text-subtle">Người dùng nhận email đặt mật khẩu lần đầu (M2).</p>
+          {form.role === 'admin' ? (
+            <p className="text-xs text-subtle">Quản trị viên luôn thấy toàn hệ thống.</p>
+          ) : (
+            <Field label="Phạm vi khu vực"><ScopePicker value={form} onChange={(v) => setForm({ ...form, ...v })} /></Field>
+          )}
+          <p className="text-xs text-subtle">Hệ thống tạo mật khẩu tạm; người dùng phải đổi ở lần đăng nhập đầu.</p>
         </div>
+      </Modal>
+
+      <Modal
+        open={!!scopeEdit}
+        onOpenChange={(v) => !v && setScopeEdit(null)}
+        title={`Phạm vi: ${scopeEdit?.user.fullName ?? ''}`}
+        footer={<><Button variant="outline" onClick={() => setScopeEdit(null)}>Hủy</Button><Button loading={update.isPending} onClick={() => scopeEdit && update.mutate({ id: scopeEdit.user.id, patch: scopeEdit.value })}>Lưu</Button></>}
+      >
+        {scopeEdit && <ScopePicker value={scopeEdit.value} onChange={(v) => setScopeEdit({ ...scopeEdit, value: v })} />}
+        <p className="mt-2 text-xs text-subtle">Lưu sẽ đăng xuất người dùng này để áp phạm vi mới.</p>
+      </Modal>
+
+      <Modal open={!!secret} onOpenChange={(v) => !v && setSecret(null)} title={secret?.created ? 'Đã tạo người dùng' : 'Đã đặt lại mật khẩu'} footer={<Button onClick={() => setSecret(null)}>Đã gửi cho người dùng</Button>}>
+        {secret && (
+          <div className="space-y-2">
+            <p>Mật khẩu tạm cho <b>{secret.email}</b> (chỉ hiện lần này, gửi qua kênh riêng):</p>
+            <div className="flex items-center gap-2">
+              <code className="rounded bg-muted px-2 py-1 font-mono text-base">{secret.tempPassword}</code>
+              <Button size="sm" variant="outline" onClick={() => navigator.clipboard?.writeText(secret.tempPassword).then(() => toast('Đã chép', 'success'))}>Chép</Button>
+            </div>
+            <p className="text-xs text-subtle">Người dùng phải đổi mật khẩu này ở lần đăng nhập đầu.</p>
+          </div>
+        )}
       </Modal>
     </>
   );
@@ -127,8 +216,8 @@ function RolesAdmin() {
               </tr>
             ))}
             <tr className="border-t bg-muted/30">
-              <td className="px-3 py-1.5 text-xs">Bắt buộc 2FA</td>
-              {roles.map((r) => <td key={r} className="px-3 py-1.5 text-center"><Toggle checked={r === 'admin' || r === 'operator'} onChange={() => toast('Lưu cấu hình 2FA theo vai trò ở M2')} label={`2FA ${r}`} /></td>)}
+              <td className="px-3 py-1.5 text-xs">Bắt buộc 2FA (vai trò có quyền điều khiển tủ)</td>
+              {roles.map((r) => <td key={r} className="px-3 py-1.5 text-center">{roleRequires2fa(r) ? '✔' : ''}</td>)}
             </tr>
           </tbody>
         </table>

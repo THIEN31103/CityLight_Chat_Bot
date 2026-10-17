@@ -45,7 +45,7 @@ if (email && password) {
   if (password.length < 12) throw new Error('SEED_ADMIN_PASSWORD must be >= 12 characters');
   const existing = await db.select().from(users).where(eq(users.email, email));
   if (!existing.length) {
-    await db.insert(users).values({ organizationId: org.id, email, fullName: 'Quản trị hệ thống', role: 'admin', passwordHash: await hash(password) });
+    await db.insert(users).values({ organizationId: org.id, email, fullName: 'Quản trị hệ thống', role: 'admin', scopeAll: true, passwordHash: await hash(password) });
     console.log(`[seed] admin user ${email} created`);
   }
 } else {

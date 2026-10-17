@@ -38,3 +38,8 @@ export const ROLE_PERMISSIONS: Record<RoleKey, Permission[]> = {
 export function hasPermission(role: RoleKey, perm: Permission): boolean {
   return ROLE_PERMISSIONS[role].includes(perm);
 }
+
+/** Roles that can switch lights need 2FA (spec 13). The server may relax this with AUTH_REQUIRE_2FA=false. */
+export function roleRequires2fa(role: RoleKey): boolean {
+  return hasPermission(role, 'cabinet.control');
+}
