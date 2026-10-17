@@ -13,6 +13,17 @@
   "scripts": {
     "dev:web": "npm run dev -w @citylight/web",
     "build:web": "npm run build -w @citylight/web",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "infra:up": "docker compose -f infra/docker-compose.yml --env-file infra/.env up -d",
+    "infra:down": "docker compose -f infra/docker-compose.yml --env-file infra/.env down",
+    "db:migrate": "npm run migrate -w @citylight/db",
+    "sim": "npm run start -w @citylight/simulator --",
+    "e2e:local": "npm run e2e:local -w @citylight/simulator"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "vitest": "^2.1.9"
   }
 }

@@ -1,0 +1,68 @@
+# Local stack for M0/M1 (same files go to the VPS in M11 with docker-compose.prod.yml on top).
+#   docker compose -f infra/docker-compose.yml --env-file infra/.env up -d
+services:
+  emqx:
+    # 5.8.x = last Apache-2.0 EMQX line (5.9+ is BSL: free for one node, see docs/decisions.md).
+    image: emqx/emqx:5.8.6
+    container_name: citylight-emqx
+    restart: unless-stopped
+    ports:
+      - "1883:1883"      # MQTT for cabinets (EC25: plain TCP, anonymous in phase 1)
+      - "18083:18083"    # dashboard: never expose publicly on the VPS
+    environment:
+      EMQX_NODE__NAME: emqx@127.0.0.1
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:?set in infra/.env}
+      # Phase-1 ACL (docs/architecture.md): devices may only publish uplinks and subscribe to commands.
+      EMQX_AUTHORIZATION__NO_MATCH: deny
+      EMQX_AUTHORIZATION__DENY_ACTION: ignore
+      EMQX_AUTHORIZATION__CACHE__ENABLE: "true"
+      EMQX_AUTHORIZATION__SOURCES: '[{type = file, enable = true, path = "/opt/emqx/etc/acl.conf"}]'
+      EMQX_MQTT__MAX_PACKET_SIZE: 64KB
+    volumes:
+      - ./emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
+      - emqx-data:/opt/emqx/data
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  db:
+    # TimescaleDB + PostGIS in one image. Pin the exact tag after the first pull (docker image ls).
+    image: timescale/timescaledb-ha:pg16
+    container_name: citylight-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-citylight}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in infra/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-citylight}
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - db-data:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-citylight} -d ${POSTGRES_DB:-citylight}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: citylight-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set in infra/.env}"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  emqx-data:
+  db-data:
+  redis-data:

@@ -12,7 +12,7 @@ Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2 (broke
 | Mốc | Trạng thái |
 |---|---|
 | **M1-UI** giao diện đầy đủ (mock) | ✅ chạy được, 18 màn hình + 12 tab chi tiết tủ, dữ liệu giả 600 tủ |
-| M0 nền (Docker, CoreIF parser, simulator) | ⏳ cần cài Docker Desktop |
+| **M0** nền tảng backend | 🟡 phần không cần Docker xong: `packages/coreif` (22 test), `apps/simulator` (E2E 17/17 với broker nhúng), `packages/db` (schema + migration), `infra/` (compose + ACL). Chưa chạy được với EMQX/Postgres thật vì máy chưa có Docker |
 | M1 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
 
 ## Chạy web (M1-UI)
@@ -56,23 +56,41 @@ Mật khẩu chung: `demo`. Tài khoản có 2FA nhập mã `123456`.
 
 Dữ liệu mock tạo lại mỗi lần tải lại trang (phiên đăng nhập được giữ trong `sessionStorage`).
 
+## Backend local (M0)
+
+Yêu cầu thêm: **Docker Desktop** (WSL2).
+
+```bash
+cp infra/.env.example infra/.env        # đặt mật khẩu thật
+cp .env.example .env
+npm run infra:up                        # EMQX :1883 (dashboard :18083), Postgres+Timescale+PostGIS :5432, Redis :6379
+npm run db:migrate                      # bảng + hypertable + continuous aggregates
+npm run sim -- --count 100              # 100 tủ giả gửi CoreIF lên EMQX
+npm test                                # unit test packages/coreif
+npm run e2e:local                       # kiểm tra end-to-end KHÔNG cần Docker (broker nhúng aedes)
+MQTT_URL=mqtt://localhost:1883 npm run e2e:local   # cùng bài kiểm tra với EMQX thật
+```
+
 ## Cấu trúc
 
 ```text
-apps/web/            React + Vite + TS (MapLibre, ECharts, TanStack Query/Table, Tailwind, Radix)
-  src/mocks/         mock API (MSW) + mock DB: trạng thái, vòng đời lệnh, lô đồng bộ, realtime giả
-  src/lib/api.ts     client /api/v1 — dùng chung cho mock và API thật
-  src/lib/realtime.ts  lớp realtime (mock emitter → Socket.IO ở M1)
-packages/shared/     type domain, nhãn, quyền RBAC, ánh xạ CoreIF mặc định
+apps/web/            React + Vite (M1-UI, mock API trong trang)
+apps/simulator/      tủ giả nói đúng CoreIF như BOARD_LTE_KEY (telemetry, ack, lọc LTID, boot, LDIA, kịch bản lỗi)
+packages/shared/     type domain, nhãn, RBAC, ánh xạ CoreIF, bảng mã lỗi E101–E804
+packages/coreif/     parse/build frame CoreIF, telemetry, ack, boot, demo (LDIA, time-sync), lệnh
+packages/db/         Drizzle schema, migration (0000 extensions, 0001 bảng, 0002 Timescale) + sql/post (continuous aggregates)
+infra/               docker-compose (EMQX 5.8, TimescaleDB-HA pg16, Redis 7.4) + ACL EMQX
 docs/                spec, quyết định, device contract, kiến trúc
 ```
 
-Sắp có: `apps/api` (NestJS), `apps/workers` (ingest, command, rules, scheduler), `apps/simulator`, `packages/coreif`, `packages/db`, `infra/`.
+Sắp có: `apps/api` (NestJS) và `apps/workers` (ingest, command, rules, scheduler) ở M1.
 
 ## Ghi chú kỹ thuật
 
 - Bản đồ nền (`src/pages/map/mapStyle.ts`): mặc định "Tự động" = VersaTiles Colorful (sáng) / Eclipse (tối) — mở, không cần key, tự host được cho production. Chọn thêm trong nút Lớp: CARTO Voyager / Dark Matter (đẹp nhưng dùng thương mại cần gói CARTO), OpenFreeMap Liberty / Positron, Vệ tinh, Vệ tinh + tên đường (Esri).
 - Icon bản đồ là SVG tự vẽ (`src/pages/map/mapIcons.ts`): ghim tủ theo màu + ký hiệu trạng thái, trụ đèn sáng/tắt; tuyến tô màu theo trạng thái nhánh.
+- `.npmrc` `legacy-peer-deps=true`: drizzle-orm khai báo peer tùy chọn (react-native, expo…) xung đột React 18 của web.
+- `LGPS` = `lat'lon'sats` chứa dấu `'`: parser tách mỗi cặp ở dấu `'` ĐẦU TIÊN. Telemetry lưu theo giờ nhận của server, không dùng PTIM làm khóa (PTIM chỉ chính xác tới phút).
 - `vite.config.ts` loại `maplibre-gl` khỏi pre-bundle (MapLibre 6 nạp worker theo đường dẫn tương đối).
 - Bundle production ~2.8 MB (chưa code-split) — tách chunk theo trang ở M7/M11.
 - Ô hiện "—" / "Chờ firmware" = thiết bị chưa gửi dữ liệu đó (spec mục 4.2, 5).

@@ -18,6 +18,7 @@ import type {
   Thresholds,
 } from '@citylight/shared';
 import { decodeRs485SelfTest, describeCommand } from '@citylight/shared';
+import { buildCommandFrame } from '@citylight/coreif';
 import type { CabinetDiagnostics, DiagnosticItem, Rs485SelfTest } from '@citylight/shared';
 import {
   activityLogs,
@@ -246,38 +247,8 @@ const TYPE_CAPABILITY: Partial<Record<CommandType, Capability>> = {
 };
 
 function buildFrame(c: Cabinet, type: CommandType, p: Record<string, unknown>): string {
-  const kv: string[] = [`LTID'${c.ltid}`];
-  switch (type) {
-    case 'MANUAL_ALL':
-      kv.push(`PLN1'${p.on ? 1 : 0}`, `PLN2'${p.on ? 1 : 0}`, `PMAN'1`);
-      break;
-    case 'MANUAL_BRANCH':
-      kv.push(`PLN${p.branch}'${p.on ? 1 : 0}`, `PMAN'1`);
-      break;
-    case 'AUTO':
-      kv.push(`PMAN'0`);
-      break;
-    case 'SET_TIME':
-      kv.push(`LTIM'${new Date().toISOString().slice(0, 19)}+07:00`);
-      break;
-    case 'SET_SCHEDULE': {
-      const s = p as unknown as Schedule;
-      const t = (hhmm: string) => `2026-01-01T${hhmm}:00+07:00`;
-      if (s.mode === 1) kv.push(`PI50'0`, `T10'${t(s.on1)}`, `T20'${t(s.off1)}`);
-      else
-        kv.push(`PI50'1`, `LINE1'${s.branch1Enabled ? 1 : 0}`, `LINE2'${s.branch2Enabled ? 1 : 0}`, `T10'${t(s.on1)}`, `T20'${t(s.off1)}`, `T11'${t(s.on2)}`, `T21'${t(s.off2)}`);
-      break;
-    }
-    case 'PULSE_ON':
-      kv.push(`PI2O'1`);
-      break;
-    case 'DIAG':
-      kv.push(`LDIA'1`);
-      break;
-    default:
-      break;
-  }
-  return `*#${kv.join('&')}$`;
+  // Same builder the real command-worker will use.
+  return buildCommandFrame(c.ltid, type, p);
 }
 
 export function createCommand(

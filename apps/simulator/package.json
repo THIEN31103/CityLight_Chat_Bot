@@ -1,0 +1,20 @@
+{
+  "name": "@citylight/simulator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fake CityLight cabinets speaking CoreIF over MQTT exactly like BOARD_LTE_KEY",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "e2e:local": "tsx src/e2e-local.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@citylight/coreif": "*",
+    "@citylight/shared": "*",
+    "mqtt": "^5.10.3"
+  },
+  "devDependencies": {
+    "aedes": "^0.51.3"
+  }
+}
