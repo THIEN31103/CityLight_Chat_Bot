@@ -1,4 +1,5 @@
 import type { AlarmSeverity, AlarmType, CabinetStatus, CommandStatus, CommandType, IncidentStatus } from './domain';
+import { ERROR_CATALOG } from './errors';
 
 export const STATUS_LABELS: Record<CabinetStatus, string> = {
   offline: 'Mất kết nối',
@@ -9,25 +10,7 @@ export const STATUS_LABELS: Record<CabinetStatus, string> = {
   unknown: 'Không xác định',
 };
 
-export const ALARM_TYPE_LABELS: Record<AlarmType, string> = {
-  offline: 'Mất kết nối',
-  plc_lost: 'Mất kết nối PLC',
-  pm_lost: 'Mất đồng hồ điện',
-  ct_lost: 'Mất cảm biến CT',
-  over_voltage: 'Quá áp',
-  under_voltage: 'Thấp áp',
-  voltage_swing: 'Dao động điện áp',
-  over_current: 'Quá dòng',
-  no_load: 'Không tải',
-  leak_current: 'Rò dòng',
-  over_temp: 'Nhiệt độ tủ cao',
-  clock_drift: 'Sai giờ TĐK',
-  schedule_mismatch: 'Lệch lịch',
-  battery_low: 'Pin yếu',
-  gps_drift: 'Lệch vị trí GPS',
-  door_open: 'Mở cửa tủ',
-  contactor_fault: 'Lỗi contactor',
-};
+export const ALARM_TYPE_LABELS = Object.fromEntries(ERROR_CATALOG.map((e) => [e.type, e.title])) as Record<AlarmType, string>;
 
 export const SEVERITY_LABELS: Record<AlarmSeverity, string> = {
   critical: 'Nghiêm trọng',

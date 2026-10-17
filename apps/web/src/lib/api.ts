@@ -4,6 +4,7 @@ import type {
   Alarm,
   Area,
   CabinetDetail,
+  CabinetDiagnostics,
   CabinetSummary,
   Command,
   CommandBatch,
@@ -183,6 +184,7 @@ export const api = {
   cabinetAlarms: (id: string, limit = 20) => req<Alarm[]>('GET', `/cabinets/${id}/alarms${qs({ limit })}`),
   cabinetCommands: (id: string) => req<Command[]>('GET', `/cabinets/${id}/commands`),
   cabinetLamps: (id: string) => req<LampItem[]>('GET', `/cabinets/${id}/lamps`),
+  diagnostics: (id: string) => req<CabinetDiagnostics>('GET', `/cabinets/${id}/diagnostics`),
 
   // commands
   sendCommand: (id: string, type: CommandType, params: Record<string, unknown> = {}, opts: { queueIfOffline?: boolean } = {}) =>

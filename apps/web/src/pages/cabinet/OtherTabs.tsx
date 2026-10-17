@@ -8,6 +8,7 @@ import { useSession } from '@/stores/session';
 import { fmtDuration, fmtNum, fmtTime } from '@/lib/utils';
 import { Badge, Button, Card, CardHeader, Checkbox, Empty, Input, KV, Select, Spinner, Unsupported, toast } from '@/components/ui';
 import { DimmingEditor } from '@/components/DimmingEditor';
+import { ErrorCodeBadge } from '@/components/ErrorHelp';
 
 type Detail = CabinetDetail & { cabinet: { districtName: string; wardName: string } };
 
@@ -259,6 +260,7 @@ export function CabinetAlarmsTab({ cabinetId }: { cabinetId: string }) {
       <table className="w-full text-sm">
         <thead className="bg-muted/60 text-left text-xs text-subtle">
           <tr>
+            <th className="px-3 py-2">Mã</th>
             <th className="px-3 py-2">Nội dung</th>
             <th className="px-3 py-2">Mức</th>
             <th className="px-3 py-2">Thời điểm</th>
@@ -268,6 +270,9 @@ export function CabinetAlarmsTab({ cabinetId }: { cabinetId: string }) {
         <tbody>
           {data.map((a) => (
             <tr key={a.id} className="border-t">
+              <td className="px-3 py-2">
+                <ErrorCodeBadge type={a.type} code={a.code} />
+              </td>
               <td className="px-3 py-2">
                 <div className="font-medium">{ALARM_TYPE_LABELS[a.type]}</div>
                 <div className="text-xs text-subtle">{a.message}</div>

@@ -60,7 +60,7 @@ export function ControlTab({ detail }: { detail: Detail }) {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader title="Sơ đồ tủ" subtitle="Sơ đồ một sợi, cập nhật theo thời gian thực" actions={<StatusBadge status={state.status} />} />
+        <CardHeader title="Sơ đồ tủ" subtitle="Đèn báo trên tủ và 2 nhánh đèn, cập nhật theo thời gian thực" actions={<StatusBadge status={state.status} />} />
         <div className="p-3">
           <CabinetDiagram state={state} code={cabinet.code} />
         </div>

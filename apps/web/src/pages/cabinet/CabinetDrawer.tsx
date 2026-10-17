@@ -8,6 +8,7 @@ import { fmtTime } from '@/lib/utils';
 import { Badge, Skeleton, StatusBadge, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { ControlTab } from './ControlTab';
+import { DiagnosticsTab } from './DiagnosticsTab';
 import { MonitorTab, ChartTab, EnergyTab, LeakTempTab } from './MonitorTabs';
 import { ThresholdsTab, DimmingTab, LampsTab, InfoTab, CabinetAlarmsTab, CommandsTab } from './OtherTabs';
 
@@ -105,6 +106,7 @@ export function CabinetDrawer({
         <Tabs defaultValue="control" className="flex min-h-0 flex-1 flex-col">
           <TabsList>
             <TabsTrigger value="control">Điều khiển</TabsTrigger>
+            <TabsTrigger value="diag">Chẩn đoán lỗi</TabsTrigger>
             <TabsTrigger value="monitor">Giám sát</TabsTrigger>
             <TabsTrigger value="voltage">Điện áp</TabsTrigger>
             <TabsTrigger value="current">Dòng điện</TabsTrigger>
@@ -120,6 +122,9 @@ export function CabinetDrawer({
           <div className="min-h-0 flex-1 overflow-auto p-4">
             <TabsContent value="control">
               <ControlTab detail={data} />
+            </TabsContent>
+            <TabsContent value="diag">
+              <DiagnosticsTab detail={data} />
             </TabsContent>
             <TabsContent value="monitor">
               <MonitorTab detail={data} />

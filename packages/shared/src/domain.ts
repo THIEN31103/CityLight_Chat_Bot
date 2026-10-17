@@ -260,25 +260,42 @@ export type AlarmSeverity = 'critical' | 'major' | 'minor';
 
 export type AlarmType =
   | 'offline'
+  | 'reboot'
+  | 'flapping'
   | 'plc_lost'
   | 'pm_lost'
   | 'ct_lost'
-  | 'over_voltage'
-  | 'under_voltage'
-  | 'voltage_swing'
-  | 'over_current'
-  | 'no_load'
-  | 'leak_current'
-  | 'over_temp'
+  | 'bus_down'
+  | 'multi_slave_lost'
+  | 'rs485_selftest_fail'
+  | 'logo_lost'
   | 'clock_drift'
   | 'schedule_mismatch'
-  | 'battery_low'
-  | 'gps_drift'
+  | 'contactor_fault'
   | 'door_open'
-  | 'contactor_fault';
+  | 'dh_meter_lost'
+  | 'phase_loss'
+  | 'over_voltage'
+  | 'under_voltage'
+  | 'phase_unbalance'
+  | 'low_pf'
+  | 'leak_current'
+  | 'over_temp'
+  | 'temp_sensor_fault'
+  | 'no_load'
+  | 'over_current'
+  | 'cmd_rejected'
+  | 'cmd_unconfirmed'
+  | 'cmd_timeout'
+  | 'gps_nofix'
+  | 'gps_drift'
+  | 'battery_low'
+  | 'fw_unsafe';
 
 export interface Alarm {
   id: string;
+  /** Error catalog code (E101…), see errors.ts. */
+  code: string;
   cabinetId: string;
   cabinetName: string;
   cabinetCode: string;
@@ -365,6 +382,37 @@ export interface MapStats {
   energyTodayKwh: number | null;
   energyYesterdayKwh: number | null;
   overdueIncidents: number;
+}
+
+// ---------- Diagnostics ----------
+
+export type DiagStatus = 'ok' | 'warn' | 'fault' | 'unknown' | 'unsupported';
+
+export interface DiagnosticItem {
+  subsystem: string;
+  /** Short role of the subsystem, e.g. "LTE ↔ broker". */
+  role: string;
+  status: DiagStatus;
+  code: string | null;
+  /** Raw evidence from telemetry, e.g. "LCLI=1, PCON=0". */
+  evidence: string;
+  detail: string;
+}
+
+export interface Rs485SelfTest {
+  at: string;
+  summary: string;
+  rx: string;
+  de: string;
+  tx: string;
+  fail: boolean;
+}
+
+export interface CabinetDiagnostics {
+  items: DiagnosticItem[];
+  lastBootAt: string | null;
+  bootsLast24h: number;
+  selfTest: Rs485SelfTest | null;
 }
 
 export interface Page<T> {

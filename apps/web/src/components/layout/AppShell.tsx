@@ -83,6 +83,7 @@ function AlarmBell() {
                 <DM.Item key={a.id} onSelect={() => nav(`/?cabinet=${a.cabinetId}`)} className="cursor-pointer border-b px-3 py-2 outline-none last:border-0 hover:bg-muted data-[highlighted]:bg-muted">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-medium">
+                      <span className="mr-1 font-mono text-xs text-primary">{a.code}</span>
                       {a.cabinetCode} · {a.cabinetName}
                     </span>
                     <Badge tone={a.severity === 'critical' ? 'red' : a.severity === 'major' ? 'orange' : 'amber'}>{SEVERITY_LABELS[a.severity]}</Badge>

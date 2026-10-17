@@ -7,6 +7,7 @@ import { ALARM_TYPE_LABELS, LAMP_GROUP_LABELS, ROLE_LABELS, ROLE_PERMISSIONS, SE
 import { api } from '@/lib/api';
 import { cn, fmtTime } from '@/lib/utils';
 import { Badge, Button, Card, CardHeader, Field, Input, Modal, PageHeader, Select, Spinner, Toggle, toast } from '@/components/ui';
+import { ErrorCatalogTable } from '@/components/ErrorHelp';
 
 const TABS = [
   { id: 'users', label: 'Người dùng' },
@@ -231,6 +232,9 @@ function AlarmRulesAdmin() {
   return (
     <>
       <PageHeader title="Quy tắc cảnh báo" subtitle="Rule engine phía máy chủ; ngưỡng chi tiết đặt theo vùng hoặc từng tủ" />
+      <h2 className="mb-2 mt-2 text-base font-semibold">Bảng mã lỗi thiết bị</h2>
+      <ErrorCatalogTable />
+      <h2 className="mb-2 mt-6 text-base font-semibold">Bật / tắt quy tắc</h2>
       <Card>
         <table className="w-full text-sm">
           <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">Loại</th><th className="px-3 py-2">Mức</th><th className="px-3 py-2">Điều kiện</th><th className="px-3 py-2">Bật</th></tr></thead>

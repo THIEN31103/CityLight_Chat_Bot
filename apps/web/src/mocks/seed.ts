@@ -15,6 +15,7 @@ import type {
   User,
   Zone,
 } from '@citylight/shared';
+import { errorOf } from '@citylight/shared';
 
 export function rng(seed: number) {
   let s = seed >>> 0;
@@ -193,16 +194,30 @@ for (const c of cabinets) {
   for (const z of zones) if (c.zone1Id === z.id || c.zone2Id === z.id) z.cabinetCount++;
 }
 
-// ---------- Alarms ----------
+// ---------- Alarms (codes from packages/shared/src/errors.ts) ----------
 
-const ALARM_SEED: { type: AlarmType; sev: Alarm['severity']; msg: (v: number) => string; v: () => number }[] = [
-  { type: 'over_voltage', sev: 'major', msg: (v) => `Điện áp pha L2 = ${v} V vượt ngưỡng 240 V`, v: () => +between(241, 252).toFixed(1) },
-  { type: 'under_voltage', sev: 'major', msg: (v) => `Điện áp pha L1 = ${v} V dưới ngưỡng 200 V`, v: () => +between(185, 199).toFixed(1) },
-  { type: 'leak_current', sev: 'critical', msg: (v) => `Dòng rò ${v} mA vượt ngưỡng 30 mA`, v: () => Math.floor(between(31, 90)) },
-  { type: 'over_temp', sev: 'minor', msg: (v) => `Nhiệt độ tủ ${v} °C vượt ngưỡng 55 °C`, v: () => Math.floor(between(56, 66)) },
-  { type: 'no_load', sev: 'major', msg: () => 'Nhánh 2 đang bật nhưng dòng < 0.5 A', v: () => 0.2 },
-  { type: 'clock_drift', sev: 'minor', msg: (v) => `Giờ TĐK lệch ${v} phút so với máy chủ`, v: () => Math.floor(between(6, 40)) },
-  { type: 'battery_low', sev: 'minor', msg: (v) => `Pin dự phòng ${v} mV`, v: () => Math.floor(between(3300, 3550)) },
+type Seed = { type: AlarmType; msg: (v: number) => string; v: () => number };
+const ALARM_SEED: Seed[] = [
+  { type: 'over_voltage', msg: (v) => `Điện áp pha L2 = ${v} V vượt ngưỡng 240 V`, v: () => +between(241, 252).toFixed(1) },
+  { type: 'under_voltage', msg: (v) => `Điện áp pha L1 = ${v} V dưới ngưỡng 200 V`, v: () => +between(185, 199).toFixed(1) },
+  { type: 'leak_current', msg: (v) => `Dòng rò ${v} mA vượt ngưỡng 30 mA`, v: () => Math.floor(between(31, 90)) },
+  { type: 'over_temp', msg: (v) => `Nhiệt độ tủ ${v} °C vượt ngưỡng 55 °C`, v: () => Math.floor(between(56, 66)) },
+  { type: 'no_load', msg: () => 'Nhánh 2 đang sáng nhưng dòng pha L2 < 0,5 A', v: () => 0.2 },
+  { type: 'clock_drift', msg: (v) => `Giờ LOGO lệch ${v} phút so với máy chủ`, v: () => Math.floor(between(6, 40)) },
+  { type: 'battery_low', msg: (v) => `Pin dự phòng ${v} mV dưới ngưỡng 3600 mV`, v: () => Math.floor(between(3300, 3550)) },
+  { type: 'phase_unbalance', msg: (v) => `Chênh lệch dòng giữa các pha ${v} %`, v: () => Math.floor(between(31, 60)) },
+  { type: 'low_pf', msg: (v) => `cosφ tổng ${v} khi đèn sáng`, v: () => +between(0.7, 0.84).toFixed(2) },
+  { type: 'gps_nofix', msg: () => 'LGPS=X sau 10 phút từ khi khởi động', v: () => 0 },
+  { type: 'gps_drift', msg: (v) => `GPS thiết bị cách vị trí khai báo ${v} m`, v: () => Math.floor(between(220, 900)) },
+  { type: 'schedule_mismatch', msg: () => 'Nhánh 1 tắt trong giờ lịch (18:00–05:45) quá 10 phút', v: () => 0 },
+];
+const HISTORY_ONLY: Seed[] = [
+  { type: 'reboot', msg: () => 'Nhận frame stm32/ec25/boot', v: () => 0 },
+  { type: 'flapping', msg: (v) => `${v} lần mất / có lại kết nối trong 1 giờ`, v: () => Math.floor(between(3, 8)) },
+  { type: 'cmd_unconfirmed', msg: () => 'Bật nhánh 1: ack rc=0 nhưng LQ2 không đổi sau 60 s', v: () => 0 },
+  { type: 'cmd_timeout', msg: () => 'Đặt lịch: không nhận ack sau 30 s', v: () => 0 },
+  { type: 'cmd_rejected', msg: () => 'Bật toàn tủ: ack rc=-1 (ghi Modbus xuống PLC_KEY lỗi)', v: () => -1 },
+  { type: 'rs485_selftest_fail', msg: () => 'LDIA: A0D0B1C1 — RO mức thấp lúc rảnh', v: () => 0 },
 ];
 
 export const alarms: Alarm[] = [];
@@ -215,15 +230,17 @@ export function wardName(c: Cabinet): string {
   return c.wardId ? areaById.get(c.wardId)!.name : '—';
 }
 
-export function newAlarm(c: Cabinet, type: AlarmType, severity: Alarm['severity'], message: string, value: number | null, startedMs: number, active: boolean): Alarm {
+export function newAlarm(c: Cabinet, type: AlarmType, message: string, value: number | null, startedMs: number, active: boolean): Alarm {
+  const def = errorOf(type);
   const a: Alarm = {
     id: `al${alarmSeq++}`,
+    code: def?.code ?? 'E000',
     cabinetId: c.id,
     cabinetName: c.name,
     cabinetCode: c.code,
     districtName: districtName(c),
     type,
-    severity,
+    severity: def?.severity ?? 'minor',
     message,
     value,
     startedAt: iso(startedMs),
@@ -236,22 +253,108 @@ export function newAlarm(c: Cabinet, type: AlarmType, severity: Alarm['severity'
   return a;
 }
 
+/** Per-cabinet device fault scenario, so telemetry and alarms tell the same story. */
+export type Scenario = 'bus_down' | 'multi_slave_lost' | 'pm_lost' | 'ct_lost' | 'dh_meter_lost' | 'phase_loss' | 'temp_sensor_fault' | 'logo_lost';
+export const scenarios = new Map<string, Scenario>();
+export const bootInfo = new Map<string, { lastBootAt: string; bootsLast24h: number }>();
+
+function applyScenario(c: Cabinet, s: CabinetState, sc: Scenario) {
+  scenarios.set(c.id, sc);
+  const clearPm = () => {
+    s.pmOnline = false;
+    s.vL1 = s.vL2 = s.vL3 = s.iL1 = s.iL2 = s.iL3 = s.pfL1 = s.pfL2 = s.pfL3 = s.pfTotal = s.pTotalKw = null;
+  };
+  const clearCt = () => {
+    s.leakMa = null;
+    s.tempC = null;
+  };
+  const started = now - between(3, 240) * 60000;
+  switch (sc) {
+    case 'bus_down':
+      s.busStatus = '4';
+      s.plcOnline = false;
+      s.branch1On = s.branch2On = s.manualMode = null;
+      s.deviceTime = null;
+      clearPm();
+      clearCt();
+      newAlarm(c, 'bus_down', 'LCLI=4: PLC_KEY, PM_KEY, CT_KEY cùng không trả lời', null, started, true);
+      break;
+    case 'multi_slave_lost':
+      s.busStatus = 'X';
+      clearPm();
+      clearCt();
+      newAlarm(c, 'multi_slave_lost', 'LCLI=X: PM_KEY và CT_KEY không trả lời (PLC_KEY vẫn trả lời)', null, started, true);
+      break;
+    case 'pm_lost':
+      s.busStatus = '2';
+      clearPm();
+      newAlarm(c, 'pm_lost', 'LCLI=2, MCON=0: LTE không đọc được PM_KEY', null, started, true);
+      break;
+    case 'ct_lost':
+      s.busStatus = '3';
+      clearCt();
+      newAlarm(c, 'ct_lost', 'LCLI=3: LTE không đọc được CT_KEY', null, started, true);
+      break;
+    case 'dh_meter_lost':
+      s.vL1 = s.vL2 = s.vL3 = s.iL1 = s.iL2 = s.iL3 = s.pTotalKw = s.pfTotal = s.pfL1 = s.pfL2 = s.pfL3 = 0;
+      newAlarm(c, 'dh_meter_lost', 'MCON=1 nhưng U/I/P = 0: PM_KEY không đọc được đồng hồ DH', null, started, true);
+      break;
+    case 'phase_loss':
+      s.vL3 = 0;
+      s.iL3 = 0;
+      newAlarm(c, 'phase_loss', 'Pha L3 = 0 V, L1/L2 bình thường', 0, started, true);
+      break;
+    case 'temp_sensor_fault':
+      s.tempC = null;
+      newAlarm(c, 'temp_sensor_fault', 'CTTE=1000: CT_KEY không đọc được DS18B20', 1000, started, true);
+      break;
+    case 'logo_lost':
+      s.deviceTime = iso(Math.floor((now - 14 * 60000) / 60000) * 60000);
+      newAlarm(c, 'logo_lost', 'PCON=1 nhưng PTIM không đổi 14 phút: PLC_KEY không đọc được LOGO', null, now - 14 * 60000, true);
+      break;
+  }
+}
+
+const SCENARIO_ROLL: [Scenario, number][] = [
+  ['bus_down', 0.004],
+  ['multi_slave_lost', 0.004],
+  ['pm_lost', 0.006],
+  ['ct_lost', 0.006],
+  ['dh_meter_lost', 0.008],
+  ['phase_loss', 0.004],
+  ['temp_sensor_fault', 0.008],
+  ['logo_lost', 0.006],
+];
+
 for (const c of cabinets) {
   const s = states.get(c.id)!;
-  if (!s.online) newAlarm(c, 'offline', 'critical', 'Không nhận dữ liệu từ tủ', null, Date.parse(s.lastSeenAt!), true);
-  if (s.plcOnline === false) newAlarm(c, 'plc_lost', 'critical', 'LTE không đọc được PLC_KEY (PCON=0)', null, now - between(2, 120) * 60000, true);
-  if (s.online && r() < 0.035) {
+  const boots = r() < 0.06 ? 2 + Math.floor(r() * 4) : r() < 0.3 ? 1 : 0;
+  bootInfo.set(c.id, { lastBootAt: iso(now - (boots ? between(0.2, 20) : between(30, 400)) * 3600000), bootsLast24h: boots });
+  if (!s.online) newAlarm(c, 'offline', 'Không nhận frame telemetry quá 60 s', null, Date.parse(s.lastSeenAt!), true);
+  if (s.plcOnline === false && s.online) newAlarm(c, 'plc_lost', 'LCLI=1, PCON=0: LTE không đọc được PLC_KEY', null, now - between(2, 120) * 60000, true);
+  if (c.fwProfile === 'v2-1307ebc') newAlarm(c, 'fw_unsafe', 'Firmware 1307ebc: web chặn điều khiển tủ này', null, Date.parse(c.installedAt), true);
+  if (boots >= 3) newAlarm(c, 'flapping', `${boots} lần khởi động lại trong 24 giờ`, boots, now - between(1, 8) * 3600000, true);
+  if (s.online && s.plcOnline !== false) {
+    let roll = r();
+    for (const [sc, p] of SCENARIO_ROLL) {
+      if (roll < p) {
+        applyScenario(c, s, sc);
+        break;
+      }
+      roll -= p;
+    }
+  }
+  if (s.online && !scenarios.has(c.id) && r() < 0.035) {
     const t = pick(ALARM_SEED);
     const v = t.v();
-    const al = newAlarm(c, t.type, t.sev, t.msg(v), v, now - between(1, 300) * 60000, true);
-    if (t.type === 'leak_current') s.leakMa = al.value;
+    newAlarm(c, t.type, t.msg(v), v, now - between(1, 300) * 60000, true);
+    if (t.type === 'leak_current') s.leakMa = v;
   }
-  // history
   const hist = Math.floor(r() * 4);
   for (let k = 0; k < hist; k++) {
-    const t = pick(ALARM_SEED);
+    const t = r() < 0.35 ? pick(HISTORY_ONLY) : pick(ALARM_SEED);
     const v = t.v();
-    newAlarm(c, t.type, t.sev, t.msg(v), v, now - between(1, 30) * 86400000, false);
+    newAlarm(c, t.type, t.msg(v), v, now - between(1, 30) * 86400000, false);
   }
 }
 

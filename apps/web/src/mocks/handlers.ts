@@ -24,6 +24,7 @@ import {
   defaultDimming,
   zoneSchedules,
   refreshState,
+  diagnosticsOf,
 } from './db';
 import { activityLogs, addLog, alarms, areas, cabinets, districtName, incidents, managementUnits, states, users, wardName, zones, defaultSchedule } from './seed';
 
@@ -284,6 +285,7 @@ export const handlers = [
     const limit = Number(new URL(request.url).searchParams.get('limit') ?? 20);
     return HttpResponse.json(alarms.filter((a) => a.cabinetId === params.id).sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, limit));
   })),
+  http.get(`${API}/cabinets/:id/diagnostics`, wrap(({ params }) => HttpResponse.json(diagnosticsOf(params.id!)))),
   http.get(`${API}/cabinets/:id/commands`, wrap(({ params }: { params: Record<string, string> }) =>
     HttpResponse.json(commands.filter((c) => c.cabinetId === params.id).slice(0, 50)),
   )),

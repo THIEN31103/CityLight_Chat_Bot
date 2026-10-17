@@ -3,14 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Download, Check } from 'lucide-react';
-import type { Alarm, AlarmType } from '@citylight/shared';
-import { ALARM_TYPE_LABELS, SEVERITY_LABELS } from '@citylight/shared';
+import type { Alarm } from '@citylight/shared';
+import { ALARM_TYPE_LABELS, ERROR_CATALOG, SEVERITY_LABELS, errorOf } from '@citylight/shared';
 import { api } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { downloadCsv } from '@/lib/exportFile';
 import { fmtDuration, fmtTime } from '@/lib/utils';
 import { DataTable } from '@/components/DataTable';
-import { Badge, Button, Input, PageHeader, Select, Tabs, TabsList, TabsTrigger, toast } from '@/components/ui';
+import { Badge, Button, Input, KV, Modal, PageHeader, Select, Tabs, TabsList, TabsTrigger, toast } from '@/components/ui';
+import { ErrorCodeBadge, ErrorGuide } from '@/components/ErrorHelp';
 
 export function AlarmsPage() {
   const nav = useNavigate();
@@ -23,6 +24,7 @@ export function AlarmsPage() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [page, setPage] = useState(1);
+  const [open, setOpen] = useState<Alarm | null>(null);
   const [size, setSize] = useState(20);
   const tree = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
   const districts = tree.data?.areas.filter((a) => a.kind === 'district') ?? [];
@@ -39,6 +41,7 @@ export function AlarmsPage() {
 
   const columns = useMemo<ColumnDef<Alarm, unknown>[]>(
     () => [
+      { header: 'Mã', cell: ({ row: r }) => <ErrorCodeBadge type={r.original.type} code={r.original.code} /> },
       { header: 'Tủ', cell: ({ row: r }) => <div><div className="font-medium">{r.original.cabinetCode}</div><div className="text-xs text-subtle">{r.original.cabinetName}</div></div> },
       { header: 'Khu vực', accessorKey: 'districtName' },
       { header: 'Loại', cell: ({ row: r }) => ALARM_TYPE_LABELS[r.original.type] },
@@ -73,7 +76,7 @@ export function AlarmsPage() {
           <Button
             variant="outline"
             onClick={() =>
-              downloadCsv('canh-bao.csv', ['Mã tủ', 'Tên tủ', 'Khu vực', 'Loại', 'Mức', 'Nội dung', 'Bắt đầu', 'Kết thúc'], (data?.items ?? []).map((a) => [a.cabinetCode, a.cabinetName, a.districtName, ALARM_TYPE_LABELS[a.type], SEVERITY_LABELS[a.severity], a.message, fmtTime(a.startedAt), fmtTime(a.endedAt)]))
+              downloadCsv('canh-bao.csv', ['Mã lỗi', 'Mã tủ', 'Tên tủ', 'Khu vực', 'Loại', 'Mức', 'Nội dung', 'Bắt đầu', 'Kết thúc'], (data?.items ?? []).map((a) => [a.code, a.cabinetCode, a.cabinetName, a.districtName, ALARM_TYPE_LABELS[a.type], SEVERITY_LABELS[a.severity], a.message, fmtTime(a.startedAt), fmtTime(a.endedAt)]))
             }
           >
             <Download className="h-4 w-4" /> Xuất Excel
@@ -95,7 +98,7 @@ export function AlarmsPage() {
         onPage={setPage}
         onSize={(s) => { setSize(s); setPage(1); }}
         loading={isLoading}
-        onRowClick={(a) => nav(`/?cabinet=${a.cabinetId}`)}
+        onRowClick={(a) => setOpen(a)}
         toolbar={
           <>
             <Select value={district} onChange={(e) => { setDistrict(e.target.value); setPage(1); }}>
@@ -105,7 +108,15 @@ export function AlarmsPage() {
             </Select>
             <Select value={type} onChange={(e) => { setType(e.target.value); setPage(1); }}>
               <option value="">Tất cả loại</option>
-              {(Object.keys(ALARM_TYPE_LABELS) as AlarmType[]).map((t) => <option key={t} value={t}>{ALARM_TYPE_LABELS[t]}</option>)}
+              {[...new Set(ERROR_CATALOG.map((e) => e.category))].map((cat) => (
+                <optgroup key={cat} label={cat}>
+                  {ERROR_CATALOG.filter((e) => e.category === cat).map((e) => (
+                    <option key={e.type} value={e.type}>
+                      {e.code} · {e.title}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
             </Select>
             <Select value={severity} onChange={(e) => { setSeverity(e.target.value); setPage(1); }}>
               <option value="">Mọi mức</option>
@@ -116,6 +127,42 @@ export function AlarmsPage() {
           </>
         }
       />
+      <Modal
+        open={!!open}
+        onOpenChange={(v) => !v && setOpen(null)}
+        title={open ? `${open.code} · ${ALARM_TYPE_LABELS[open.type]}` : ''}
+        className="w-[min(680px,calc(100vw-32px))]"
+        footer={
+          open && (
+            <>
+              {canAck && !open.ackedBy && (
+                <Button variant="outline" onClick={() => { ack.mutate(open.id); setOpen(null); }}>
+                  Xác nhận đã biết
+                </Button>
+              )}
+              <Button onClick={() => nav(`/?cabinet=${open.cabinetId}`)}>Mở tủ trên bản đồ</Button>
+            </>
+          )
+        }
+      >
+        {open && (
+          <div className="space-y-4">
+            <div>
+              <KV label="Tủ" value={`${open.cabinetCode} · ${open.cabinetName}`} />
+              <KV label="Khu vực" value={open.districtName} />
+              <KV label="Chi tiết" value={open.message} />
+              <KV label="Bắt đầu" value={fmtTime(open.startedAt)} />
+              <KV label="Kéo dài" value={`${fmtDuration(open.startedAt, open.endedAt)}${open.active ? ' (đang diễn ra)' : ''}`} />
+              <KV label="Xác nhận" value={open.ackedBy ? `${open.ackedBy} · ${fmtTime(open.ackedAt)}` : 'Chưa'} />
+            </div>
+            {errorOf(open.type) && (
+              <div className="rounded-md border bg-muted/40 p-3">
+                <ErrorGuide def={errorOf(open.type)!} />
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
