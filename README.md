@@ -3,8 +3,9 @@
 Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2 (broker MQTT + backend + web). Quy mô thiết kế 10.000 tủ. **Dự án production.**
 
 - Spec: [`docs/spec.md`](docs/spec.md) · Quyết định: [`docs/decisions.md`](docs/decisions.md)
-- Project overview: [`../03 Projects/CityLight Server.md`](../03%20Projects/CityLight%20Server.md)
-- Repo git riêng (nested trong repo firmware, đã exclude ở `.git/info/exclude` của repo firmware).
+- Repo: https://github.com/dgbao2704/server_citylight (thư mục làm việc `D:\Viet_Nghiep_Project\CityLight\Server`).
+- Project overview + nhật ký: workspace firmware `release_citylight/city_light_v2/03 Projects/CityLight Server.md`.
+- Giao thức thiết bị: `docs/device-contract.md` (nguồn sự thật là repo firmware `city_light_v2`, `CLAUDE.md` + `BOARD_LTE_KEY/Mylib/core_if.c`).
 
 ## Trạng thái mốc
 
@@ -25,12 +26,12 @@ npm run dev:web
 
 Mở http://localhost:5173. Mặc định chạy **mock API** (handler MSW gọi trực tiếp trong trang qua `getResponse`, không dùng Service Worker vì trình duyệt tắt SW sau ~30 s idle làm app ngừng tải), không cần backend. Khi có API thật: `VITE_USE_MOCK=false npm run dev:web` (Vite proxy `/api` → `localhost:3000`).
 
-### Deploy bản demo (GitLab Pages)
+### Deploy bản demo
 
-Mỗi lần push nhánh `server` lên GitLab, job `pages` trong `.gitlab-ci.yml` build web (mock, không backend) và publish. URL xem ở **Deploy → Pages** của project (thường `https://<namespace>.gitlab.io/city_light_v2/`, hoặc domain riêng nếu bật "unique domain"). Base path tự lấy từ `CI_PAGES_URL`.
+Repo GitHub `dgbao2704/server_citylight` (private). Host cho bản demo: đang chọn (xem `docs/decisions.md`). Build tĩnh:
 
-- Ai có link đều xem được nếu project public. Muốn giới hạn: **Settings → General → Visibility → Pages** = "Only project members".
-- Build thử local giống CI (Git Bash cần tắt đổi đường dẫn): `MSYS_NO_PATHCONV=1 VITE_BASE=/city_light_v2/ npm run build:web`.
+- Lệnh build: `npm ci && npm run build:web` · thư mục output: `apps/web/dist` · Node 22.
+- Chạy ở sub-path (vd `/server_citylight/`): đặt biến `VITE_BASE=/server_citylight/` lúc build. Chạy ở domain gốc: không cần.
 - Đây chỉ là bản giao diện + dữ liệu giả. Hệ thống thật (broker, API, DB) deploy lên VPS ở M11.
 
 ### Tài khoản mẫu (chỉ trong mock, `apps/web/src/mocks/seed.ts`)
