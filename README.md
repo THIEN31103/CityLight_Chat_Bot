@@ -26,12 +26,21 @@ npm run dev:web
 
 Mở http://localhost:5173. Mặc định chạy **mock API** (handler MSW gọi trực tiếp trong trang qua `getResponse`, không dùng Service Worker vì trình duyệt tắt SW sau ~30 s idle làm app ngừng tải), không cần backend. Khi có API thật: `VITE_USE_MOCK=false npm run dev:web` (Vite proxy `/api` → `localhost:3000`).
 
-### Deploy bản demo
+### Deploy bản demo (Cloudflare Pages)
 
-Repo GitHub `dgbao2704/server_citylight` (private). Host cho bản demo: đang chọn (xem `docs/decisions.md`). Build tĩnh:
+Repo GitHub private `dgbao2704/server_citylight` nối với Cloudflare Pages: mỗi lần push `main` → tự build + deploy lên `https://<project>.pages.dev`.
 
-- Lệnh build: `npm ci && npm run build:web` · thư mục output: `apps/web/dist` · Node 22.
-- Chạy ở sub-path (vd `/server_citylight/`): đặt biến `VITE_BASE=/server_citylight/` lúc build. Chạy ở domain gốc: không cần.
+| Thiết lập Cloudflare | Giá trị |
+|---|---|
+| Framework preset | None |
+| Build command | `npm run build:web` |
+| Build output directory | `apps/web/dist` |
+| Root directory | (để trống) |
+| Node | `.nvmrc` = 22 |
+
+- Chạy ở domain gốc nên không cần `VITE_BASE`. SPA: Cloudflare tự trả `index.html` cho đường dẫn sâu (không có `404.html`).
+- Header bảo mật/cache: `apps/web/public/_headers`.
+- Giới hạn người xem: Cloudflare Zero Trust → Access (chỉ email được mời).
 - Đây chỉ là bản giao diện + dữ liệu giả. Hệ thống thật (broker, API, DB) deploy lên VPS ở M11.
 
 ### Tài khoản mẫu (chỉ trong mock, `apps/web/src/mocks/seed.ts`)
