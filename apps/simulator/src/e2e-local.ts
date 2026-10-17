@@ -37,7 +37,8 @@ async function main() {
   let boots = 0;
   const demos: ReturnType<typeof parseDemo>[] = [];
 
-  const server_ = mqtt.connect(URL, { clientId: 'citylight-backend-e2e' });
+  const auth = process.env.MQTT_USERNAME ? { username: process.env.MQTT_USERNAME, password: process.env.MQTT_PASSWORD } : {};
+  const server_ = mqtt.connect(URL, { clientId: 'citylight-backend-e2e', ...auth });
   await new Promise<void>((r) => server_.on('connect', () => r()));
   server_.subscribe([TOPICS.telemetry, TOPICS.echo, TOPICS.demo, TOPICS.boot]);
   server_.on('message', (topic, buf) => {
@@ -110,6 +111,33 @@ async function main() {
   await sleep(1500);
   const st = demos.find((d) => d.kind === 'selftest' && d.ltid === 'SIM0010');
   check('LDIA: báo cáo RS485 parse được (A1D1B1C1)', !!st && st.kind === 'selftest' && st.summary === 'A1D1B1C1');
+
+  // ---- broker ACL (only meaningful against EMQX with infra/emqx/acl.conf) ----
+  if (!useEmbedded) {
+    // An anonymous client (= what a cabinet or an attacker looks like) must not be able to send commands ...
+    acks.length = 0;
+    const intruder = mqtt.connect(URL, { clientId: `ec25_intruder_${Date.now()}` });
+    await new Promise<void>((r) => intruder.on('connect', () => r()));
+    intruder.publish(TOPICS.command, buildCommandFrame('SIM0002', 'MANUAL_ALL', { on: true }));
+    await sleep(2500);
+    check('ACL: client anonymous KHÔNG gửi được lệnh (SIM0002 không ack)', !acks.some((a) => a.ltid === 'SIM0002'));
+    // ... nor read other cabinets' telemetry.
+    // mqtt.js rejects the promise when the broker answers SUBACK 0x80 (not authorized).
+    const subResult = await intruder.subscribeAsync(TOPICS.telemetry).then(
+      (g) => g.map((x) => x.qos).join(','),
+      (e: { packet?: { granted?: number[] } }) => `denied ${e.packet?.granted?.join(',') ?? ''}`.trim(),
+    );
+    check('ACL: client anonymous KHÔNG subscribe được telemetry', subResult.startsWith('denied') || subResult === '128', subResult);
+    await intruder.endAsync();
+    // Guessing a backend-looking username gives no extra rights.
+    acks.length = 0;
+    const guess = mqtt.connect(URL, { clientId: `guess_${Date.now()}`, username: 'citylight-backend' });
+    await new Promise<void>((r) => guess.on('connect', () => r()));
+    guess.publish(TOPICS.command, buildCommandFrame('SIM0002', 'MANUAL_ALL', { on: true }));
+    await sleep(2500);
+    check('ACL: đoán username backend vẫn KHÔNG gửi được lệnh', !acks.some((a) => a.ltid === 'SIM0002'));
+    await guess.endAsync();
+  }
 
   await Promise.all(sims.map((s) => s.stop()));
   await server_.endAsync();

@@ -5,6 +5,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigserial,
   boolean,
+  customType,
   doublePrecision,
   geometry,
   index,
@@ -25,6 +26,8 @@ const id = () => uuid('id').primaryKey().defaultRandom();
 const tsz = (name: string) => timestamp(name, { withTimezone: true });
 const createdAt = () => tsz('created_at').notNull().defaultNow();
 const point = (name: string) => geometry(name, { type: 'point', mode: 'xy', srid: 4326 });
+/** drizzle's geometry() only models points; routes need a LineString (WKT/GeoJSON handled in queries). */
+const lineString = customType<{ data: string; driverData: string }>({ dataType: () => 'geometry(LineString, 4326)' });
 
 // ---------- enums ----------
 export const roleEnum = pgEnum('role', ['admin', 'operator', 'viewer', 'maintenance']);
@@ -143,7 +146,7 @@ export const routes = pgTable('routes', {
   cabinetId: uuid('cabinet_id').notNull().references(() => cabinets.id, { onDelete: 'cascade' }),
   code: text('code').notNull(),
   branch: smallint('branch').notNull(),
-  path: geometry('path', { type: 'linestring', srid: 4326 }),
+  path: lineString('path'),
 });
 
 export const poles = pgTable(

@@ -3,7 +3,7 @@
 Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2. Hệ thống **mới hoàn toàn**. Quy mô thiết kế **10.000 tủ**.
 Tham khảo chức năng: `../prompt_xay_dung_lai_he_thong_chieu_sang.md` (chỉ tham khảo). Giao thức thiết bị: `device-contract.md`. Quyết định: `decisions.md`.
 
-Trạng thái: spec v0.1 Bảo duyệt "tương đối ổn" (2026-10-17). **M1-UI xong** (web mock, `apps/web`). **M0 đang làm**: coreif + simulator + db schema + infra xong, chờ Docker để chạy với EMQX/Postgres thật.
+Trạng thái: spec v0.1 Bảo duyệt "tương đối ổn" (2026-10-17). **M1-UI xong** (web mock, `apps/web`). **M0 xong** (stack Docker local chạy, migrate, E2E với EMQX thật 20/20). Tiếp theo: M1.
 
 ---
 

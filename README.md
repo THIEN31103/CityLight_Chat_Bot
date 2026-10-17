@@ -12,7 +12,7 @@ Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2 (broke
 | Mốc | Trạng thái |
 |---|---|
 | **M1-UI** giao diện đầy đủ (mock) | ✅ chạy được, 18 màn hình + 12 tab chi tiết tủ, dữ liệu giả 600 tủ |
-| **M0** nền tảng backend | 🟡 phần không cần Docker xong: `packages/coreif` (22 test), `apps/simulator` (E2E 17/17 với broker nhúng), `packages/db` (schema + migration), `infra/` (compose + ACL). Chưa chạy được với EMQX/Postgres thật vì máy chưa có Docker |
+| **M0** nền tảng backend | ✅ compose (EMQX 5.8.6, PG 16.15 + TimescaleDB 2.30.2 + PostGIS 3.6.4, Redis 7.4) chạy; migrate OK (30 bảng, 2 hypertable, 3 continuous aggregate); `coreif` 22 test; E2E với EMQX thật 20/20 (gồm ACL); tải thử 1.000 tủ giả |
 | M1 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
 
 ## Chạy web (M1-UI)
@@ -58,17 +58,19 @@ Dữ liệu mock tạo lại mỗi lần tải lại trang (phiên đăng nhập
 
 ## Backend local (M0)
 
-Yêu cầu thêm: **Docker Desktop** (WSL2).
+Yêu cầu thêm: **Docker Desktop** (WSL2). Trên máy này Docker cài theo user tại `%LOCALAPPDATA%\Programs\DockerDesktop` — mở Docker Desktop trước khi chạy.
+
+**Bảo mật broker giai đoạn 1:** tủ kết nối anonymous (firmware chưa có user/pass). EMQX 5 không cho anonymous khi bật authenticator và không phân quyền theo listener, nên backend được nhận diện bằng **username bí mật** trong ACL sinh từ `infra/.env` (`infra/emqx/acl.conf.tmpl`). M1 chuyển sang xác thực HTTP qua `apps/api`.
 
 ```bash
-cp infra/.env.example infra/.env        # đặt mật khẩu thật
+cp infra/.env.example infra/.env        # đặt mật khẩu thật + MQTT_BACKEND_USER ngẫu nhiên
 cp .env.example .env
-npm run infra:up                        # EMQX :1883 (dashboard :18083), Postgres+Timescale+PostGIS :5432, Redis :6379
+npm run infra:up                        # sinh infra/emqx/acl.conf rồi chạy EMQX :1883 (dashboard :18083), Postgres+Timescale+PostGIS :5432, Redis :6379
 npm run db:migrate                      # bảng + hypertable + continuous aggregates
 npm run sim -- --count 100              # 100 tủ giả gửi CoreIF lên EMQX
 npm test                                # unit test packages/coreif
 npm run e2e:local                       # kiểm tra end-to-end KHÔNG cần Docker (broker nhúng aedes)
-MQTT_URL=mqtt://localhost:1883 npm run e2e:local   # cùng bài kiểm tra với EMQX thật
+MQTT_URL=mqtt://localhost:1883 MQTT_USERNAME=<MQTT_BACKEND_USER> npm run e2e:local   # với EMQX thật (+3 bài ACL)
 ```
 
 ## Cấu trúc

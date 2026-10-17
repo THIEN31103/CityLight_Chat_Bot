@@ -12,7 +12,8 @@ services:
     environment:
       EMQX_NODE__NAME: emqx@127.0.0.1
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:?set in infra/.env}
-      # Phase-1 ACL (docs/architecture.md): devices may only publish uplinks and subscribe to commands.
+      # Phase 1: no authenticator (EC25 cabinets connect anonymously). The backend is identified by a
+      # secret username in the rendered ACL (see emqx/acl.conf.tmpl). M1: HTTP authn/authz via apps/api.
       EMQX_AUTHORIZATION__NO_MATCH: deny
       EMQX_AUTHORIZATION__DENY_ACTION: ignore
       EMQX_AUTHORIZATION__CACHE__ENABLE: "true"
@@ -28,8 +29,8 @@ services:
       retries: 10
 
   db:
-    # TimescaleDB + PostGIS in one image. Pin the exact tag after the first pull (docker image ls).
-    image: timescale/timescaledb-ha:pg16
+    # TimescaleDB + PostGIS in one image, pinned by digest (PostgreSQL 16.15, TimescaleDB 2.30.2, PostGIS 3.6.4).
+    image: timescale/timescaledb-ha:pg16@sha256:9c6c86701e9b9ea0d7af055338443cd66741528406fa383e5de5171d2a7a366b
     container_name: citylight-db
     restart: unless-stopped
     ports:

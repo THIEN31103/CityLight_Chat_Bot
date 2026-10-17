@@ -1,0 +1,20 @@
+%% CityLight EMQX authorization, phase 1 — TEMPLATE. infra/scripts/gen-emqx-acl.mjs renders
+%% infra/emqx/acl.conf (gitignored) with the backend username from infra/.env.
+%%
+%% Why a secret username and not a password: cabinets connect anonymously (EC25 firmware sends no
+%% credentials) and EMQX 5 denies anonymous clients as soon as any authenticator is enabled; it also
+%% cannot match listeners in acl.conf, and behind Docker port publishing every client shows the
+%% bridge gateway IP. Phase 1 has no TLS, so a secret username is as strong as a password would be.
+%% M1 replaces this with HTTP authn/authz served by apps/api (and phase 2 adds per-cabinet accounts).
+%% Rules are checked top-down; no match = deny (EMQX_AUTHORIZATION__NO_MATCH).
+
+%% Backend workers.
+{allow, {username, "{{MQTT_BACKEND_USER}}"}, all, ["#"]}.
+
+%% Cabinets (anonymous): uplinks only ...
+{allow, all, publish, ["electrical_cabinets_default", "stm32/ec25/echo", "stm32/ec25/demo", "stm32/ec25/boot"]}.
+%% ... and the shared command topic (frames are filtered by LTID on the device).
+{allow, all, subscribe, ["stm32/ec25/cmd"]}.
+
+%% Nobody else may publish commands or read other cabinets' traffic.
+{deny, all}.
