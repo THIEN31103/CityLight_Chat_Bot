@@ -55,6 +55,11 @@ const sessionRef = {
   },
 };
 let pendingTotpUser: User | null = null;
+
+/** Hybrid mode: the real API owns auth; fallback mock routes act as that user (not persisted). */
+export function setMockSessionUser(u: User) {
+  session = u;
+}
 const favorites: { id: string; name: string; center: { lat: number; lng: number }; zoom: number }[] = [
   { id: 'f1', name: 'Trung tâm Quận 1', center: { lat: 10.7769, lng: 106.7009 }, zoom: 14 },
 ];

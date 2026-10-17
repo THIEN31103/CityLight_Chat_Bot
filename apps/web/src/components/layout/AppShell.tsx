@@ -4,7 +4,7 @@ import * as DM from '@radix-ui/react-dropdown-menu';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, ChevronDown, CircleHelp, Home, Lightbulb, LogOut, Menu, Settings2, User as UserIcon, Wrench } from 'lucide-react';
 import dayjs from 'dayjs';
-import type { Permission } from '@citylight/shared';
+import type { CabinetSummary, Permission } from '@citylight/shared';
 import { ROLE_LABELS, SEVERITY_LABELS } from '@citylight/shared';
 import { api } from '@/lib/api';
 import { subscribe } from '@/lib/realtime';
@@ -31,21 +31,31 @@ function ServerClock() {
   );
 }
 
-/** Keeps React Query caches fresh from realtime events (Socket.IO later, mock emitter now). */
+/**
+ * Keeps React Query caches fresh from realtime events (Socket.IO / mock emitter).
+ * 10k cabinets: state deltas are patched into the cached map list (batched each second) instead of
+ * refetching ~1 MB; only the small counters endpoint is refetched.
+ */
 function RealtimeBridge() {
   const qc = useQueryClient();
   useEffect(() => {
-    let pending = false;
+    const pending = new Map<string, Partial<CabinetSummary> & { cabinetId: string }>();
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const flush = () => {
-      pending = false;
+      timer = null;
+      const updates = new Map(pending);
+      pending.clear();
+      qc.setQueryData<CabinetSummary[]>(['map-cabinets'], (old) =>
+        old?.map((c) => {
+          const u = updates.get(c.id);
+          return u ? { ...c, status: u.status ?? c.status, branch1On: u.branch1On ?? c.branch1On, branch2On: u.branch2On ?? c.branch2On } : c;
+        }),
+      );
       qc.invalidateQueries({ queryKey: ['map-stats'] });
-      qc.invalidateQueries({ queryKey: ['map-cabinets'] });
     };
-    const offState = subscribe('cabinet.state', () => {
-      if (!pending) {
-        pending = true;
-        setTimeout(flush, 1000);
-      }
+    const offState = subscribe<Partial<CabinetSummary> & { cabinetId: string }>('cabinet.state', (s) => {
+      pending.set(s.cabinetId, s);
+      if (!timer) timer = setTimeout(flush, 1000);
     });
     const offAlarm = subscribe('alarm.raised', () => qc.invalidateQueries({ queryKey: ['alarms'] }));
     const offClear = subscribe('alarm.cleared', () => qc.invalidateQueries({ queryKey: ['alarms'] }));
@@ -53,6 +63,7 @@ function RealtimeBridge() {
       offState();
       offAlarm();
       offClear();
+      if (timer) clearTimeout(timer);
     };
   }, [qc]);
   return null;

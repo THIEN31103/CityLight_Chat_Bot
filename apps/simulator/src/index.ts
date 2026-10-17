@@ -1,4 +1,5 @@
 // CLI: npm run start -w @citylight/simulator -- --count 100 --broker mqtt://localhost:1883
+import { fleetLocation } from '@citylight/db/fixtures';
 import { SimCabinet, type Fault } from './cabinet';
 
 function arg(name: string, fallback: string): string {
@@ -27,7 +28,7 @@ for (let i = 0; i < count; i++) {
     ltid: `${prefix}${String(i + 1).padStart(4, '0')}`,
     brokerUrl: broker,
     fault: pickFault(i, faultRate),
-    location: { lat: 10.72 + Math.random() * 0.14, lng: 106.62 + Math.random() * 0.16 },
+    location: fleetLocation(i),
     telemetryMs,
     log: (m) => console.error(m),
   });

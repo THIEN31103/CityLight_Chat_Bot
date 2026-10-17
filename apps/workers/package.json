@@ -1,0 +1,19 @@
+{
+  "name": "@citylight/workers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Background workers: MQTT ingest (M1); command, rules, scheduler later",
+  "scripts": {
+    "dev": "tsx watch src/ingest.ts",
+    "start": "tsx src/ingest.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@citylight/coreif": "*",
+    "@citylight/db": "*",
+    "@citylight/shared": "*",
+    "ioredis": "^5.4.2",
+    "mqtt": "^5.10.3"
+  }
+}

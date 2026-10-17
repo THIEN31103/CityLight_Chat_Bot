@@ -41,7 +41,10 @@ export function CabinetDrawer({
   // Realtime while the drawer is open (spec: detail panel updates live).
   useEffect(() => {
     const off1 = subscribe<CabinetState>('cabinet.state', (s) => {
-      if (s.cabinetId === cabinetId) qc.setQueryData(['cabinet', cabinetId], (old: typeof data) => (old ? { ...old, state: s } : old));
+      if (s.cabinetId !== cabinetId) return;
+      // real API pushes a compact state; refetch the full detail shortly after to get measurements
+      qc.setQueryData(['cabinet', cabinetId], (old: typeof data) => (old ? { ...old, state: { ...old.state, ...s } } : old));
+      qc.invalidateQueries({ queryKey: ['cabinet', cabinetId] });
     });
     const off2 = subscribe<Command>('command.updated', (c) => {
       if (c.cabinetId === cabinetId) qc.invalidateQueries({ queryKey: ['cabinet-commands', cabinetId] });

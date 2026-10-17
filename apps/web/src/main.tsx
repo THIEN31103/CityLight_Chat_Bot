@@ -6,8 +6,8 @@ import { router } from './router';
 import './index.css';
 import './stores/session';
 
-// Mock API is on unless VITE_USE_MOCK=false (M1-UI has no backend yet).
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false';
+// VITE_API_MODE: 'mock' (default, Cloudflare demo) | 'hybrid' (real API + mock for routes not built yet) | 'real'.
+const MODE = (import.meta.env.VITE_API_MODE ?? (import.meta.env.VITE_USE_MOCK === 'false' ? 'real' : 'mock')) as 'mock' | 'hybrid' | 'real';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -16,9 +16,13 @@ const queryClient = new QueryClient({
 });
 
 async function boot() {
-  if (USE_MOCK) {
+  if (MODE === 'mock' || MODE === 'hybrid') {
     const { startMocks } = await import('./mocks/browser');
-    await startMocks();
+    await startMocks(MODE);
+  } else {
+    const { createSocketRealtime } = await import('./lib/realtime-socket');
+    const { setRealtime } = await import('./lib/realtime');
+    setRealtime(createSocketRealtime());
   }
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>

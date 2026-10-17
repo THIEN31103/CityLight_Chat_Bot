@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+.tmp
+.git
+.env
+infra/.env
+infra/emqx/acl.conf
+apps/web/*
+!apps/web/package.json
+**/*.log

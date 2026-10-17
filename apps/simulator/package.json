@@ -7,10 +7,12 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "e2e:local": "tsx src/e2e-local.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "register": "tsx src/register.ts"
   },
   "dependencies": {
     "@citylight/coreif": "*",
+    "@citylight/db": "*",
     "@citylight/shared": "*",
     "mqtt": "^5.10.3"
   },

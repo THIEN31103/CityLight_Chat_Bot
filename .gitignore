@@ -6,9 +6,11 @@ coverage/
 .env
 .env.*
 !.env.example
+!apps/web/.env.hybrid
 .DS_Store
 .vscode/*
 !.vscode/extensions.json
 playwright-report/
 test-results/
 infra/emqx/acl.conf
+.tmp/

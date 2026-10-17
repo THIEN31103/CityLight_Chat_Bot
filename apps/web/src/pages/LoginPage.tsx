@@ -5,7 +5,7 @@ import { api, ApiError } from '@/lib/api';
 import { useSession, useUi } from '@/stores/session';
 import { Button, Checkbox, Field, Input, Select, ThemeIcon } from '@/components/ui';
 
-const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false';
+const USE_MOCK = (import.meta.env.VITE_API_MODE ?? 'mock') === 'mock' && import.meta.env.VITE_USE_MOCK !== 'false';
 
 export function LoginPage() {
   const nav = useNavigate();

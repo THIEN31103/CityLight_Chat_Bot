@@ -16,6 +16,9 @@
 | S10 | Hạ tầng: **làm và test trên local trước** (Docker Compose), tương lai thuê VPS rồi deploy. |
 | S11 | Stack BE: Bảo giao "miễn tối ưu" → spec v0.1 chọn **TypeScript monorepo: NestJS + Postgres/Timescale/PostGIS + Redis/BullMQ + EMQX + React/MapLibre** (thay đề xuất FastAPI P4). Chi tiết `spec.md` mục 2. |
 
+| S12 | M1: cảnh báo sức khỏe thiết bị (suy từ telemetry) làm ngay ở M1; gửi lệnh thật để M4 (Bảo đồng ý 2026-10-17). |
+| S13 | Broker giai đoạn 1 giữ ACL dạng file + username bí mật cho backend; **không** dùng HTTP authn/authz của EMQX vì khiến mọi publish phụ thuộc API sống. Giai đoạn 2: EMQX built-in database cho tài khoản từng tủ, API đồng bộ qua REST quản trị EMQX. |
+
 ## Đề xuất, chờ Bảo chốt
 
 | # | Đề xuất | Lý do |

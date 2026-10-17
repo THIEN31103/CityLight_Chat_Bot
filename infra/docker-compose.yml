@@ -19,6 +19,8 @@ services:
       EMQX_AUTHORIZATION__CACHE__ENABLE: "true"
       EMQX_AUTHORIZATION__SOURCES: '[{type = file, enable = true, path = "/opt/emqx/etc/acl.conf"}]'
       EMQX_MQTT__MAX_PACKET_SIZE: 64KB
+      # Ingest instances share the uplink topics; hashing on client id keeps one cabinet on one instance.
+      EMQX_BROKER__SHARED_SUBSCRIPTION_STRATEGY: hash_clientid
     volumes:
       - ./emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
       - emqx-data:/opt/emqx/data
@@ -62,6 +64,47 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # ---- app services (profile "app"); during development they usually run on the host with tsx watch ----
+  api:
+    profiles: ["app"]
+    build: { context: .., dockerfile: Dockerfile }
+    image: citylight-server:dev
+    container_name: citylight-api
+    restart: unless-stopped
+    # run from the package dir so tsx picks up apps/api/tsconfig.json (experimentalDecorators for NestJS)
+    working_dir: /app/apps/api
+    command: ["node", "--import", "tsx", "src/main.ts"]
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-citylight}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-citylight}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ingest:
+    profiles: ["app"]
+    image: citylight-server:dev
+    container_name: citylight-ingest
+    restart: unless-stopped
+    working_dir: /app/apps/workers
+    command: ["node", "--import", "tsx", "src/ingest.ts"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-citylight}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-citylight}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      MQTT_URL: mqtt://emqx:1883
+      MQTT_USERNAME: ${MQTT_BACKEND_USER}
+    depends_on:
+      api: { condition: service_started }
+      emqx: { condition: service_healthy }
 
 volumes:
   emqx-data:

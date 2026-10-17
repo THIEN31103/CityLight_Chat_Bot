@@ -45,6 +45,8 @@ export interface TelemetryPatch {
   deviceTime: string | null;
   doorOpen: boolean | null;
   contactorFault: boolean | null;
+  /** All keys present in the frame (e.g. old firmware 1307ebc has no LQ2/LQ3/PMAN). */
+  keys: string[];
   /** Keys present in the frame that this parser does not know (future firmware). */
   unknownKeys: Record<string, string>;
   warnings: string[];
@@ -145,6 +147,7 @@ export function telemetryFromFields(p: ParsedFrame): TelemetryPatch {
     deviceTime: parseIso(f.PTIM),
     doorOpen: bool01(f.PDOR),
     contactorFault: bool01(f.PFLT),
+    keys: [...p.order],
     unknownKeys,
     warnings,
   };

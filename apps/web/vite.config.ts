@@ -20,6 +20,7 @@ export default defineConfig({
     // Real API (M1+). In mock mode MSW answers /api in the browser.
     proxy: {
       '/api': 'http://localhost:3000',
+      '/socket.io': { target: 'http://localhost:3000', ws: true },
     },
   },
 });

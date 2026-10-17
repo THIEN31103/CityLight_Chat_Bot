@@ -13,7 +13,8 @@ Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2 (broke
 |---|---|
 | **M1-UI** giao diện đầy đủ (mock) | ✅ chạy được, 18 màn hình + 12 tab chi tiết tủ, dữ liệu giả 600 tủ |
 | **M0** nền tảng backend | ✅ compose (EMQX 5.8.6, PG 16.15 + TimescaleDB 2.30.2 + PostGIS 3.6.4, Redis 7.4) chạy; migrate OK (30 bảng, 2 hypertable, 3 continuous aggregate); `coreif` 22 test; E2E với EMQX thật 20/20 (gồm ACL); tải thử 1.000 tủ giả |
-| M1 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
+| **M1** ingest + API + web hybrid | ✅ ingest worker (batch, trạng thái, cảnh báo sức khỏe E1xx–E8xx, quét offline theo lô), API NestJS (đăng nhập session, bản đồ, tủ, telemetry, chẩn đoán, cảnh báo, Socket.IO), web `--mode hybrid`; thử tải 10.000 tủ 16 phút: 921.570 dòng, 0 lỗi, trễ ghi DB < 0,6 s; offline 9.923 tủ phát hiện trong 52–64 s |
+| M2 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
 
 ## Chạy web (M1-UI)
 
@@ -60,7 +61,7 @@ Dữ liệu mock tạo lại mỗi lần tải lại trang (phiên đăng nhập
 
 Yêu cầu thêm: **Docker Desktop** (WSL2). Trên máy này Docker cài theo user tại `%LOCALAPPDATA%\Programs\DockerDesktop` — mở Docker Desktop trước khi chạy.
 
-**Bảo mật broker giai đoạn 1:** tủ kết nối anonymous (firmware chưa có user/pass). EMQX 5 không cho anonymous khi bật authenticator và không phân quyền theo listener, nên backend được nhận diện bằng **username bí mật** trong ACL sinh từ `infra/.env` (`infra/emqx/acl.conf.tmpl`). M1 chuyển sang xác thực HTTP qua `apps/api`.
+**Bảo mật broker giai đoạn 1:** tủ kết nối anonymous (firmware chưa có user/pass). EMQX 5 không cho anonymous khi bật authenticator và không phân quyền theo listener, nên backend được nhận diện bằng **username bí mật** trong ACL sinh từ `infra/.env` (`infra/emqx/acl.conf.tmpl`). Không dùng xác thực HTTP của EMQX (mỗi publish phụ thuộc API → API restart là mất telemetry); giai đoạn 2 dùng built-in database của EMQX, API chỉ đồng bộ tài khoản tủ sang.
 
 ```bash
 cp infra/.env.example infra/.env        # đặt mật khẩu thật + MQTT_BACKEND_USER ngẫu nhiên
@@ -71,6 +72,27 @@ npm run sim -- --count 100              # 100 tủ giả gửi CoreIF lên EMQX
 npm test                                # unit test packages/coreif
 npm run e2e:local                       # kiểm tra end-to-end KHÔNG cần Docker (broker nhúng aedes)
 MQTT_URL=mqtt://localhost:1883 MQTT_USERNAME=<MQTT_BACKEND_USER> npm run e2e:local   # với EMQX thật (+3 bài ACL)
+```
+
+## Chạy hệ thống thật (M1)
+
+```bash
+npm run infra:up                         # EMQX + Postgres/Timescale/PostGIS + Redis
+npm run db:migrate && npm run db:seed    # bảng + tài khoản admin (SEED_ADMIN_* trong .env)
+npm run sim:register -- --count 10000    # đăng ký fleet tủ giả vào DB (vị trí cố định theo LTID)
+npm run dev:api                          # API :3000 (/api/v1, /socket.io)   — hoặc container: xem dưới
+npm run dev:ingest                       # ingest worker
+npm run sim -- --count 300               # tủ giả gửi lên EMQX
+npm run dev:web:hybrid                   # web :5173/5174, API thật + mock cho phần chưa làm
+```
+
+Chạy API + ingest bằng Docker: `docker compose -f infra/docker-compose.yml --env-file infra/.env --profile app up -d --build`.
+
+**Thử tải 10.000 tủ trên Windows:** Docker Desktop chỉ chuyển tiếp ~2.000 kết nối từ host vào container (ECONNRESET sau đó) — chạy simulator *trong* mạng Docker:
+
+```bash
+npx esbuild apps/simulator/src/index.ts --bundle --platform=node --format=esm --outfile=.tmp/sim.mjs   --banner:js="import { createRequire } from 'module'; const require = createRequire(import.meta.url);"
+docker run -d --name citylight-sim --network infra_default -v "$PWD/.tmp:/app:ro" node:22-alpine   node /app/sim.mjs --count 10000 --broker mqtt://emqx:1883
 ```
 
 ## Cấu trúc
@@ -85,7 +107,7 @@ infra/               docker-compose (EMQX 5.8, TimescaleDB-HA pg16, Redis 7.4) +
 docs/                spec, quyết định, device contract, kiến trúc
 ```
 
-Sắp có: `apps/api` (NestJS) và `apps/workers` (ingest, command, rules, scheduler) ở M1.
+`apps/api/` NestJS (Fastify, session cookie, Socket.IO) · `apps/workers/` ingest (command / rules / scheduler ở các mốc sau).
 
 ## Ghi chú kỹ thuật
 
