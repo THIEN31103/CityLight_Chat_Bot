@@ -13,7 +13,8 @@ import {
 } from '@citylight/coreif';
 import { createSql } from '@citylight/db';
 import { COMMANDS_NOTIFY, EVENTS_CHANNEL, commandById } from '@citylight/db/commands';
-import { COMMAND_STATUS_LABELS, describeCommand, type CommandStatus, type CommandType } from '@citylight/shared';
+import { CONFIG_CHANNEL } from '@citylight/db/notify';
+import { COMMAND_STATUS_LABELS, describeCommand, errorOf, type AlarmType, type CommandStatus, type CommandType } from '@citylight/shared';
 
 const MQTT_URL = process.env.MQTT_URL ?? 'mqtt://localhost:1883';
 const ACK_TIMEOUT_MS = Number(process.env.CMD_ACK_TIMEOUT_MS ?? 30_000);
@@ -59,6 +60,23 @@ async function audit(id: string, status: CommandStatus, error: string | null) {
   await sql`INSERT INTO activity_logs (user_id, user_email, action, target_type, target_id, target_name, new_value)
             SELECT requested_by, ${cmd.requestedBy}, 'Kết quả lệnh', 'cabinet', ${cmd.cabinetId}, ${cmd.cabinetName}, ${text}
             FROM commands WHERE id = ${id}`;
+}
+
+/** E701 / E702 / E703: one closed "event" alarm per failed command (history + notifications). */
+async function eventAlarm(f: InFlight, type: AlarmType, detail: string) {
+  const def = errorOf(type);
+  if (!def) return;
+  const message = `${describeCommand(f.type, f.params)}: ${detail}`;
+  const rows = await sql<{ id: string; started_at: Date; code: string; name: string }[]>`
+    WITH a AS (
+      INSERT INTO alarms (cabinet_id, code, type, severity, message, started_at, ended_at, active)
+      VALUES (${f.cabinetId}, ${def.code}, ${type}, ${def.severity}, ${message}, now(), now(), false) RETURNING id, started_at
+    ) SELECT a.id, a.started_at, c.code, c.name FROM a, cabinets c WHERE c.id = ${f.cabinetId}`;
+  const r = rows[0];
+  if (!r) return;
+  const at = r.started_at.toISOString();
+  const alarm = { id: r.id, code: def.code, type, severity: def.severity, cabinetId: f.cabinetId, cabinetCode: r.code, cabinetName: r.name, message, startedAt: at, endedAt: at };
+  await redis.publish(EVENTS_CHANNEL, JSON.stringify({ type: 'alarm.raised', alarm })).catch(() => undefined);
 }
 
 async function finish(f: InFlight | { id: string; ltid?: string }, status: CommandStatus, error: string | null, extra: { acked?: boolean; confirmed?: boolean } = {}) {
@@ -168,7 +186,8 @@ async function onAck(payload: string) {
   const err = ackError(ack);
   if (err) {
     stats.failed++;
-    return finish(f, 'failed', err, { acked: true });
+    await finish(f, 'failed', err, { acked: true });
+    return eventAlarm(f, 'cmd_rejected', err);
   }
   if (f.step + 1 < f.frames.length) {
     // next frame of a multi-frame command (PULSE_ON: PI2O'0 then PI2O'1)
@@ -184,6 +203,8 @@ async function onAck(payload: string) {
     await sql`
       INSERT INTO schedule_applied (cabinet_id, values, applied_at, command_id) VALUES (${f.cabinetId}, ${sql.json(f.params as never)}, now(), ${f.id})
       ON CONFLICT (cabinet_id) DO UPDATE SET values = excluded.values, applied_at = excluded.applied_at, command_id = excluded.command_id`;
+    // the ingest worker checks lights against this schedule (schedule_mismatch)
+    await redis.publish(CONFIG_CHANNEL, JSON.stringify({ type: 'schedule', cabinetId: f.cabinetId })).catch(() => undefined);
   }
   if (!confirmRule(f.type, f.params)) return finish(f, 'acked', null, { acked: true });
   f.phase = 'confirm';
@@ -218,7 +239,9 @@ async function checkDeadlines() {
     if (now < f.deadline) continue;
     if (f.phase === 'confirm') {
       stats.unconfirmed++;
-      await finish(f, 'acked_unconfirmed', `Tủ đã nhận lệnh nhưng telemetry chưa phản ánh sau ${CONFIRM_MS / 1000} s`, { acked: true });
+      const msg = `Tủ đã nhận lệnh nhưng telemetry chưa phản ánh sau ${CONFIRM_MS / 1000} s`;
+      await finish(f, 'acked_unconfirmed', msg, { acked: true });
+      await eventAlarm(f, 'cmd_unconfirmed', msg);
     } else if (RETRYABLE.has(f.type) && f.attempts < 2) {
       f.attempts++;
       f.frames = freshFrames(f);
@@ -228,7 +251,9 @@ async function checkDeadlines() {
       stats.resent++;
     } else {
       stats.timeout++;
-      await finish(f, 'timeout', `Không nhận được phản hồi từ tủ sau ${f.attempts} lần gửi (${ACK_TIMEOUT_MS / 1000} s mỗi lần)`);
+      const msg = `Không nhận được phản hồi từ tủ sau ${f.attempts} lần gửi (${ACK_TIMEOUT_MS / 1000} s mỗi lần)`;
+      await finish(f, 'timeout', msg);
+      await eventAlarm(f, 'cmd_timeout', msg);
     }
   }
 }

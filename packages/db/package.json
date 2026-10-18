@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./fixtures": "./src/fixtures.ts",
-    "./commands": "./src/commands.ts"
+    "./commands": "./src/commands.ts",
+    "./notify": "./src/notify.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate",

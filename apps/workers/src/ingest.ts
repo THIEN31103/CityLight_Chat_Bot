@@ -3,12 +3,17 @@
 //  - parse with @citylight/coreif, keep per-cabinet runtime state in memory
 //  - batch-write telemetry / raw frames / cabinet_state every FLUSH_MS
 //  - device-health alarms (shared/health.ts) opened / closed as state changes; offline sweep every 10 s
+//  - measurement alarms (shared/rules.ts, M5): thresholds (cabinet > zone > default), schedule applied by
+//    the server, clock, GPS; debounced per cabinet; config reloaded on Redis "cl:config" + every 60 s
 //  - publish state + alarm events on Redis for the API's Socket.IO gateway
 import mqtt from 'mqtt';
 import { Redis } from 'ioredis';
 import { TOPICS, parseBoot, parseDemo, parseTelemetry, type TelemetryPatch } from '@citylight/coreif';
 import { createSql } from '@citylight/db';
-import { OFFLINE_AFTER_MS, activeHealthAlarms, deriveCabinetStatus, errorOf, type AlarmType, type FwProfile, type HealthInput } from '@citylight/shared';
+import {
+  Debouncer, MEASUREMENT_TYPES, OFFLINE_AFTER_MS, SWING_WINDOW_MS, activeHealthAlarms, defaultThresholds, deriveCabinetStatus, errorOf, measurementAlarms,
+  type AlarmType, type FwProfile, type GeoPoint, type HealthInput, type MeasureSample, type ScheduleWindow, type Thresholds,
+} from '@citylight/shared';
 import { EVENTS_CHANNEL, type AlarmEvent, type CabinetStateEvent, type WorkerEvent } from './events';
 
 const MQTT_URL = process.env.MQTT_URL ?? 'mqtt://localhost:1883';
@@ -18,6 +23,9 @@ const SWEEP_MS = 10_000;
 
 const sql = createSql();
 const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: 2 });
+/** API / command-worker announce threshold and schedule changes here. */
+const CONFIG_CHANNEL = 'cl:config';
+const CONFIG_RELOAD_MS = 60_000;
 
 // ---------------- registry + runtime ----------------
 
@@ -36,6 +44,12 @@ interface Runtime extends HealthInput {
   manualMode: boolean | null;
   doorOpen: boolean | null;
   contactorFault: boolean | null;
+  zoneId: string | null;
+  declaredLocation: GeoPoint | null;
+  thresholds: Thresholds;
+  schedule: ScheduleWindow | null;
+  samples: MeasureSample[];
+  debouncer: Debouncer;
 }
 
 const byLtid = new Map<string, Runtime>();
@@ -50,9 +64,10 @@ async function loadRegistry() {
       v_l1: number | null; v_l2: number | null; v_l3: number | null; i_l1: number | null; i_l2: number | null; i_l3: number | null;
       leak_ma: number | null; temp_c: number | null; temp_sensor_fault: boolean | null; battery_mv: number | null;
       lat: number | null; lng: number | null; device_time: Date | null; device_time_changed_at: Date | null;
+      zone1_id: string | null; decl_lat: number; decl_lng: number;
     }[]
   >`
-    SELECT c.id, c.ltid, c.code, c.name, c.fw_profile,
+    SELECT c.id, c.ltid, c.code, c.name, c.fw_profile, c.zone1_id, ST_Y(c.location) AS decl_lat, ST_X(c.location) AS decl_lng,
            s.status, s.online, s.last_seen_at, s.last_boot_at, s.bus_status, s.branch1_on, s.branch2_on, s.manual_mode,
            s.plc_online, s.pm_online, s.v_l1, s.v_l2, s.v_l3, s.i_l1, s.i_l2, s.i_l3, s.leak_ma, s.temp_c, s.temp_sensor_fault,
            s.battery_mv, ST_Y(s.gps_device) AS lat, ST_X(s.gps_device) AS lng, s.device_time, s.device_time_changed_at
@@ -70,17 +85,45 @@ async function loadRegistry() {
       deviceTime: iso(r.device_time), deviceTimeChangedAt: iso(r.device_time_changed_at),
       bootsLastHour: 0, bootsLast24h: 0, bootTimes: [], activeAlarms: new Map(), extra: {},
       pf: { l1: null, l2: null, l3: null, total: null }, pTotalKw: null, doorOpen: null, contactorFault: null,
+      zoneId: r.zone1_id, declaredLocation: { lat: Number(r.decl_lat), lng: Number(r.decl_lng) },
+      thresholds: defaultThresholds(), schedule: null, samples: [], debouncer: new Debouncer(),
     };
     byLtid.set(rt.ltid, rt);
     byId.set(rt.id, rt);
   }
-  const active = await sql<{ id: string; cabinet_id: string; type: AlarmType; severity: string }[]>`
-    SELECT id, cabinet_id, type, severity FROM alarms WHERE active`;
-  for (const a of active) byId.get(a.cabinet_id)?.activeAlarms.set(a.type, { id: a.id, severity: a.severity });
+  const active = await sql<{ id: string; cabinet_id: string; type: AlarmType; severity: string; message: string }[]>`
+    SELECT id, cabinet_id, type, severity, message FROM alarms WHERE active`;
+  for (const a of active) {
+    const rt = byId.get(a.cabinet_id);
+    if (!rt) continue;
+    rt.activeAlarms.set(a.type, { id: a.id, severity: a.severity });
+    // measurement alarms open in the DB stay open until their condition is gone for the close hold
+    if (MEASUREMENT_TYPES.includes(a.type)) rt.debouncer.seed([[a.type, a.message]]);
+  }
   const boots = await sql<{ cabinet_id: string; ts: Date }[]>`
     SELECT cabinet_id, ts FROM device_events WHERE kind = 'boot' AND ts > now() - interval '24 hours'`;
   for (const b of boots) byId.get(b.cabinet_id)?.bootTimes.push(b.ts.getTime());
   console.log(`[ingest] registry: ${byId.size} cabinets, ${active.length} active alarms`);
+  await loadConfig();
+}
+
+/** Thresholds (cabinet override > zone > default) and the schedule each cabinet last acked. */
+async function loadConfig() {
+  const thr = await sql<{ zone_id: string | null; cabinet_id: string | null; values: Partial<Thresholds> }[]>`SELECT zone_id, cabinet_id, values FROM thresholds`;
+  const byZone = new Map<string, Partial<Thresholds>>();
+  const byCab = new Map<string, Partial<Thresholds>>();
+  for (const t of thr) {
+    if (t.cabinet_id) byCab.set(t.cabinet_id, t.values);
+    else if (t.zone_id) byZone.set(t.zone_id, t.values);
+  }
+  const sched = await sql<{ cabinet_id: string; values: ScheduleWindow }[]>`SELECT cabinet_id, values FROM schedule_applied`;
+  const schedBy = new Map(sched.map((r) => [r.cabinet_id, r.values]));
+  const def = defaultThresholds();
+  for (const rt of byId.values()) {
+    rt.thresholds = { ...def, ...(rt.zoneId ? byZone.get(rt.zoneId) : undefined), ...byCab.get(rt.id) };
+    const s = schedBy.get(rt.id);
+    rt.schedule = s && (s.mode === 1 || s.mode === 2) && s.on1 && s.off1 ? s : null;
+  }
 }
 
 // ---------------- batching ----------------
@@ -114,6 +157,12 @@ async function publish(ev: WorkerEvent) {
 /** Open / close device-health alarms so the active set matches the rules. */
 async function syncAlarms(rt: Runtime, now = Date.now()) {
   const want = activeHealthAlarms(rt, now);
+  const raw = measurementAlarms(
+    { ...rt, pfTotal: rt.pf.total },
+    rt.thresholds,
+    { samples: rt.samples, schedule: rt.schedule, now },
+  );
+  for (const [type, message] of rt.debouncer.update(raw, now)) want.set(type, message);
   for (const [type, message] of want) {
     if (rt.activeAlarms.has(type)) continue;
     const def = errorOf(type);
@@ -202,6 +251,8 @@ async function onTelemetry(payload: string) {
   rt.doorOpen = t.doorOpen;
   rt.contactorFault = t.contactorFault;
   rt.extra = t.unknownKeys;
+  rt.samples.push({ at: now.getTime(), v: [t.vL1, t.vL2, t.vL3], i: [t.iL1, t.iL2, t.iL3], b1: t.branch1On, b2: t.branch2On });
+  while (rt.samples.length && now.getTime() - rt.samples[0]!.at > SWING_WINDOW_MS + 30_000) rt.samples.shift();
   // Old field firmware sends no LQ2/LQ3/PMAN: detect it and flag (E804, commands blocked).
   const oldFw = !t.keys.includes('LQ2') && !t.keys.includes('PMAN');
   const fw: FwProfile = oldFw ? 'v2-1307ebc' : rt.fwProfile === 'v2-1307ebc' ? 'v2-current' : rt.fwProfile;
@@ -371,7 +422,11 @@ async function markOffline(list: Runtime[], now: number) {
   const def = errorOf('offline')!;
   const started = new Date(now);
   const message = `Không nhận frame telemetry quá ${OFFLINE_AFTER_MS / 1000} s`;
-  for (const rt of list) rt.online = false;
+  for (const rt of list) {
+    rt.online = false;
+    rt.samples = [];
+    rt.debouncer.clear(); // their alarms are closed below; start fresh when the cabinet comes back
+  }
   const ids = list.map((r) => r.id);
   for (let i = 0; i < ids.length; i += MAX_BATCH) {
     const chunk = ids.slice(i, i + MAX_BATCH);
@@ -422,6 +477,13 @@ async function sweep() {
 // ---------------- main ----------------
 
 await loadRegistry();
+{
+  const sub = redis.duplicate();
+  await sub.subscribe(CONFIG_CHANNEL);
+  // thresholds / schedules change rarely: reload all (10k rows, a few ms) inside the handler chain
+  sub.on('message', () => void (chain = chain.then(loadConfig).catch((e) => console.error('[ingest] config', (e as Error).message))));
+}
+setInterval(() => void (chain = chain.then(loadConfig).catch(() => undefined)), CONFIG_RELOAD_MS);
 const mq = mqtt.connect(MQTT_URL, {
   clientId: `cl-ingest-${process.pid}`,
   username: process.env.MQTT_USERNAME,

@@ -2,6 +2,7 @@
 import type {
   ActivityLog,
   Alarm,
+  AlarmSeverity,
   Area,
   CabinetDetail,
   CabinetDiagnostics,
@@ -135,9 +136,18 @@ export interface IncidentReport {
 
 export interface AlarmRule {
   type: string;
+  code?: string;
+  title?: string;
   severity: string;
   condition: string;
   enabled: boolean;
+}
+
+export interface NotificationSettings {
+  minSeverity: AlarmSeverity;
+  telegram: { available: boolean; botUsername: string | null; linked: boolean; enabled: boolean };
+  zalo: { available: boolean };
+  email: { available: boolean };
 }
 
 export interface SystemStats {
@@ -218,6 +228,10 @@ export const api = {
   alarms: (p: { active?: boolean; type?: string; severity?: string; district?: string; from?: string; to?: string; page?: number; size?: number }) =>
     req<Page<Alarm>>('GET', `/alarms${qs(p)}`),
   ackAlarm: (id: string) => req<Alarm>('POST', `/alarms/${id}/ack`),
+  myNotifications: () => req<NotificationSettings>('GET', '/me/notifications'),
+  saveNotifications: (b: { minSeverity: AlarmSeverity; telegram: boolean }) => req<NotificationSettings>('PUT', '/me/notifications', b),
+  linkTelegram: () => req<{ code: string; botUsername: string; url: string; expiresAt: string }>('POST', '/me/notifications/telegram/link'),
+  unlinkTelegram: () => req<void>('DELETE', '/me/notifications/telegram'),
 
   // incidents
   incidents: (p: { q?: string; district?: string; from?: string; to?: string; page?: number; size?: number }) => req<Page<Incident>>('GET', `/incidents${qs(p)}`),

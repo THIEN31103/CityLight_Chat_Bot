@@ -164,6 +164,13 @@ async function main() {
   check('Đồng bộ giờ → confirmed (PTIM lệch ≤ 2 phút)', sim6.t.status === 'confirmed', sim6.t.status);
   check('LDIA rc=-1 → acked kèm ghi chú (không phải lỗi lệnh)', sim6.d.status === 'acked' && /Chẩn đoán/.test(sim6.d.error ?? ''), sim6.d.error);
 
+  // M5: failed commands leave a closed event alarm (E701 rejected, E702 unconfirmed, E703 timeout)
+  const ev = await sql<{ type: string; ltid: string }[]>`
+    SELECT a.type, c.ltid FROM alarms a JOIN cabinets c ON c.id = a.cabinet_id
+    WHERE a.type IN ('cmd_rejected', 'cmd_unconfirmed', 'cmd_timeout') AND a.started_at > now() - interval '5 minutes' AND NOT a.active`;
+  const has = (t: string, l: string) => ev.some((e) => e.type === t && e.ltid === l);
+  check('Cảnh báo sự kiện lệnh: E701 (SIM9992), E702 (SIM9993), E703 (SIM9994)', has('cmd_rejected', 'SIM9992') && has('cmd_unconfirmed', 'SIM9993') && has('cmd_timeout', 'SIM9994'));
+
   // ---------- history, audit ----------
   const hist = await op.get(`/cabinets/${id('SIM9996')}/commands`);
   check('Lịch sử lệnh của tủ (mới nhất trước)', hist.status === 200 && hist.data.length >= 4 && hist.data[0].type === 'DIAG');

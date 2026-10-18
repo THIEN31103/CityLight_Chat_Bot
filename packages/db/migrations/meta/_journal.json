@@ -57,6 +57,13 @@
       "when": 1792299106478,
       "tag": "0007_cabinet_state_offline_default",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792300566764,
+      "tag": "0008_alarm_config_unique",
+      "breakpoints": true
     }
   ]
 }

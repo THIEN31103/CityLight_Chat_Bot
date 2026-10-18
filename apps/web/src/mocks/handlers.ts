@@ -64,6 +64,13 @@ const favorites: { id: string; name: string; center: { lat: number; lng: number 
   { id: 'f1', name: 'Trung tâm Quận 1', center: { lat: 10.7769, lng: 106.7009 }, zoom: 14 },
 ];
 
+const notify = {
+  minSeverity: 'major' as 'critical' | 'major' | 'minor',
+  telegram: { available: true, botUsername: 'citylight_demo_bot', linked: false, enabled: false },
+  zalo: { available: false },
+  email: { available: false },
+};
+
 function problem(status: number, code: string, detail: string) {
   return HttpResponse.json({ type: `https://citylight.local/errors/${code}`, title: code, status, detail, code }, { status });
 }
@@ -177,6 +184,22 @@ export const handlers = [
       .slice(0, 10)
       .map(summary);
     return HttpResponse.json(res);
+  })),
+  http.get(`${API}/me/notifications`, wrap(() => HttpResponse.json(notify))),
+  http.put(`${API}/me/notifications`, wrap(async ({ request }: { request: Request }) => {
+    const b = (await request.json()) as { minSeverity: typeof notify.minSeverity; telegram: boolean };
+    notify.minSeverity = b.minSeverity;
+    notify.telegram.enabled = b.telegram && notify.telegram.linked;
+    return HttpResponse.json(notify);
+  })),
+  http.post(`${API}/me/notifications/telegram/link`, wrap(() => {
+    // demo: pretend the user pressed Start in Telegram a moment later
+    setTimeout(() => Object.assign(notify.telegram, { linked: true, enabled: true }), 4000);
+    return HttpResponse.json({ code: 'DEMO1234', botUsername: notify.telegram.botUsername, url: 'https://t.me/citylight_demo_bot?start=DEMO1234', expiresAt: new Date(Date.now() + 600_000).toISOString() });
+  })),
+  http.delete(`${API}/me/notifications/telegram`, wrap(() => {
+    Object.assign(notify.telegram, { linked: false, enabled: false });
+    return new HttpResponse(null, { status: 204 });
   })),
   http.get(`${API}/favorites`, wrap(() => HttpResponse.json(favorites))),
   http.post(`${API}/favorites`, wrap(async ({ request }: { request: Request }) => {

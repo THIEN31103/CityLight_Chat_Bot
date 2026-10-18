@@ -202,13 +202,17 @@ export const scheduleApplied = pgTable('schedule_applied', {
   commandId: uuid('command_id'),
 });
 
-export const thresholds = pgTable('thresholds', {
-  id: id(),
-  zoneId: uuid('zone_id').references(() => zones.id),
-  cabinetId: uuid('cabinet_id').references(() => cabinets.id, { onDelete: 'cascade' }),
-  values: jsonb('values').notNull(),
-  updatedAt: tsz('updated_at').notNull().defaultNow(),
-});
+export const thresholds = pgTable(
+  'thresholds',
+  {
+    id: id(),
+    zoneId: uuid('zone_id').references(() => zones.id),
+    cabinetId: uuid('cabinet_id').references(() => cabinets.id, { onDelete: 'cascade' }),
+    values: jsonb('values').notNull(),
+    updatedAt: tsz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('thresholds_cabinet_uq').on(t.cabinetId), uniqueIndex('thresholds_zone_uq').on(t.zoneId)],
+);
 
 export const dimmingProfiles = pgTable('dimming_profiles', {
   id: id(),
@@ -510,4 +514,4 @@ export const notificationSubscriptions = pgTable('notification_subscriptions', {
   address: text('address').notNull(),
   minSeverity: severityEnum('min_severity').notNull().default('major'),
   enabled: boolean('enabled').notNull().default(true),
-});
+}, (t) => [uniqueIndex('notification_subscriptions_user_channel_uq').on(t.userId, t.channel)]);

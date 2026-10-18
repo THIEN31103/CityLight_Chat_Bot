@@ -17,7 +17,8 @@ Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2 (broke
 | **M2** 2FA + phân quyền khu vực | ✅ TOTP bắt buộc cho admin/operator (QR, mã khôi phục), phạm vi khu vực ở mọi API đọc + Socket.IO, quản lý user (mật khẩu tạm, đặt lại mật khẩu/2FA, mở khóa), CSRF, rate limit đăng nhập; `npm run e2e:api` 40/40 |
 | **M4** lệnh thật | ✅ `command-worker` (hàng đợi Postgres, 1 lệnh/tủ, ack + retry + timeout, xác nhận bằng telemetry), API gửi/xem/hủy lệnh + đặt lịch, chặn tủ offline / firmware cũ, idempotency, nhật ký, Socket.IO; `npm run e2e:commands` 27/27 |
 | **M3** bản đồ | ✅ API thật cho bản đồ/KPI/tìm kiếm/cây khu vực (từ M1) + vị trí đã lưu (`favorites`); nén gzip (`map/cabinets` 10.000 tủ: 3,4 MB → 600 KB); đo trên trình duyệt: zoom/kéo 135 FPS, không tác vụ dài; `npm run e2e:map` 32/32 (KPI = bản đồ = danh sách = cây ở 3 phạm vi) |
-| M5 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
+| **M5** cảnh báo | ✅ luật ngưỡng (áp/dòng/dao động/lệch pha/cosφ/rò/nhiệt/pin), lệch lịch, sai giờ LOGO, lệch GPS, chống nhiễu 30 s; API ngưỡng + quy tắc + đăng ký thông báo; `notify-worker` Telegram (liên kết `/start <mã>`, phạm vi, gom tin, tóm tắt); cảnh báo sự kiện lệnh E701–E703; `npm run e2e:alarms` 26/26 |
+| M6 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
 
 ## Chạy web (M1-UI)
 
@@ -86,11 +87,19 @@ npm run sim:register -- --count 10000    # đăng ký fleet tủ giả vào DB (
 npm run dev:api                          # API :3000 (/api/v1, /socket.io)   — hoặc container: xem dưới
 npm run dev:ingest                       # ingest worker
 npm run dev:cmd                          # command-worker (gửi lệnh xuống tủ)
+npm run dev:notify                       # notify-worker (Telegram; cần TELEGRAM_BOT_TOKEN)
 npm run sim -- --count 300               # tủ giả gửi lên EMQX
 npm run dev:web:hybrid                   # web :5173/5174, API thật + mock cho phần chưa làm
 ```
 
-Chạy API + ingest + command-worker bằng Docker: `docker compose -f infra/docker-compose.yml --env-file infra/.env --profile app up -d --build`.
+Chạy API + ingest + command-worker + notify-worker bằng Docker: `docker compose -f infra/docker-compose.yml --env-file infra/.env --profile app up -d --build`.
+
+### Thông báo Telegram (M5)
+
+1. Tạo bot với @BotFather trên Telegram (`/newbot`), lấy token.
+2. Dán token vào `infra/.env`: `TELEGRAM_BOT_TOKEN=...` (và `WEB_URL=` nếu muốn tin có link về web), rồi `docker compose -f infra/docker-compose.yml --env-file infra/.env --profile app up -d notify-worker`.
+3. Mỗi người: web → Tài khoản → Nhận thông báo → "Liên kết Telegram" → mở link, bấm Start. Chọn mức cảnh báo nhận rồi Lưu.
+4. Gửi `/stop` cho bot để tắt; "Hủy liên kết" trên web để xóa hẳn.
 
 ### Đăng nhập & phân quyền (M2)
 
@@ -101,6 +110,7 @@ Chạy API + ingest + command-worker bằng Docker: `docker compose -f infra/doc
 - `npm run e2e:api` (cần API container đang chạy): 40 kiểm tra 2FA/CSRF/phạm vi/thu hồi session/khóa tài khoản/rate limit, tự tạo và xóa user `*@e2e.citylight.test`. Bài rate limit chạy cuối: đợi 1 phút trước khi chạy lại.
 - `npm run e2e:commands` (cần api + ingest + command-worker đang chạy, ~90 s): 27 kiểm tra vòng đời lệnh với tủ giả SIM9991–9996 (mất PLC, mất LOGO, mất ack, firmware cũ), tự tạo và xóa user `*@e2e-cmd.citylight.test`. Không chạy cùng `npm run sim` ≥ 9990 tủ.
 - `npm run e2e:map` (~5 s): bộ đếm KPI khớp bản đồ, danh sách, lọc theo trạng thái, cây khu vực và DB với 3 phạm vi (toàn hệ thống / 1 quận / 1 phường), không lộ tủ ngoài phạm vi; vị trí đã lưu. Tự tạo/xóa user `*@e2e-map.citylight.test`.
+- `npm run e2e:alarms` (cần api + ingest đang chạy, ~2,5 phút): ngưỡng → cảnh báo mở sau ~30 s / đóng sau ~30 s, bộ đếm Lỗi, Telegram giả lập trên localhost (liên kết, phạm vi, mức, gom tin, `/stop`). Không cần bot thật; tự tạo/xóa user `*@e2e-alarm.citylight.test`.
 - Các e2e đều đăng nhập: chạy cách bài rate limit của `e2e:api` ít nhất 1 phút (cùng IP, 20 lần/phút), nếu không sẽ bị 429.
 - Sau lưng proxy (Caddy trên VPS) đặt `TRUST_PROXY` (IP/CIDR của proxy; số hop không còn được fastify ≥ 5.12 hỗ trợ) để lấy IP thật cho rate limit; mặc định tắt.
 
@@ -123,7 +133,7 @@ infra/               docker-compose (EMQX 5.8, TimescaleDB-HA pg16, Redis 7.4) +
 docs/                spec, quyết định, device contract, kiến trúc
 ```
 
-`apps/api/` NestJS (Fastify, session cookie, Socket.IO) · `apps/workers/` ingest, command-worker (rules / scheduler ở các mốc sau).
+`apps/api/` NestJS (Fastify, session cookie, Socket.IO) · `apps/workers/` ingest (kèm luật cảnh báo), command-worker, notify-worker (scheduler ở M6).
 
 ## Ghi chú kỹ thuật
 

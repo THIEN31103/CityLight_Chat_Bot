@@ -5,3 +5,4 @@ export * from './coreif-map';
 export * from './errors';
 export * from './health';
 export * from './defaults';
+export * from './rules';
