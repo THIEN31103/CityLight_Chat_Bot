@@ -5,6 +5,7 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import compress from '@fastify/compress';
 import cookie from '@fastify/cookie';
+import multipart from '@fastify/multipart';
 import { AlarmConfigModule } from './alarm-config';
 import { AlarmsModule } from './alarms';
 import { AuthModule } from './auth';
@@ -12,6 +13,7 @@ import { CabinetsModule } from './cabinets';
 import { CommandsModule } from './commands';
 import { ProblemFilter } from './errors';
 import { FavoritesModule } from './favorites';
+import { IncidentsModule, MAX_PHOTO_BYTES } from './incidents';
 import { InfraModule } from './infra';
 import { RealtimeModule } from './realtime';
 import { SchedulesModule } from './schedules';
@@ -19,7 +21,7 @@ import { SystemModule } from './system';
 import { UsersModule } from './users';
 
 @Module({
-  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, FavoritesModule, AlarmsModule, AlarmConfigModule, SchedulesModule, UsersModule, SystemModule, RealtimeModule],
+  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, FavoritesModule, AlarmsModule, AlarmConfigModule, SchedulesModule, IncidentsModule, UsersModule, SystemModule, RealtimeModule],
   providers: [{ provide: APP_FILTER, useClass: ProblemFilter }],
 })
 class AppModule {}
@@ -41,6 +43,8 @@ await app.register(cookie);
 // /map/cabinets for 10k cabinets is ~3.4 MB of JSON, ~10x smaller gzipped. gzip only: brotli at its
 // default quality costs far more CPU per request than it saves on top of gzip.
 await app.register(compress, { encodings: ['gzip', 'deflate'], threshold: 1024 });
+// incident photos (M7): one file per request, checked by magic bytes in IncidentsService
+await app.register(multipart, { limits: { fileSize: MAX_PHOTO_BYTES, files: 1, fields: 5, parts: 6 } });
 app.setGlobalPrefix('api/v1');
 app.useWebSocketAdapter(new IoAdapter(app));
 app.enableShutdownHooks();

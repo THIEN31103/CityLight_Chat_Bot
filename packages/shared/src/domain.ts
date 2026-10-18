@@ -340,8 +340,21 @@ export interface Incident {
   deadline: string | null;
   resolution: string | null;
   resolvedAt: string | null;
+  /** photo URLs (legacy mock); real photos are `photoList` */
   photos: string[];
   events: IncidentEvent[];
+  alarmId?: string | null;
+  assigneeId?: string | null;
+  overdue?: boolean;
+  photoList?: IncidentPhoto[];
+}
+
+export interface IncidentPhoto {
+  id: string;
+  kind: 'report' | 'resolution';
+  url: string;
+  uploadedBy: string;
+  createdAt: string;
 }
 
 export interface ActivityLog {

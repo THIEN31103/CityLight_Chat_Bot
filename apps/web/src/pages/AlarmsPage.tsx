@@ -5,7 +5,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { Download, Check } from 'lucide-react';
 import type { Alarm } from '@citylight/shared';
 import { ALARM_TYPE_LABELS, ERROR_CATALOG, SEVERITY_LABELS, errorOf } from '@citylight/shared';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { downloadCsv } from '@/lib/exportFile';
 import { fmtDuration, fmtTime } from '@/lib/utils';
@@ -17,6 +17,7 @@ export function AlarmsPage() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const canAck = useSession((s) => s.can('alarm.ack'));
+  const canReport = useSession((s) => s.can('incident.manage') || s.can('incident.resolve'));
   const [tab, setTab] = useState<'active' | 'all'>('active');
   const [type, setType] = useState('');
   const [severity, setSeverity] = useState('');
@@ -31,6 +32,14 @@ export function AlarmsPage() {
 
   const params = { active: tab === 'active' ? true : undefined, type, severity, district, from: from ? new Date(from).toISOString() : undefined, to: to ? new Date(to + 'T23:59:59').toISOString() : undefined, page, size };
   const { data, isLoading } = useQuery({ queryKey: ['alarms', params], queryFn: () => api.alarms(params) });
+  const toIncident = useMutation({
+    mutationFn: (alarmId: string) => api.createIncident({ alarmId }),
+    onSuccess: (inc) => {
+      toast(`Đã tạo sự cố ${inc.code}`, 'success');
+      nav(`/incidents/${inc.id}`);
+    },
+    onError: (e) => toast(e instanceof ApiError ? e.message : 'Không tạo được sự cố', 'error'),
+  });
   const ack = useMutation({
     mutationFn: api.ackAlarm,
     onSuccess: () => {
@@ -75,9 +84,11 @@ export function AlarmsPage() {
         actions={
           <Button
             variant="outline"
-            onClick={() =>
-              downloadCsv('canh-bao.csv', ['Mã lỗi', 'Mã tủ', 'Tên tủ', 'Khu vực', 'Loại', 'Mức', 'Nội dung', 'Bắt đầu', 'Kết thúc'], (data?.items ?? []).map((a) => [a.code, a.cabinetCode, a.cabinetName, a.districtName, ALARM_TYPE_LABELS[a.type], SEVERITY_LABELS[a.severity], a.message, fmtTime(a.startedAt), fmtTime(a.endedAt)]))
-            }
+            onClick={async () => {
+              const { page: _p, size: _s, ...filters } = params;
+              if (await api.exportAlarms(filters).catch(() => false)) return;
+              downloadCsv('canh-bao.csv', ['Mã lỗi', 'Mã tủ', 'Tên tủ', 'Khu vực', 'Loại', 'Mức', 'Nội dung', 'Bắt đầu', 'Kết thúc'], (data?.items ?? []).map((a) => [a.code, a.cabinetCode, a.cabinetName, a.districtName, ALARM_TYPE_LABELS[a.type], SEVERITY_LABELS[a.severity], a.message, fmtTime(a.startedAt), fmtTime(a.endedAt)]));
+            }}
           >
             <Download className="h-4 w-4" /> Xuất Excel
           </Button>
@@ -138,6 +149,11 @@ export function AlarmsPage() {
               {canAck && !open.ackedBy && (
                 <Button variant="outline" onClick={() => { ack.mutate(open.id); setOpen(null); }}>
                   Xác nhận đã biết
+                </Button>
+              )}
+              {canReport && (
+                <Button variant="outline" loading={toIncident.isPending} onClick={() => toIncident.mutate(open.id)}>
+                  Tạo sự cố
                 </Button>
               )}
               <Button onClick={() => nav(`/?cabinet=${open.cabinetId}`)}>Mở tủ trên bản đồ</Button>

@@ -1,10 +1,14 @@
-import { Controller, Get, HttpCode, Inject, Module, Param, Post, Query, Req } from '@nestjs/common';
+import { Controller, Get, HttpCode, Inject, Module, Param, Post, Query, Req, Res } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
+import type { Alarm } from '@citylight/shared';
+import { ALARM_TYPE_LABELS, SEVERITY_LABELS } from '@citylight/shared';
 import { z } from 'zod';
 import { AuthModule, AuthService, RequirePerm, type AuthedRequest } from './auth';
 import { CabinetsModule, CabinetsService } from './cabinets';
 import { ApiError } from './errors';
 import { SQL, type Sql } from './infra';
 import { scopeWhere } from './scope';
+import { DATE_TIME, EXPORT_MAX_ROWS, sendXlsx, vnTime } from './xlsx';
 
 const AlarmQuery = z.object({
   active: z.enum(['true', 'false']).optional(),
@@ -29,7 +33,36 @@ export class AlarmsController {
   @RequirePerm('alarm.view')
   async list(@Query() q: unknown, @Req() req: AuthedRequest) {
     const p = AlarmQuery.parse(q);
-    const where = this.sql`
+    const where = this.where(req, p);
+    const items = await this.cabinets.alarmRows(where, p.size, (p.page - 1) * p.size);
+    const total = await this.sql<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM alarms a JOIN cabinets c ON c.id = a.cabinet_id LEFT JOIN areas d ON d.id = c.district_id ${where}`;
+    return { items, total: total[0]?.n ?? 0, page: p.page, size: p.size };
+  }
+
+  /** Same filters as the list, every row (up to 50,000), M7. */
+  @Get('alarms/export.xlsx')
+  @RequirePerm('alarm.view')
+  async export(@Query() q: unknown, @Req() req: AuthedRequest, @Res({ passthrough: true }) reply: FastifyReply) {
+    const p = AlarmQuery.parse(q);
+    const rows = (await this.cabinets.alarmRows(this.where(req, p), EXPORT_MAX_ROWS, 0)) as unknown as Alarm[];
+    return sendXlsx(reply, `canh-bao-${new Date().toISOString().slice(0, 10)}.xlsx`, 'Cảnh báo', [
+      { header: 'Mã lỗi', value: (a) => a.code, width: 8 },
+      { header: 'Loại', value: (a) => ALARM_TYPE_LABELS[a.type] ?? a.type, width: 26 },
+      { header: 'Mức độ', value: (a) => SEVERITY_LABELS[a.severity], width: 12 },
+      { header: 'Tủ', value: (a) => `${a.cabinetCode} - ${a.cabinetName}`, width: 30 },
+      { header: 'Quận/huyện', value: (a) => a.districtName },
+      { header: 'Nội dung', value: (a) => a.message, width: 50 },
+      { header: 'Bắt đầu', value: (a) => vnTime(a.startedAt), numFmt: DATE_TIME, width: 18 },
+      { header: 'Kết thúc', value: (a) => vnTime(a.endedAt), numFmt: DATE_TIME, width: 18 },
+      { header: 'Đang mở', value: (a) => (a.active ? 'Có' : ''), width: 9 },
+      { header: 'Người xác nhận', value: (a) => a.ackedBy, width: 20 },
+      { header: 'Lúc xác nhận', value: (a) => vnTime(a.ackedAt), numFmt: DATE_TIME, width: 18 },
+    ], rows);
+  }
+
+  private where(req: AuthedRequest, p: z.infer<typeof AlarmQuery>) {
+    return this.sql`
       WHERE ${scopeWhere(this.sql, req.user!.scope)}
         AND (${p.active === 'true'}::boolean = false OR a.active)
         AND (${p.type ?? null}::text IS NULL OR a.type = ${p.type ?? null})
@@ -37,10 +70,6 @@ export class AlarmsController {
         AND (${p.district ?? null}::text IS NULL OR coalesce(d.name, 'Chưa phân khu vực') = ${p.district ?? null})
         AND (${p.from ?? null}::timestamptz IS NULL OR a.started_at >= ${p.from ?? null})
         AND (${p.to ?? null}::timestamptz IS NULL OR a.started_at <= ${p.to ?? null})`;
-    const items = await this.cabinets.alarmRows(where, p.size, (p.page - 1) * p.size);
-    const total = await this.sql<{ n: number }[]>`
-      SELECT count(*)::int AS n FROM alarms a JOIN cabinets c ON c.id = a.cabinet_id LEFT JOIN areas d ON d.id = c.district_id ${where}`;
-    return { items, total: total[0]?.n ?? 0, page: p.page, size: p.size };
   }
 
   @Post('alarms/:id/ack')

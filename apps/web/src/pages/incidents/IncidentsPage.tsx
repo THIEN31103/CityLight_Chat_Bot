@@ -5,8 +5,8 @@ import type { ColumnDef } from '@tanstack/react-table';
 import dayjs from 'dayjs';
 import { Download, Plus } from 'lucide-react';
 import type { Incident } from '@citylight/shared';
-import { INCIDENT_STATUS_LABELS } from '@citylight/shared';
-import { api } from '@/lib/api';
+import { INCIDENT_STATUS_LABELS, INCIDENT_CATEGORIES, incidentOverdue } from '@citylight/shared';
+import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { downloadCsv } from '@/lib/exportFile';
 import { fmtTime } from '@/lib/utils';
@@ -15,6 +15,8 @@ import { Badge, Button, Checkbox, Field, Input, Modal, PageHeader, Select, Texta
 
 const FILTERS = [
   { q: 'all', label: 'Tất cả' },
+  { q: 'mine', label: 'Việc của tôi' },
+  { q: 'overdue', label: 'Quá hạn' },
   { q: 'new', label: 'Chưa xử lý' },
   { q: 'assigned', label: 'Yêu cầu xử lý' },
   { q: 'deferred', label: 'Chưa cần xử lý' },
@@ -41,7 +43,8 @@ export function IncidentsPage() {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(20);
   const [createOpen, setCreateOpen] = useState(false);
-  const canManage = useSession((s) => s.can('incident.manage'));
+  // field staff (incident.resolve) may report an incident too
+  const canManage = useSession((s) => s.can('incident.manage') || s.can('incident.resolve'));
   const tree = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
   const districts = tree.data?.areas.filter((a) => a.kind === 'district') ?? [];
 
@@ -69,7 +72,7 @@ export function IncidentsPage() {
       { id: 'content', header: 'Nội dung', cell: ({ row: r }) => <span className="line-clamp-2 max-w-xs">{r.original.content}</span> },
       { id: 'status', header: 'Trạng thái', cell: ({ row: r }) => <Badge tone={INCIDENT_TONE[r.original.status]}>{INCIDENT_STATUS_LABELS[r.original.status]}</Badge> },
       { id: 'assignee', header: 'Người xử lý', cell: ({ row: r }) => r.original.assignee ?? '—' },
-      { id: 'deadline', header: 'Hạn xử lý', cell: ({ row: r }) => <span className={r.original.deadline && Date.parse(r.original.deadline) < Date.now() && r.original.status === 'assigned' ? 'text-st-offline' : ''}>{fmtTime(r.original.deadline, 'DD/MM/YYYY')}</span> },
+      { id: 'deadline', header: 'Hạn xử lý', cell: ({ row: r }) => <span className={incidentOverdue(r.original) ? 'text-st-offline' : ''}>{fmtTime(r.original.deadline, 'DD/MM/YYYY HH:mm')}</span> },
       { id: 'resolvedAt', header: 'Thời điểm xử lý', cell: ({ row: r }) => <span className="text-xs">{fmtTime(r.original.resolvedAt)}</span> },
       { id: 'resolution', header: 'Nội dung xử lý', cell: ({ row: r }) => r.original.resolution ?? '—' },
     ],
@@ -99,9 +102,13 @@ export function IncidentsPage() {
               <Checkbox label="Hiện cây phân cấp" checked={showTree} onChange={setShowTree} />
               <Button
                 variant="outline"
-                onClick={() =>
-                  downloadCsv('su-co.csv', ['Mã', 'Tủ', 'Quận', 'Phường', 'Ghi nhận', 'Người báo', 'Phân loại', 'Nội dung', 'Trạng thái', 'Người xử lý', 'Hạn'], (data?.items ?? []).map((i) => [i.code, i.cabinetName, i.districtName, i.wardName, fmtTime(i.reportedAt), i.reportedBy, i.category, i.content, INCIDENT_STATUS_LABELS[i.status], i.assignee, fmtTime(i.deadline)]))
-                }
+                onClick={async () => {
+                  // every row matching the filters, as .xlsx from the server; CSV of this page on the mock demo
+                  const { page: _p, size: _s, ...filters } = query;
+                  const ok = await api.exportIncidents(filters).catch(() => false);
+                  if (!ok)
+                    downloadCsv('su-co.csv', ['Mã', 'Tủ', 'Quận', 'Phường', 'Ghi nhận', 'Người báo', 'Phân loại', 'Nội dung', 'Trạng thái', 'Người xử lý', 'Hạn'], (data?.items ?? []).map((i) => [i.code, i.cabinetName, i.districtName, i.wardName, fmtTime(i.reportedAt), i.reportedBy, i.category, i.content, INCIDENT_STATUS_LABELS[i.status], i.assignee, fmtTime(i.deadline)]));
+                }}
               >
                 <Download className="h-4 w-4" /> Xuất Excel
               </Button>
@@ -155,6 +162,7 @@ function CreateIncidentModal({ open, onOpenChange }: { open: boolean; onOpenChan
   const found = useQuery({ queryKey: ['search', search], queryFn: () => api.search(search), enabled: search.length >= 2 });
   const create = useMutation({
     mutationFn: () => api.createIncident({ cabinetId, category, content }),
+    onError: (e) => toast(e instanceof ApiError ? e.message : 'Không tạo được sự cố', 'error'),
     onSuccess: (inc) => {
       toast(`Đã tạo sự cố ${inc.code}`, 'success');
       qc.invalidateQueries({ queryKey: ['incidents'] });
@@ -186,7 +194,7 @@ function CreateIncidentModal({ open, onOpenChange }: { open: boolean; onOpenChan
         )}
         <Field label="Phân loại">
           <Select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full">
-            {['Đèn tắt', 'Đèn sáng ban ngày', 'Trụ nghiêng', 'Mất cáp', 'Tủ hư hỏng', 'Chập điện', 'Khác'].map((c) => <option key={c}>{c}</option>)}
+            {INCIDENT_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
           </Select>
         </Field>
         <Field label="Nội dung">

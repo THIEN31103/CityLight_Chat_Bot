@@ -25,6 +25,7 @@
     "e2e:map": "node --env-file=.env --import tsx apps/api/test/e2e-map.ts",
     "e2e:alarms": "node --env-file=.env --import tsx apps/api/test/e2e-alarms.ts",
     "e2e:schedules": "node --env-file=.env --import tsx apps/api/test/e2e-schedules.ts",
+    "e2e:incidents": "node --env-file=.env --import tsx apps/api/test/e2e-incidents.ts",
     "db:seed": "npm run seed -w @citylight/db",
     "sim:register": "npm run register -w @citylight/simulator --",
     "dev:web:hybrid": "npm run dev:hybrid -w @citylight/web",
@@ -40,6 +41,7 @@
     "vitest": "^2.1.9"
   },
   "overrides": {
-    "fastify": "5.12.7"
+    "fastify": "5.12.7",
+    "uuid": "11.1.1"
   }
 }

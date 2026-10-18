@@ -18,6 +18,8 @@ import { firmwareBlocksCommands, sameSchedule, type FwProfile, type ScheduleWind
 const INTERVAL_MS = Number(process.env.SCHED_INTERVAL_MS ?? 5 * 60_000);
 const RETRY_MS = Number(process.env.SCHED_RETRY_MS ?? 30 * 60_000);
 const DEBOUNCE_MS = 2000;
+/** M7: how often assigned incidents are checked for a passed deadline (one reminder each). */
+const OVERDUE_MS = Number(process.env.SCHED_OVERDUE_MS ?? 60_000);
 
 const sql = createSql(process.env.DATABASE_URL, 4);
 const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: 2 });
@@ -70,6 +72,24 @@ async function reconcile(ids: string[] | null, fresh: Set<string> = new Set()): 
   return send.ids.length;
 }
 
+/** Incidents whose deadline just passed: mark once and tell the assignee (notify-worker). */
+async function overdueIncidents() {
+  const rows = await sql<{ id: string; code: string; cabinet_name: string; district: string | null; category: string; content: string; deadline: Date; assignee_id: string }[]>`
+    WITH due AS (
+      UPDATE incidents SET overdue_notified_at = now()
+      WHERE status = 'assigned' AND deadline < now() AND overdue_notified_at IS NULL AND assignee_id IS NOT NULL
+      RETURNING id, code, cabinet_id, category, content, deadline, assignee_id
+    ) SELECT due.id, due.code, c.code || ' - ' || c.name AS cabinet_name, d.name AS district, due.category, due.content, due.deadline, due.assignee_id
+      FROM due JOIN cabinets c ON c.id = due.cabinet_id LEFT JOIN areas d ON d.id = c.district_id`;
+  for (const r of rows) {
+    await sql`INSERT INTO incident_events (incident_id, "by", action, note) VALUES (${r.id}, 'Hệ thống', 'Quá hạn xử lý', 'Đã nhắc người xử lý')`;
+    const incident = { id: r.id, code: r.code, cabinetName: r.cabinet_name, districtName: r.district ?? 'Chưa phân khu vực', category: r.category,
+      content: r.content, deadline: r.deadline.toISOString(), assigneeId: r.assignee_id };
+    await redis.publish(EVENTS_CHANNEL, JSON.stringify({ type: 'incident.overdue', incident })).catch(() => undefined);
+  }
+  if (rows.length) console.log(`[scheduler] ${rows.length} sự cố quá hạn, đã nhắc người xử lý`);
+}
+
 // one run at a time; targeted requests are merged while a run is going on
 let chain = Promise.resolve();
 let pendingIds: Set<string> | null = null;
@@ -120,6 +140,7 @@ async function main() {
   });
   request(null);
   setInterval(() => request(null), INTERVAL_MS);
+  setInterval(() => void (chain = chain.then(overdueIncidents).catch((e) => console.error('[scheduler] overdue', (e as Error).message))), OVERDUE_MS);
   setInterval(() => void redis.set('cl:scheduler:stats', JSON.stringify({ ...stats, at: Date.now() })).catch(() => undefined), 30_000);
   const shutdown = async () => {
     await chain;

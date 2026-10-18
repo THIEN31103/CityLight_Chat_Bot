@@ -19,7 +19,8 @@ RUN npm ci --include=dev --no-audit --no-fund
 FROM base AS runtime
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
+# /data/uploads: incident photos (M7); a new named volume copies this ownership
+RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app && mkdir -p /data/uploads && chown app:app /data/uploads
 USER app
 EXPOSE 3000
 WORKDIR /app/apps/api

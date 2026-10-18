@@ -393,13 +393,41 @@ export const incidents = pgTable(
     reportedBy: text('reported_by').notNull(),
     reportedAt: tsz('reported_at').notNull().defaultNow(),
     status: incidentStatusEnum('status').notNull().default('new'),
+    /** Display name at assignment time; the user is assignee_id (M7). */
     assignee: text('assignee'),
+    assigneeId: uuid('assignee_id').references(() => users.id, { onDelete: 'set null' }),
     deadline: tsz('deadline'),
     resolution: text('resolution'),
     resolvedAt: tsz('resolved_at'),
+    /** unused since M7 (incident_photos) */
     photos: jsonb('photos').$type<string[]>().notNull().default([]),
+    /** set when the assignee was reminded that the deadline passed (once per deadline) */
+    overdueNotifiedAt: tsz('overdue_notified_at'),
   },
-  (t) => [uniqueIndex('incidents_code_uq').on(t.code), index('incidents_status_idx').on(t.status, t.reportedAt)],
+  (t) => [
+    uniqueIndex('incidents_code_uq').on(t.code),
+    index('incidents_status_idx').on(t.status, t.reportedAt),
+    index('incidents_assignee_idx').on(t.assigneeId),
+    index('incidents_cabinet_idx').on(t.cabinetId),
+    // one open incident per alarm
+    uniqueIndex('incidents_alarm_open_uq').on(t.alarmId).where(sql`status in ('new','assigned','deferred')`),
+  ],
+);
+
+/** Photos of an incident (M7): files on disk (UPLOAD_DIR), served by the API after a scope check. */
+export const incidentPhotos = pgTable(
+  'incident_photos',
+  {
+    id: id(),
+    incidentId: uuid('incident_id').notNull().references(() => incidents.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: ['report', 'resolution'] }).notNull(),
+    mime: text('mime').notNull(),
+    size: integer('size').notNull(),
+    path: text('path').notNull(),
+    uploadedBy: text('uploaded_by').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('incident_photos_incident_idx').on(t.incidentId)],
 );
 
 export const incidentEvents = pgTable('incident_events', {

@@ -87,7 +87,7 @@ async function main() {
     // ---------- users ----------
     await sql`DELETE FROM users WHERE email LIKE ${'%@' + DOMAIN}`;
     const org = (await sql<{ id: string }[]>`SELECT id FROM organizations LIMIT 1`)[0]!.id;
-    const cab = await sql<{ ltid: string; id: string; district_id: string }[]>`SELECT ltid, id, district_id FROM cabinets WHERE ltid IN ('SIM9001', 'SIM9020') ORDER BY ltid`;
+    const cab = await sql<{ ltid: string; id: string; district_id: string; code: string }[]>`SELECT ltid, id, district_id, code FROM cabinets WHERE ltid IN ('SIM9001', 'SIM9020') ORDER BY ltid`;
     const [A, B] = cab as [typeof cab[0], typeof cab[0]];
     if (!A || !B || A.district_id === B.district_id) throw new Error('SIM9001 / SIM9020 phải ở 2 quận khác nhau (npm run sim:register -- --count 10000)');
     const pw = `Alm-${Math.random().toString(36).slice(2)}-${Date.now()}`;
@@ -192,7 +192,9 @@ async function main() {
     await sleep(6000);
     const clrA = to(1001).filter((m) => m.at > resetAt).map((m) => m.text).join('\n');
     check('Báo "hết" cho mức Cao/Nghiêm trọng, không báo hết cho mức Thấp', clrA.includes('Hết: E403') && !clrA.includes('E502') && !clrA.includes('E803'), clrA.replace(/\n/g, ' / '));
-    check('Không gửi tin thừa (tổng tin trong bài)', sent.length - before <= 6, `${sent.length - before} tin`);
+    // only messages about this test's two cabinets: simulators of an earlier e2e going offline also alert
+    const ours = sent.slice(before).filter((m) => m.text.includes(A.code) || m.text.includes(B.code) || m.text.includes('cảnh báo mới'));
+    check('Không gửi tin thừa về 2 tủ của bài', ours.length <= 6, `${ours.length} tin`);
 
     // ---------- stop / unlink ----------
     tgSay(1002, '/stop');

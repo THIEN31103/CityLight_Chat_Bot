@@ -19,7 +19,8 @@ Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2 (broke
 | **M3** bản đồ | ✅ API thật cho bản đồ/KPI/tìm kiếm/cây khu vực (từ M1) + vị trí đã lưu (`favorites`); nén gzip (`map/cabinets` 10.000 tủ: 3,4 MB → 600 KB); đo trên trình duyệt: zoom/kéo 135 FPS, không tác vụ dài; `npm run e2e:map` 32/32 (KPI = bản đồ = danh sách = cây ở 3 phạm vi) |
 | **M5** cảnh báo | ✅ luật ngưỡng (áp/dòng/dao động/lệch pha/cosφ/rò/nhiệt/pin), lệch lịch, sai giờ LOGO, lệch GPS, chống nhiễu 30 s; API ngưỡng + quy tắc + đăng ký thông báo; `notify-worker` Telegram (liên kết `/start <mã>`, phạm vi, gom tin, tóm tắt); cảnh báo sự kiện lệnh E701–E703; `npm run e2e:alarms` 26/26 |
 | **M6** lịch & hàng loạt | ✅ `scheduler` tự đưa mọi tủ về lịch mong muốn (riêng > vùng; không đẩy lịch mặc định; tủ offline nhận khi online lại), lịch thiên văn (suncalc, dùng chung web/server), API lịch vùng + xem trước + bỏ lịch riêng, lệnh hàng loạt theo vùng có mã 2FA, tiến độ realtime, kết quả từng tủ, gửi lại; `npm run e2e:schedules` 25/25, tải 1.000 tủ: 992 ok trong 57 s |
-| M7 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
+| **M7** sự cố | ✅ tạo từ cảnh báo / thủ công, luồng giao → xử lý → đóng do server kiểm (quyền + phạm vi), người xử lý là user Bảo trì, "Việc của tôi", ảnh hiện trường / sau xử lý (magic bytes, 5 MB), Excel `.xlsx` sự cố + cảnh báo theo bộ lọc, báo cáo tháng, nhắc quá hạn qua Telegram; `npm run e2e:incidents` 36/36 |
+| M8 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
 
 ## Chạy web (M1-UI)
 
@@ -114,6 +115,8 @@ Chạy API + các worker (ingest, command, notify, scheduler) bằng Docker: `do
 - `npm run e2e:map` (~5 s): bộ đếm KPI khớp bản đồ, danh sách, lọc theo trạng thái, cây khu vực và DB với 3 phạm vi (toàn hệ thống / 1 quận / 1 phường), không lộ tủ ngoài phạm vi; vị trí đã lưu. Tự tạo/xóa user `*@e2e-map.citylight.test`.
 - `npm run e2e:alarms` (cần api + ingest đang chạy, ~2,5 phút): ngưỡng → cảnh báo mở sau ~30 s / đóng sau ~30 s, bộ đếm Lỗi, Telegram giả lập trên localhost (liên kết, phạm vi, mức, gom tin, `/stop`). Không cần bot thật; tự tạo/xóa user `*@e2e-alarm.citylight.test`.
 - `npm run e2e:schedules` (cần api + ingest + command-worker + scheduler, ~3 phút): lịch vùng / riêng / thiên văn tới tủ giả, tủ offline bắt kịp, batch có mã 2FA + tiến độ + gửi lại. Thêm `-- --load 1000` để chạy batch 1.000 tủ ở Vùng Bắc. Trả lịch Vùng Thủ Đức về như cũ khi xong.
+- `npm run e2e:incidents` (cần api + scheduler, ~1,5 phút): cảnh báo → sự cố → giao → ảnh → xử lý → đóng, quyền / phạm vi, ảnh giả bị từ chối, Excel đọc lại, báo cáo khớp DB, nhắc quá hạn. Tự tạo/xóa user `*@e2e-inc.citylight.test`.
+- Ảnh sự cố nằm trong volume Docker `uploads` (`/data/uploads` trong container api): **sao lưu cùng với DB**.
 - Không chạy các e2e có simulator liền nhau quá sát: tủ giả của bài trước mất kết nối sau 60 s và sinh cảnh báo / thông báo trong bài sau.
 - Các e2e đều đăng nhập: chạy cách bài rate limit của `e2e:api` ít nhất 1 phút (cùng IP, 20 lần/phút), nếu không sẽ bị 429.
 - Sau lưng proxy (Caddy trên VPS) đặt `TRUST_PROXY` (IP/CIDR của proxy; số hop không còn được fastify ≥ 5.12 hỗ trợ) để lấy IP thật cho rate limit; mặc định tắt.

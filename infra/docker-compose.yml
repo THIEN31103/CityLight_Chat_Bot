@@ -83,6 +83,9 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       TOTP_ENC_KEY: ${TOTP_ENC_KEY:?set TOTP_ENC_KEY in infra/.env}
       AUTH_REQUIRE_2FA: ${AUTH_REQUIRE_2FA:-true}
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads   # incident photos: back up together with the database
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -157,3 +160,4 @@ volumes:
   emqx-data:
   db-data:
   redis-data:
+  uploads:

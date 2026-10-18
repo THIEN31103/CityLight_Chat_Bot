@@ -14,3 +14,5 @@ playwright-report/
 test-results/
 infra/emqx/acl.conf
 .tmp/
+# incident photos when the API runs from source (UPLOAD_DIR default)
+data/

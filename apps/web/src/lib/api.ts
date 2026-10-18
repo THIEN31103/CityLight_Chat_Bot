@@ -3,6 +3,7 @@ import type {
   ActivityLog,
   Alarm,
   AlarmSeverity,
+  IncidentPhoto,
   Area,
   CabinetDetail,
   CabinetDiagnostics,
@@ -66,6 +67,38 @@ async function req<T>(method: string, path: string, body?: unknown, headers: Rec
     }
     throw new ApiError(res.status, code, data?.detail ?? `Lỗi ${res.status}`);
   }
+  return data as T;
+}
+
+/**
+ * Download a server-generated file (Excel export, M7). Returns false when the route does not exist
+ * (Cloudflare demo = mock only) so the page can fall back to a client-side export.
+ */
+export async function downloadFile(path: string, fallbackName: string): Promise<boolean> {
+  const res = await transport(new Request(new URL(`/api/v1${path}`, window.location.origin), { credentials: 'include' }));
+  if (res.status === 404) return false;
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new ApiError(res.status, data?.code ?? 'error', data?.detail ?? `Lỗi ${res.status}`);
+  }
+  const cd = res.headers.get('content-disposition') ?? '';
+  const m = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(await res.blob());
+  a.download = m ? decodeURIComponent(m[1]!) : fallbackName;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  return true;
+}
+
+/** multipart upload with the CSRF header (incident photos). */
+async function upload<T>(path: string, form: FormData): Promise<T> {
+  const csrf = csrfToken();
+  const res = await transport(new Request(new URL(`/api/v1${path}`, window.location.origin), {
+    method: 'POST', credentials: 'include', headers: csrf ? { 'X-CSRF-Token': csrf } : {}, body: form,
+  }));
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError(res.status, data?.code ?? 'error', data?.detail ?? `Lỗi ${res.status}`);
   return data as T;
 }
 
@@ -240,9 +273,18 @@ export const api = {
   // incidents
   incidents: (p: { q?: string; district?: string; from?: string; to?: string; page?: number; size?: number }) => req<Page<Incident>>('GET', `/incidents${qs(p)}`),
   incident: (id: string) => req<Incident>('GET', `/incidents/${id}`),
-  createIncident: (b: { cabinetId: string; category: string; content: string }) => req<Incident>('POST', '/incidents', b),
-  transitionIncident: (id: string, b: { to: Incident['status']; note?: string; assignee?: string; deadline?: string; resolution?: string }) =>
+  createIncident: (b: { cabinetId?: string; alarmId?: string; category?: string; content?: string }) => req<Incident>('POST', '/incidents', b),
+  transitionIncident: (id: string, b: { to: Incident['status']; note?: string; assigneeId?: string; deadline?: string; resolution?: string }) =>
     req<Incident>('POST', `/incidents/${id}/transition`, b),
+  incidentAssignees: (cabinetId: string) => req<{ id: string; fullName: string; email: string; role: string }[]>('GET', `/incidents/assignees${qs({ cabinetId })}`),
+  uploadIncidentPhoto: (id: string, kind: 'report' | 'resolution', file: File) => {
+    const f = new FormData();
+    f.append('file', file);
+    return upload<IncidentPhoto>(`/incidents/${id}/photos${qs({ kind })}`, f);
+  },
+  exportIncidents: (p: { q?: string; district?: string; from?: string; to?: string }) => downloadFile(`/incidents/export.xlsx${qs(p)}`, 'su-co.xlsx'),
+  exportAlarms: (p: { active?: boolean; type?: string; severity?: string; district?: string; from?: string; to?: string }) =>
+    downloadFile(`/alarms/export.xlsx${qs(p)}`, 'canh-bao.xlsx'),
   incidentReport: (month: string) => req<IncidentReport>('GET', `/incidents/report${qs({ month })}`),
 
   // schedules / dimming

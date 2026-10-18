@@ -1,7 +1,7 @@
 // MSW handlers implementing the /api/v1 contract of docs/spec.md section 11 against the in-browser mock DB.
 import { http, HttpResponse, delay, type PathParams } from 'msw';
 import type { Alarm, CommandType, DimmingProfile, Incident, LampGroup, Schedule, Thresholds, User } from '@citylight/shared';
-import { DEFAULT_FIELD_MAP } from '@citylight/shared';
+import { DEFAULT_FIELD_MAP, categoryForAlarm } from '@citylight/shared';
 import {
   MockApiError,
   batchItems,
@@ -438,14 +438,19 @@ export const handlers = [
     const overdue = list.filter((i) => i.status === 'assigned' && i.deadline && Date.parse(i.deadline) < Date.now()).length;
     return HttpResponse.json({ month, total: list.length, byDay, byDistrict, byCategory, avgResolveHours: avgHours, overdue });
   })),
+  http.get(`${API}/incidents/assignees`, wrap(() =>
+    HttpResponse.json(users.filter((x) => x.role === 'admin' || x.role === 'maintenance').map((x) => ({ id: x.id, fullName: x.fullName, email: x.email, role: x.role }))),
+  )),
   http.get(`${API}/incidents/:id`, wrap(({ params }: { params: Record<string, string> }) => {
     const i = incidents.find((x) => x.id === params.id);
     return i ? HttpResponse.json(i) : problem(404, 'not_found', 'Không tìm thấy sự cố');
   })),
   http.post(`${API}/incidents`, wrap(async ({ request }: { request: Request }) => {
     const u = requireUser();
-    const body = (await request.json()) as { cabinetId: string; category: string; content: string };
-    const c = cabinetById.get(body.cabinetId)!;
+    const body = (await request.json()) as { cabinetId?: string; alarmId?: string; category?: string; content?: string };
+    // from an alarm (M7): cabinet, category and text come from the alarm
+    const alarm = body.alarmId ? alarms.find((a) => a.id === body.alarmId) : undefined;
+    const c = cabinetById.get(alarm?.cabinetId ?? body.cabinetId ?? '')!;
     const inc: Incident = {
       id: `inc${Date.now()}`,
       code: `SC${String(incidents.length + 1).padStart(5, '0')}`,
@@ -453,9 +458,9 @@ export const handlers = [
       cabinetName: c.name,
       districtName: districtName(c),
       wardName: wardName(c),
-      source: 'manual',
-      category: body.category,
-      content: body.content,
+      source: alarm ? 'alarm' : 'manual',
+      category: body.category ?? (alarm ? categoryForAlarm(alarm.type) : 'Khác'),
+      content: body.content ?? (alarm ? `${alarm.code}: ${alarm.message}` : ''),
       location: c.location,
       reportedBy: u.fullName,
       reportedAt: new Date().toISOString(),
@@ -474,10 +479,13 @@ export const handlers = [
   http.post(`${API}/incidents/:id/transition`, wrap(async ({ params, request }: { params: Record<string, string>; request: Request }) => {
     const u = requireUser();
     const inc = incidents.find((x) => x.id === params.id)!;
-    const body = (await request.json()) as { to: Incident['status']; note?: string; assignee?: string; deadline?: string; resolution?: string };
+    const body = (await request.json()) as { to: Incident['status']; note?: string; assigneeId?: string; deadline?: string; resolution?: string };
     const label: Record<Incident['status'], string> = { new: 'Mở lại', assigned: 'Giao xử lý', deferred: 'Chưa cần xử lý', resolved: 'Đã xử lý', closed: 'Đóng sự cố' };
     inc.status = body.to;
-    if (body.assignee) inc.assignee = body.assignee;
+    if (body.assigneeId) {
+      inc.assigneeId = body.assigneeId;
+      inc.assignee = users.find((x) => x.id === body.assigneeId)?.fullName ?? null;
+    }
     if (body.deadline) inc.deadline = body.deadline;
     if (body.to === 'resolved') {
       inc.resolution = body.resolution ?? body.note ?? null;

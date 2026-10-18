@@ -147,11 +147,41 @@ async function flush(key: string) {
   }
 }
 
+// ---------------- incidents (M7): straight to the assignee, not batched, any severity ----------------
+
+interface IncidentEvent {
+  id: string; code: string; cabinetName: string; districtName: string; category: string; content: string; deadline: string; assigneeId: string; by?: string;
+}
+
+const vnTimeText = (iso: string) => new Date(iso).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+async function notifyAssignee(kind: 'assigned' | 'overdue', i: IncidentEvent) {
+  const link = WEB_URL ? `\nXem: ${WEB_URL.replace(/\/$/, '')}/incidents/${i.id}` : '';
+  const head = kind === 'assigned' ? `📋 Sự cố ${i.code} giao cho bạn${i.by ? ` (bởi ${i.by})` : ''}` : `⏰ Sự cố ${i.code} đã quá hạn xử lý`;
+  const text = `CityLight\n${head}\n   ${i.cabinetName} (${i.districtName})\n   ${i.category}: ${i.content}\n   Hạn: ${vnTimeText(i.deadline)}${link}`;
+  for (const s of subs.filter((x) => x.userId === i.assigneeId)) {
+    const ch = channels[s.channel];
+    if (!ch) continue;
+    try {
+      await ch.send(s.address, text);
+      stats.messages++;
+    } catch (e) {
+      stats.failed++;
+      console.error(`[notify] incident ${i.code} -> ${s.email}: ${(e as Error).message}`);
+    }
+  }
+}
+
 function onEvent(raw: string) {
-  let ev: { type: string; alarm?: AlarmEvent };
+  let ev: { type: string; alarm?: AlarmEvent; incident?: IncidentEvent };
   try {
     ev = JSON.parse(raw);
   } catch {
+    return;
+  }
+  if (ev.incident && (ev.type === 'incident.assigned' || ev.type === 'incident.overdue')) {
+    stats.events++;
+    void notifyAssignee(ev.type === 'incident.assigned' ? 'assigned' : 'overdue', ev.incident);
     return;
   }
   if (!ev.alarm || (ev.type !== 'alarm.raised' && ev.type !== 'alarm.cleared')) return;
