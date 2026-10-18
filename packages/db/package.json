@@ -9,7 +9,9 @@
     ".": "./src/index.ts",
     "./fixtures": "./src/fixtures.ts",
     "./commands": "./src/commands.ts",
-    "./notify": "./src/notify.ts"
+    "./notify": "./src/notify.ts",
+    "./batches": "./src/batches.ts",
+    "./schedules": "./src/schedules.ts"
   },
   "scripts": {
     "generate": "drizzle-kit generate",

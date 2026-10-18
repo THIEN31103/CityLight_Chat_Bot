@@ -220,9 +220,13 @@ export const api = {
   command: (id: string) => req<Command>('GET', `/commands/${id}`),
   batches: () => req<CommandBatch[]>('GET', '/command-batches'),
   batch: (id: string) => req<{ batch: CommandBatch; items: BatchItem[] }>('GET', `/command-batches/${id}`),
-  previewBatch: (zoneIds: string[]) => req<{ total: number; offline: number }>('POST', '/command-batches/preview', { zoneIds }),
-  createBatch: (kind: CommandBatch['kind'], zoneIds: string[]) => req<CommandBatch>('POST', '/command-batches', { kind, zoneIds }),
-  retryBatch: (id: string) => req<CommandBatch>('POST', `/command-batches/${id}/retry-failed`),
+  previewBatch: (zoneIds: string[]) => req<{ total: number; offline: number; blocked?: number }>('POST', '/command-batches/preview', { zoneIds }),
+  // mass actions need the current 2FA code (decision M6-E)
+  createBatch: (kind: CommandBatch['kind'], zoneIds: string[], otp: string) => req<CommandBatch>('POST', '/command-batches', { kind, zoneIds, otp }),
+  retryBatch: (id: string, otp: string) => req<CommandBatch>('POST', `/command-batches/${id}/retry-failed`, { otp }),
+  zoneSchedulePreview: (id: string, offsetOnMin: number, offsetOffMin: number) =>
+    req<{ date: string; on: string; off: string; sunset: string; sunrise: string }[]>('GET', `/zones/${id}/schedule/preview${qs({ days: 30, offsetOnMin, offsetOffMin })}`),
+  dropCabinetSchedule: (id: string) => req<void>('DELETE', `/cabinets/${id}/schedule`),
 
   // alarms
   alarms: (p: { active?: boolean; type?: string; severity?: string; district?: string; from?: string; to?: string; page?: number; size?: number }) =>

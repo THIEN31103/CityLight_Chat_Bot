@@ -18,7 +18,8 @@ Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2 (broke
 | **M4** lệnh thật | ✅ `command-worker` (hàng đợi Postgres, 1 lệnh/tủ, ack + retry + timeout, xác nhận bằng telemetry), API gửi/xem/hủy lệnh + đặt lịch, chặn tủ offline / firmware cũ, idempotency, nhật ký, Socket.IO; `npm run e2e:commands` 27/27 |
 | **M3** bản đồ | ✅ API thật cho bản đồ/KPI/tìm kiếm/cây khu vực (từ M1) + vị trí đã lưu (`favorites`); nén gzip (`map/cabinets` 10.000 tủ: 3,4 MB → 600 KB); đo trên trình duyệt: zoom/kéo 135 FPS, không tác vụ dài; `npm run e2e:map` 32/32 (KPI = bản đồ = danh sách = cây ở 3 phạm vi) |
 | **M5** cảnh báo | ✅ luật ngưỡng (áp/dòng/dao động/lệch pha/cosφ/rò/nhiệt/pin), lệch lịch, sai giờ LOGO, lệch GPS, chống nhiễu 30 s; API ngưỡng + quy tắc + đăng ký thông báo; `notify-worker` Telegram (liên kết `/start <mã>`, phạm vi, gom tin, tóm tắt); cảnh báo sự kiện lệnh E701–E703; `npm run e2e:alarms` 26/26 |
-| M6 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
+| **M6** lịch & hàng loạt | ✅ `scheduler` tự đưa mọi tủ về lịch mong muốn (riêng > vùng; không đẩy lịch mặc định; tủ offline nhận khi online lại), lịch thiên văn (suncalc, dùng chung web/server), API lịch vùng + xem trước + bỏ lịch riêng, lệnh hàng loạt theo vùng có mã 2FA, tiến độ realtime, kết quả từng tủ, gửi lại; `npm run e2e:schedules` 25/25, tải 1.000 tủ: 992 ok trong 57 s |
+| M7 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
 
 ## Chạy web (M1-UI)
 
@@ -88,11 +89,12 @@ npm run dev:api                          # API :3000 (/api/v1, /socket.io)   —
 npm run dev:ingest                       # ingest worker
 npm run dev:cmd                          # command-worker (gửi lệnh xuống tủ)
 npm run dev:notify                       # notify-worker (Telegram; cần TELEGRAM_BOT_TOKEN)
+npm run dev:scheduler                    # scheduler (đưa tủ về lịch mong muốn)
 npm run sim -- --count 300               # tủ giả gửi lên EMQX
 npm run dev:web:hybrid                   # web :5173/5174, API thật + mock cho phần chưa làm
 ```
 
-Chạy API + ingest + command-worker + notify-worker bằng Docker: `docker compose -f infra/docker-compose.yml --env-file infra/.env --profile app up -d --build`.
+Chạy API + các worker (ingest, command, notify, scheduler) bằng Docker: `docker compose -f infra/docker-compose.yml --env-file infra/.env --profile app up -d --build`.
 
 ### Thông báo Telegram (M5)
 
@@ -111,6 +113,8 @@ Chạy API + ingest + command-worker + notify-worker bằng Docker: `docker comp
 - `npm run e2e:commands` (cần api + ingest + command-worker đang chạy, ~90 s): 27 kiểm tra vòng đời lệnh với tủ giả SIM9991–9996 (mất PLC, mất LOGO, mất ack, firmware cũ), tự tạo và xóa user `*@e2e-cmd.citylight.test`. Không chạy cùng `npm run sim` ≥ 9990 tủ.
 - `npm run e2e:map` (~5 s): bộ đếm KPI khớp bản đồ, danh sách, lọc theo trạng thái, cây khu vực và DB với 3 phạm vi (toàn hệ thống / 1 quận / 1 phường), không lộ tủ ngoài phạm vi; vị trí đã lưu. Tự tạo/xóa user `*@e2e-map.citylight.test`.
 - `npm run e2e:alarms` (cần api + ingest đang chạy, ~2,5 phút): ngưỡng → cảnh báo mở sau ~30 s / đóng sau ~30 s, bộ đếm Lỗi, Telegram giả lập trên localhost (liên kết, phạm vi, mức, gom tin, `/stop`). Không cần bot thật; tự tạo/xóa user `*@e2e-alarm.citylight.test`.
+- `npm run e2e:schedules` (cần api + ingest + command-worker + scheduler, ~3 phút): lịch vùng / riêng / thiên văn tới tủ giả, tủ offline bắt kịp, batch có mã 2FA + tiến độ + gửi lại. Thêm `-- --load 1000` để chạy batch 1.000 tủ ở Vùng Bắc. Trả lịch Vùng Thủ Đức về như cũ khi xong.
+- Không chạy các e2e có simulator liền nhau quá sát: tủ giả của bài trước mất kết nối sau 60 s và sinh cảnh báo / thông báo trong bài sau.
 - Các e2e đều đăng nhập: chạy cách bài rate limit của `e2e:api` ít nhất 1 phút (cùng IP, 20 lần/phút), nếu không sẽ bị 429.
 - Sau lưng proxy (Caddy trên VPS) đặt `TRUST_PROXY` (IP/CIDR của proxy; số hop không còn được fastify ≥ 5.12 hỗ trợ) để lấy IP thật cho rate limit; mặc định tắt.
 
@@ -133,7 +137,7 @@ infra/               docker-compose (EMQX 5.8, TimescaleDB-HA pg16, Redis 7.4) +
 docs/                spec, quyết định, device contract, kiến trúc
 ```
 
-`apps/api/` NestJS (Fastify, session cookie, Socket.IO) · `apps/workers/` ingest (kèm luật cảnh báo), command-worker, notify-worker (scheduler ở M6).
+`apps/api/` NestJS (Fastify, session cookie, Socket.IO) · `apps/workers/` ingest (kèm luật cảnh báo), command-worker, notify-worker, scheduler.
 
 ## Ghi chú kỹ thuật
 

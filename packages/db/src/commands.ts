@@ -21,7 +21,8 @@ const iso = (d: Date | null) => (d ? d.toISOString() : null);
 function dto(r: CommandRow): Command {
   return {
     id: r.id, cabinetId: r.cabinet_id, cabinetName: `${r.code} - ${r.name}`, type: r.type, params: r.params, batchId: r.batch_id,
-    status: r.status, requestedBy: r.email ?? '—', queuedAt: r.queued_at.toISOString(), sentAt: iso(r.sent_at),
+    // scheduler commands (SYSTEM_USER_ID) have no user row
+    status: r.status, requestedBy: r.email ?? 'Hệ thống', queuedAt: r.queued_at.toISOString(), sentAt: iso(r.sent_at),
     ackedAt: iso(r.acked_at), confirmedAt: iso(r.confirmed_at), error: r.error,
   };
 }

@@ -3,13 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Background workers: MQTT ingest (M1), command-worker (M4), notify-worker (M5); scheduler later",
+  "description": "Background workers: MQTT ingest (M1), command-worker (M4), notify-worker (M5), scheduler (M6)",
   "scripts": {
     "dev": "tsx watch src/ingest.ts",
     "start": "tsx src/ingest.ts",
     "dev:cmd": "tsx watch src/command-worker.ts",
     "start:cmd": "tsx src/command-worker.ts",
     "dev:notify": "tsx watch src/notify-worker.ts",
+    "dev:scheduler": "tsx watch src/scheduler.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

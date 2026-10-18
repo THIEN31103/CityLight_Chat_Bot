@@ -16,6 +16,8 @@ export interface CabinetStateEvent {
   manualMode: boolean | null;
   activeAlarmCount: number;
   lastSeenAt: string | null;
+  /** offline -> online in this frame (the scheduler re-sends a schedule that was lost meanwhile) */
+  cameOnline?: boolean;
 }
 
 export interface AlarmEvent {

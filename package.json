@@ -24,13 +24,15 @@
     "e2e:commands": "node --env-file=.env --import tsx apps/api/test/e2e-commands.ts",
     "e2e:map": "node --env-file=.env --import tsx apps/api/test/e2e-map.ts",
     "e2e:alarms": "node --env-file=.env --import tsx apps/api/test/e2e-alarms.ts",
+    "e2e:schedules": "node --env-file=.env --import tsx apps/api/test/e2e-schedules.ts",
     "db:seed": "npm run seed -w @citylight/db",
     "sim:register": "npm run register -w @citylight/simulator --",
     "dev:web:hybrid": "npm run dev:hybrid -w @citylight/web",
     "dev:api": "npm run dev -w @citylight/api",
     "dev:ingest": "npm run dev -w @citylight/workers",
     "dev:cmd": "npm run dev:cmd -w @citylight/workers",
-    "dev:notify": "npm run dev:notify -w @citylight/workers"
+    "dev:notify": "npm run dev:notify -w @citylight/workers",
+    "dev:scheduler": "npm run dev:scheduler -w @citylight/workers"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

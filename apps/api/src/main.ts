@@ -14,11 +14,12 @@ import { ProblemFilter } from './errors';
 import { FavoritesModule } from './favorites';
 import { InfraModule } from './infra';
 import { RealtimeModule } from './realtime';
+import { SchedulesModule } from './schedules';
 import { SystemModule } from './system';
 import { UsersModule } from './users';
 
 @Module({
-  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, FavoritesModule, AlarmsModule, AlarmConfigModule, UsersModule, SystemModule, RealtimeModule],
+  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, FavoritesModule, AlarmsModule, AlarmConfigModule, SchedulesModule, UsersModule, SystemModule, RealtimeModule],
   providers: [{ provide: APP_FILTER, useClass: ProblemFilter }],
 })
 class AppModule {}

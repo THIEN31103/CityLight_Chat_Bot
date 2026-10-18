@@ -3,7 +3,7 @@
 Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2. Hệ thống **mới hoàn toàn**. Quy mô thiết kế **10.000 tủ**.
 Tham khảo chức năng: `../prompt_xay_dung_lai_he_thong_chieu_sang.md` (chỉ tham khảo). Giao thức thiết bị: `device-contract.md`. Quyết định: `decisions.md`.
 
-Trạng thái: spec v0.1 Bảo duyệt "tương đối ổn" (2026-10-17). **M1-UI xong** (web mock, `apps/web`). **M0 + M1 xong** (ingest + API + web hybrid, thử tải 10.000 tủ). **M2 xong** (2FA TOTP, phạm vi khu vực ở REST + Socket.IO, quản lý user, CSRF, rate limit; quyết định S14–S16). **M4 lệnh xong** (command-worker, vòng đời lệnh, S17–S20; drawer các tab dữ liệu thật đã có từ M1). **M3 bản đồ xong** (2026-10-18: favorites, gzip, đo 10k tủ, e2e:map; sửa mặc định `cabinet_state.status` = offline). **M5 cảnh báo xong** (luật ngưỡng/lịch/giờ/GPS trong ingest, notify-worker Telegram, S21–S23). Tiếp theo: M6 (lịch & đồng bộ hàng loạt).
+Trạng thái: spec v0.1 Bảo duyệt "tương đối ổn" (2026-10-17). **M1-UI xong** (web mock, `apps/web`). **M0 + M1 xong** (ingest + API + web hybrid, thử tải 10.000 tủ). **M2 xong** (2FA TOTP, phạm vi khu vực ở REST + Socket.IO, quản lý user, CSRF, rate limit; quyết định S14–S16). **M4 lệnh xong** (command-worker, vòng đời lệnh, S17–S20; drawer các tab dữ liệu thật đã có từ M1). **M3 bản đồ xong** (2026-10-18: favorites, gzip, đo 10k tủ, e2e:map; sửa mặc định `cabinet_state.status` = offline). **M5 cảnh báo xong** (luật ngưỡng/lịch/giờ/GPS trong ingest, notify-worker Telegram, S21–S23). **M6 lịch & hàng loạt xong** (scheduler giữ lịch mong muốn, lịch thiên văn, batch có OTP + tiến độ, S24–S26; tải 1.000 tủ). Tiếp theo: M7 (sự cố).
 
 ---
 
@@ -273,6 +273,7 @@ Bộ đếm, bản đồ, danh sách, trang cảnh báo **đọc cùng một ngu
 - Mỗi zone có tọa độ tâm. Scheduler tính giờ mặt trời lặn/mọc hằng ngày (thư viện `suncalc`) + offset (vd bật = lặn + 10 phút, tắt = mọc − 10 phút).
 - Job 12:00 mỗi ngày: zone `source=astronomical` → tạo batch `SET_SCHEDULE` cho các tủ trong zone (chỉ gửi khi giá trị đổi so với `schedule_applied`, để tránh spam).
 - Biểu đồ giờ bật/tắt theo ngày cho từng zone. Khi sau này có cảm biến LUX, thêm nguồn `lux` cùng giao diện.
+- Đã làm ở M6 (S24–S25), khác bản đầu: không chạy job 12:00 mà **scheduler đối chiếu liên tục** (5 phút + khi lịch đổi + khi tủ online lại), chỉ gửi khi khác `schedule_applied`; không đẩy lịch mặc định.
 
 ---
 

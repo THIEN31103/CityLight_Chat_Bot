@@ -12,6 +12,7 @@ import {
   RETRYABLE, TOPICS, ackError, ackMatches, buildCommandFrames, confirmRule, parseAck, parseTelemetry, type Ack,
 } from '@citylight/coreif';
 import { createSql } from '@citylight/db';
+import { SYSTEM_USER_ID, batchById } from '@citylight/db/batches';
 import { COMMANDS_NOTIFY, EVENTS_CHANNEL, commandById } from '@citylight/db/commands';
 import { CONFIG_CHANNEL } from '@citylight/db/notify';
 import { COMMAND_STATUS_LABELS, describeCommand, errorOf, type AlarmType, type CommandStatus, type CommandType } from '@citylight/shared';
@@ -20,6 +21,8 @@ const MQTT_URL = process.env.MQTT_URL ?? 'mqtt://localhost:1883';
 const ACK_TIMEOUT_MS = Number(process.env.CMD_ACK_TIMEOUT_MS ?? 30_000);
 const CONFIRM_MS = Number(process.env.CMD_CONFIRM_MS ?? 20_000);
 const QUEUE_TTL_MS = Number(process.env.CMD_QUEUE_TTL_MS ?? 120_000);
+/** Batch and scheduler commands queue behind each other (10k cabinets at 20/s = ~8 min). */
+const BULK_TTL_MS = Number(process.env.CMD_BULK_TTL_MS ?? 30 * 60_000);
 const SEND_PER_SEC = Number(process.env.CMD_SEND_PER_SEC ?? 20);
 const TICK_MS = 500;
 
@@ -56,6 +59,9 @@ async function emit(id: string) {
 async function audit(id: string, status: CommandStatus, error: string | null) {
   const cmd = await commandById(sql, id);
   if (!cmd) return;
+  // batches log once for the whole batch; scheduler commands log only when something went wrong
+  if (cmd.batchId) return;
+  if (cmd.requestedBy === 'Hệ thống' && (status === 'acked' || status === 'confirmed')) return;
   const text = `${describeCommand(cmd.type, cmd.params)}: ${COMMAND_STATUS_LABELS[status]}${error ? ` — ${error}` : ''}`;
   await sql`INSERT INTO activity_logs (user_id, user_email, action, target_type, target_id, target_name, new_value)
             SELECT requested_by, ${cmd.requestedBy}, 'Kết quả lệnh', 'cabinet', ${cmd.cabinetId}, ${cmd.cabinetName}, ${text}
@@ -79,6 +85,39 @@ async function eventAlarm(f: InFlight, type: AlarmType, detail: string) {
   await redis.publish(EVENTS_CHANNEL, JSON.stringify({ type: 'alarm.raised', alarm })).catch(() => undefined);
 }
 
+// ---------------- batches (M6) ----------------
+
+const batchEmit = new Map<string, NodeJS.Timeout>();
+
+/** Batch item of a finished command: ok / failed / offline; batch finished when nothing is pending. */
+async function batchItemDone(commandId: string, status: CommandStatus, error: string | null) {
+  const result = status === 'confirmed' || status === 'acked' ? 'ok' : error?.includes('mất kết nối') ? 'offline' : 'failed';
+  const rows = await sql<{ batch_id: string }[]>`
+    UPDATE command_batch_items SET result = ${result}, error = ${result === 'ok' ? null : error ?? COMMAND_STATUS_LABELS[status]}
+    WHERE command_id = ${commandId} RETURNING batch_id`;
+  const batchId = rows[0]?.batch_id;
+  if (!batchId) return;
+  const done = await sql`
+    UPDATE command_batches SET finished_at = now() WHERE id = ${batchId} AND finished_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM command_batch_items WHERE batch_id = ${batchId} AND result = 'pending') RETURNING id`;
+  // a 1,000-cabinet batch finishes ~1,000 commands: one progress event per second is enough
+  if (done.length) {
+    clearTimeout(batchEmit.get(batchId));
+    batchEmit.delete(batchId);
+    await emitBatch(batchId);
+  } else if (!batchEmit.has(batchId)) {
+    batchEmit.set(batchId, setTimeout(() => {
+      batchEmit.delete(batchId);
+      void emitBatch(batchId).catch(() => undefined);
+    }, 1000));
+  }
+}
+
+async function emitBatch(batchId: string) {
+  const batch = await batchById(sql, batchId);
+  if (batch) await redis.publish(EVENTS_CHANNEL, JSON.stringify({ type: 'batch.progress', batch })).catch(() => undefined);
+}
+
 async function finish(f: InFlight | { id: string; ltid?: string }, status: CommandStatus, error: string | null, extra: { acked?: boolean; confirmed?: boolean } = {}) {
   if ('ltid' in f && f.ltid) inflight.delete(f.ltid);
   await sql`
@@ -88,6 +127,7 @@ async function finish(f: InFlight | { id: string; ltid?: string }, status: Comma
     WHERE id = ${f.id}`;
   await audit(f.id, status, error);
   await emit(f.id);
+  await batchItemDone(f.id, status, error);
 }
 
 /** SET_TIME carries "now": rebuild it on every (re)send. */
@@ -112,22 +152,24 @@ async function dispatch() {
   }
   if (sentThisSecond >= SEND_PER_SEC) return;
   const rows = await sql<
-    { id: string; cabinet_id: string; ltid: string; type: CommandType; params: Record<string, unknown>; frame: string; queued_at: Date; online: boolean | null }[]
+    { id: string; cabinet_id: string; ltid: string; type: CommandType; params: Record<string, unknown>; frame: string; queued_at: Date; online: boolean | null; bulk: boolean }[]
   >`
-    SELECT m.id, m.cabinet_id, c.ltid, m.type, m.params, m.frame, m.queued_at, s.online
+    SELECT m.id, m.cabinet_id, c.ltid, m.type, m.params, m.frame, m.queued_at, s.online,
+           (m.batch_id IS NOT NULL OR m.requested_by = ${SYSTEM_USER_ID}) AS bulk
     FROM commands m JOIN cabinets c ON c.id = m.cabinet_id LEFT JOIN cabinet_state s ON s.cabinet_id = m.cabinet_id
     WHERE m.status = 'queued'
       AND NOT EXISTS (SELECT 1 FROM commands w WHERE w.cabinet_id = m.cabinet_id AND w.deadline_at IS NOT NULL)
-    ORDER BY m.queued_at LIMIT 500`;
+    ORDER BY bulk, m.queued_at LIMIT 500`; // commands someone is waiting for go first
   const seen = new Set<string>();
   for (const r of rows) {
     if (seen.has(r.cabinet_id)) continue; // oldest first, one per cabinet
     seen.add(r.cabinet_id);
     const ltid = r.ltid.toUpperCase();
     if (inflight.has(ltid)) continue;
-    if (Date.now() - r.queued_at.getTime() > QUEUE_TTL_MS) {
+    const ttl = r.bulk ? BULK_TTL_MS : QUEUE_TTL_MS;
+    if (Date.now() - r.queued_at.getTime() > ttl) {
       stats.expired++;
-      await finishQueued(r.id, 'failed', `Quá ${QUEUE_TTL_MS / 1000} s trong hàng đợi, lệnh không được gửi`);
+      await finishQueued(r.id, 'failed', `Quá ${ttl / 1000} s trong hàng đợi, lệnh không được gửi`);
       continue;
     }
     if (!r.online) {
@@ -159,6 +201,7 @@ async function finishQueued(id: string, status: CommandStatus, error: string) {
   if (!done.length) return;
   await audit(id, status, error);
   await emit(id);
+  await batchItemDone(id, status, error);
 }
 
 // ---------------- ack / telemetry ----------------

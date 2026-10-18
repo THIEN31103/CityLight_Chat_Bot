@@ -168,6 +168,25 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Second step: a 6-digit TOTP code or one recovery code. */
+  /**
+   * Re-authentication for mass actions (M6 batches): the current TOTP code of a signed-in user.
+   * Same replay guard as login. Without 2FA it is refused, unless 2FA is switched off for tests.
+   */
+  async reauthTotp(userId: string, code: string | undefined) {
+    const u = await this.authRow({ id: userId });
+    if (!u) throw new ApiError(401, 'unauthenticated', 'Phiên đăng nhập không hợp lệ');
+    if (!u.totp_enabled || !u.totp_secret) {
+      if (!require2faEnforced()) return;
+      throw new ApiError(403, 'totp_setup_required', 'Cần bật xác thực 2 lớp để chạy lệnh hàng loạt');
+    }
+    const bad = new ApiError(422, 'invalid_otp', 'Mã xác thực không đúng hoặc đã dùng');
+    if (!code || !/^\d{6}$/.test(code)) throw bad;
+    const step = verifyTotp(decryptSecret(u.totp_secret, this.encKey), code, u.totp_last_step);
+    if (step === null) throw bad;
+    const r = await this.sql`UPDATE users SET totp_last_step = ${step} WHERE id = ${u.id} AND (totp_last_step IS NULL OR totp_last_step < ${step}) RETURNING id`;
+    if (r.length !== 1) throw bad;
+  }
+
   async verify2fa(challenge: string | undefined, code: string | undefined, recoveryCode: string | undefined, ip?: string, ua?: string) {
     const expired = new ApiError(401, 'challenge_expired', 'Phiên xác thực đã hết hạn, vui lòng đăng nhập lại');
     if (!challenge) throw expired;

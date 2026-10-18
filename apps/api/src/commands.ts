@@ -8,8 +8,9 @@ import { Body, Controller, Get, Headers, HttpCode, Inject, Injectable, Module, P
 import { Redis } from 'ioredis';
 import { z } from 'zod';
 import type { Command, CommandType, FwProfile, Page } from '@citylight/shared';
-import { COMMAND_CAPABILITY, capabilitiesFor, describeCommand, firmwareBlocksCommands } from '@citylight/shared';
+import { COMMAND_CAPABILITY, capabilitiesFor, describeCommand, desiredSchedule, firmwareBlocksCommands, type Schedule } from '@citylight/shared';
 import { FrameError, buildCommandFrames } from '@citylight/coreif';
+import { SCHEDULES_CHANNEL } from '@citylight/db/batches';
 import { COMMANDS_NOTIFY, EVENTS_CHANNEL, commandById, selectCommands } from '@citylight/db/commands';
 import { RequirePerm, type AuthedRequest, type SessionUser } from './auth';
 import { CabinetsModule, CabinetsService } from './cabinets';
@@ -156,7 +157,11 @@ export class CommandsService {
   /** Stores the cabinet's own schedule and sends it (SET_SCHEDULE); appliedAt is set when the cabinet acks. */
   async setSchedule(u: SessionUser, cabinetId: string, body: unknown, idemKey: string | undefined, ip?: string): Promise<Command> {
     const s = ScheduleBody.parse(body);
-    const cmd = await this.enqueue(u, cabinetId, 'SET_SCHEDULE', s, idemKey, ip);
+    // an astronomical schedule goes to the device as tonight's computed times (cabinet position)
+    const cid = await this.cabinets.assertCabinet(u.scope, cabinetId);
+    const pos = (await this.sql<{ lat: number; lng: number }[]>`SELECT ST_Y(location) AS lat, ST_X(location) AS lng FROM cabinets WHERE id = ${cid}`)[0]!;
+    const w = desiredSchedule({ ...s, appliedAt: null, inheritedFromZone: false } as Schedule, null, { lat: Number(pos.lat), lng: Number(pos.lng) }).window;
+    const cmd = await this.enqueue(u, cid, 'SET_SCHEDULE', { ...s, on1: w.on1, off1: w.off1 }, idemKey, ip);
     await this.sql`
       INSERT INTO schedules (cabinet_id, mode, source, on1, off1, on2, off2, branch1_enabled, branch2_enabled, offset_on_min, offset_off_min, updated_at)
       VALUES (${cmd.cabinetId}, ${s.mode}, ${s.source}, ${s.on1}, ${s.off1}, ${s.on2}, ${s.off2}, ${s.branch1Enabled}, ${s.branch2Enabled},
@@ -164,6 +169,7 @@ export class CommandsService {
       ON CONFLICT (cabinet_id) DO UPDATE SET mode = excluded.mode, source = excluded.source, on1 = excluded.on1, off1 = excluded.off1,
         on2 = excluded.on2, off2 = excluded.off2, branch1_enabled = excluded.branch1_enabled, branch2_enabled = excluded.branch2_enabled,
         offset_on_min = excluded.offset_on_min, offset_off_min = excluded.offset_off_min, updated_at = now()`;
+    await this.redis.publish(SCHEDULES_CHANNEL, JSON.stringify({ cabinetId: cid })).catch(() => undefined);
     return cmd;
   }
 }

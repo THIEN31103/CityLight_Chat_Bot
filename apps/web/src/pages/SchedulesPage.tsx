@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import SunCalc from 'suncalc';
 import dayjs from 'dayjs';
 import { RefreshCw, Save, Sun } from 'lucide-react';
 import type { Schedule } from '@citylight/shared';
+import { astroPreview, vnDate } from '@citylight/shared';
 import { api } from '@/lib/api';
 import { EChart } from '@/components/EChart';
 import { SyncDialog } from '@/components/SyncDialog';
 import { Button, Card, CardHeader, Checkbox, Field, Input, PageHeader, Spinner, Unsupported, toast } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
-const hhmm = (d: Date) => dayjs(d).format('HH:mm');
 const toMin = (s: string) => {
   const [h, m] = s.split(':').map(Number);
   return h! * 60 + m!;
@@ -34,17 +33,10 @@ export function SchedulesPage() {
     },
   });
 
-  // 30-day astronomical preview: sunset + offset (on) / sunrise + offset (off)
+  // 30-day astronomical preview, same function the scheduler uses to compute what it sends
   const preview = useMemo(() => {
     if (!zone || !s) return [];
-    return Array.from({ length: 30 }, (_, i) => {
-      const d = dayjs().add(i, 'day').toDate();
-      const t = SunCalc.getTimes(d, zone.center.lat, zone.center.lng);
-      const next = SunCalc.getTimes(dayjs(d).add(1, 'day').toDate(), zone.center.lat, zone.center.lng);
-      const on = dayjs(t.sunset).add(s.offsetOnMin, 'minute').toDate();
-      const off = dayjs(next.sunrise).add(s.offsetOffMin, 'minute').toDate();
-      return { day: dayjs(d).format('DD/MM'), on: hhmm(on), off: hhmm(off) };
-    });
+    return astroPreview(zone.center, vnDate(), 30, s.offsetOnMin, s.offsetOffMin).map((p) => ({ day: dayjs(p.date).format('DD/MM'), on: p.on, off: p.off }));
   }, [zone, s]);
 
   const chart = useMemo(

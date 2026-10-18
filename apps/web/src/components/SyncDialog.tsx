@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { CommandBatch } from '@citylight/shared';
 import { api, ApiError } from '@/lib/api';
-import { Button, Checkbox, Modal, Spinner, toast } from './ui';
+import { Button, Checkbox, Field, Input, Modal, Spinner, toast } from './ui';
 
 /** Zone picker + "N cabinets affected" confirmation, then starts a batch and jumps to its progress page. */
 export function SyncDialog({ open, onOpenChange, kind, title, initialZones = [] }: { open: boolean; onOpenChange: (v: boolean) => void; kind: CommandBatch['kind']; title: string; initialZones?: string[] }) {
@@ -11,16 +11,21 @@ export function SyncDialog({ open, onOpenChange, kind, title, initialZones = [] 
   const zones = useQuery({ queryKey: ['zones'], queryFn: api.zones });
   const [selected, setSelected] = useState<string[]>(initialZones);
   const [confirmStep, setConfirmStep] = useState(false);
+  const [otp, setOtp] = useState('');
   const preview = useQuery({ queryKey: ['batch-preview', selected], queryFn: () => api.previewBatch(selected), enabled: confirmStep && selected.length > 0 });
   const run = useMutation({
-    mutationFn: () => api.createBatch(kind, selected),
+    mutationFn: () => api.createBatch(kind, selected, otp),
     onSuccess: (b) => {
+      setOtp('');
       toast(`Đã bắt đầu đồng bộ ${b.total} tủ`, 'success');
       onOpenChange(false);
       setConfirmStep(false);
       nav(`/batches?id=${b.id}`);
     },
-    onError: (e) => toast(e instanceof ApiError ? e.message : 'Không tạo được lô lệnh', 'error'),
+    onError: (e) => {
+      setOtp('');
+      toast(e instanceof ApiError ? e.message : 'Không tạo được lô lệnh', 'error');
+    },
   });
 
   return (
@@ -35,7 +40,7 @@ export function SyncDialog({ open, onOpenChange, kind, title, initialZones = [] 
         confirmStep ? (
           <>
             <Button variant="outline" onClick={() => setConfirmStep(false)}>Quay lại</Button>
-            <Button variant="danger" loading={run.isPending} disabled={!preview.data} onClick={() => run.mutate()}>
+            <Button variant="danger" loading={run.isPending} disabled={!preview.data || otp.length !== 6} onClick={() => run.mutate()}>
               Đồng bộ {preview.data?.total ?? ''} tủ
             </Button>
           </>
@@ -65,9 +70,13 @@ export function SyncDialog({ open, onOpenChange, kind, title, initialZones = [] 
       ) : (
         <div className="space-y-2">
           <p>
-            Lệnh sẽ gửi tới <b>{preview.data?.total}</b> tủ, trong đó <b className="text-st-offline">{preview.data?.offline}</b> tủ đang mất kết nối (sẽ báo lỗi, có thể gửi lại sau).
+            Lệnh sẽ gửi tới <b>{preview.data?.total}</b> tủ, trong đó <b className="text-st-offline">{preview.data?.offline}</b> tủ đang mất kết nối (ghi nhận offline; lịch sẽ tự gửi khi tủ có kết nối lại).
           </p>
+          {!!preview.data?.blocked && <p className="text-subtle">{preview.data.blocked} tủ chạy firmware cũ 1307ebc sẽ bị bỏ qua.</p>}
           <p className="text-subtle">Lệnh được đưa vào hàng đợi, gửi có giới hạn tốc độ; tiến độ hiển thị realtime.</p>
+          <Field label="Mã xác thực 2 lớp (6 số) để xác nhận">
+            <Input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} />
+          </Field>
         </div>
       )}
     </Modal>

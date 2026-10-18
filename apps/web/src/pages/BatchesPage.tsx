@@ -3,11 +3,11 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Clock, RefreshCw } from 'lucide-react';
 import type { CommandBatch } from '@citylight/shared';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { subscribe } from '@/lib/realtime';
 import { cn, fmtTime } from '@/lib/utils';
 import { SyncDialog } from '@/components/SyncDialog';
-import { Badge, Button, Card, CardHeader, Empty, PageHeader, Spinner, toast } from '@/components/ui';
+import { Badge, Button, Card, CardHeader, Empty, Input, PageHeader, Spinner, toast } from '@/components/ui';
 
 export const KIND_LABEL: Record<CommandBatch['kind'], string> = { schedule: 'Lịch chiếu sáng', dimming: 'Tiết giảm', time: 'Đồng bộ giờ' };
 
@@ -47,10 +47,13 @@ export function BatchesPage() {
     [qc, selected],
   );
 
+  const [otp, setOtp] = useState('');
   const retry = useMutation({
-    mutationFn: () => api.retryBatch(selected!),
+    mutationFn: () => api.retryBatch(selected!, otp),
+    onError: (e) => toast(e instanceof ApiError ? e.message : 'Không gửi lại được', 'error'),
+    onSettled: () => setOtp(''),
     onSuccess: (b) => {
-      toast(`Đang gửi lại ${b.total} tủ`, 'success');
+      toast('Đang gửi lại các tủ lỗi / offline', 'success');
       setParams({ id: b.id });
     },
   });
@@ -101,9 +104,12 @@ export function BatchesPage() {
                 actions={
                   detail.data.batch.finishedAt &&
                   detail.data.batch.failed + detail.data.batch.offline > 0 && (
-                    <Button size="sm" variant="outline" onClick={() => retry.mutate()} loading={retry.isPending}>
-                      <RefreshCw className="h-4 w-4" /> Gửi lại tủ lỗi
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Input className="h-8 w-24" placeholder="Mã 2FA" inputMode="numeric" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} />
+                      <Button size="sm" variant="outline" disabled={otp.length !== 6} onClick={() => retry.mutate()} loading={retry.isPending}>
+                        <RefreshCw className="h-4 w-4" /> Gửi lại tủ lỗi
+                      </Button>
+                    </div>
                   )
                 }
               />

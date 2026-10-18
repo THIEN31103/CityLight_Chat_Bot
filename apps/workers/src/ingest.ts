@@ -190,11 +190,13 @@ async function syncAlarms(rt: Runtime, now = Date.now()) {
   if (status !== rt.status) rt.status = status;
 }
 
-function markChanged(rt: Runtime) {
+function markChanged(rt: Runtime, cameOnline = false) {
   dirty.add(rt.id);
   stateEvents.set(rt.id, {
     cabinetId: rt.id, ltid: rt.ltid, status: rt.status, online: rt.online, branch1On: rt.branch1On, branch2On: rt.branch2On,
     manualMode: rt.manualMode, activeAlarmCount: rt.activeAlarms.size, lastSeenAt: rt.lastSeenAt,
+    // keep the flag if another change of the same flush window comes after it
+    cameOnline: cameOnline || stateEvents.get(rt.id)?.cameOnline || undefined,
   });
 }
 
@@ -269,7 +271,7 @@ async function onTelemetry(payload: string) {
   await syncAlarms(rt);
   dirty.add(rt.id);
   const next = `${rt.status}|${rt.branch1On}|${rt.branch2On}|${rt.manualMode}|${rt.activeAlarms.size}`;
-  if (!wasOnline || prev !== next) markChanged(rt);
+  if (!wasOnline || prev !== next) markChanged(rt, !wasOnline);
 }
 
 async function onBoot(payload: string) {
