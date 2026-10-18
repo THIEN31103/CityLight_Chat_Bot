@@ -35,6 +35,11 @@ export class CabinetsService {
   private mapCache: { at: number; data: CabinetSummary[] } | null = null;
   constructor(@Inject(SQL) private readonly sql: Sql) {}
 
+  /** Admin / map edits changed the cabinet list or positions: next map request reads the DB. */
+  invalidateMap() {
+    this.mapCache = null;
+  }
+
   async mapCabinets(scope: Scope): Promise<CabinetSummary[]> {
     const all = await this.allCabinets();
     return scope.all ? all : all.filter((c) => inScope(scope, c.districtId, c.wardId));
@@ -46,7 +51,7 @@ export class CabinetsService {
     const rows = await this.sql<StateRow[]>`
       SELECT c.id, c.ltid, c.code, c.name, c.district_id, c.ward_id, ST_Y(c.location) AS lat, ST_X(c.location) AS lng,
              s.status, s.online, s.branch1_on, s.branch2_on
-      FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id`;
+      FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE c.active`;
     const data = rows.map(summary);
     this.mapCache = { at: Date.now(), data };
     return data;
@@ -107,7 +112,7 @@ export class CabinetsService {
           WHERE (c.ward_id = a.id OR c.district_id = a.id OR (a.kind = 'unit' AND c.organization_id = a.organization_id))
             AND ${scopeWhere(this.sql, scope)}) AS n
       FROM areas a WHERE ${visible} ORDER BY a.kind, a.name`;
-    const unassigned = scope.all ? await this.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM cabinets WHERE district_id IS NULL` : [{ n: 0 }];
+    const unassigned = scope.all ? await this.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM cabinets WHERE active AND district_id IS NULL` : [{ n: 0 }];
     return {
       areas: areas.map((a) => ({ id: a.id, name: a.name, parentId: a.parent_id, kind: a.kind, cabinetCount: a.n })),
       unassigned: unassigned[0]?.n ?? 0,
@@ -120,7 +125,7 @@ export class CabinetsService {
       id === 'unassigned'
         ? await this.sql<StateRow[]>`
             SELECT c.id, c.ltid, c.code, c.name, c.district_id, c.ward_id, ST_Y(c.location) AS lat, ST_X(c.location) AS lng, s.status, s.online, s.branch1_on, s.branch2_on
-            FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE c.district_id IS NULL ORDER BY c.code`
+            FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE c.active AND c.district_id IS NULL ORDER BY c.code`
         : await this.sql<StateRow[]>`
             SELECT c.id, c.ltid, c.code, c.name, c.district_id, c.ward_id, ST_Y(c.location) AS lat, ST_X(c.location) AS lng, s.status, s.online, s.branch1_on, s.branch2_on
             FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE c.ward_id = ${uuid.parse(id)} AND ${scopeWhere(this.sql, scope)} ORDER BY c.code`;
@@ -343,7 +348,6 @@ export class CabinetsController {
   }
 
   // Not built yet in M1: explicit answers so hybrid mode does not fall back to mock data for a real cabinet.
-  @Get('cabinets/:id/lamps') async lamps(@Req() r: AuthedRequest, @Param('id') id: string) { await this.svc.assertCabinet(r.user!.scope, id); return []; }
 }
 
 @Module({ controllers: [CabinetsController], providers: [CabinetsService], exports: [CabinetsService] })

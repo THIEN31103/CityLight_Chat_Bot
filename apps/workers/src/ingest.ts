@@ -55,7 +55,8 @@ interface Runtime extends HealthInput {
 const byLtid = new Map<string, Runtime>();
 const byId = new Map<string, Runtime>();
 
-async function loadRegistry() {
+/** Build runtimes for these cabinets (null = every active cabinet) that are not loaded yet. */
+async function loadCabinets(ids: string[] | null) {
   const rows = await sql<
     {
       id: string; ltid: string; code: string; name: string; fw_profile: FwProfile;
@@ -71,7 +72,8 @@ async function loadRegistry() {
            s.status, s.online, s.last_seen_at, s.last_boot_at, s.bus_status, s.branch1_on, s.branch2_on, s.manual_mode,
            s.plc_online, s.pm_online, s.v_l1, s.v_l2, s.v_l3, s.i_l1, s.i_l2, s.i_l3, s.leak_ma, s.temp_c, s.temp_sensor_fault,
            s.battery_mv, ST_Y(s.gps_device) AS lat, ST_X(s.gps_device) AS lng, s.device_time, s.device_time_changed_at
-    FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id`;
+    FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id
+    WHERE c.active ${ids ? sql`AND c.id = ANY(${ids}::uuid[])` : sql``}`;
   const iso = (d: Date | null) => (d ? d.toISOString() : null);
   for (const r of rows) {
     if (byId.has(r.id)) continue;
@@ -91,6 +93,12 @@ async function loadRegistry() {
     byLtid.set(rt.ltid, rt);
     byId.set(rt.id, rt);
   }
+  return rows.length;
+}
+
+async function loadRegistry() {
+  await loadCabinets(null);
+  await loadSettings();
   const active = await sql<{ id: string; cabinet_id: string; type: AlarmType; severity: string; message: string }[]>`
     SELECT id, cabinet_id, type, severity, message FROM alarms WHERE active`;
   for (const a of active) {
@@ -105,6 +113,56 @@ async function loadRegistry() {
   for (const b of boots) byId.get(b.cabinet_id)?.bootTimes.push(b.ts.getTime());
   console.log(`[ingest] registry: ${byId.size} cabinets, ${active.length} active alarms`);
   await loadConfig();
+}
+
+/**
+ * Admin changes (M8, Redis cl:config "registry"): new cabinets, edited LTID / code / name / zone /
+ * position, decommissioned ones dropped. Runtime state of unchanged cabinets is kept.
+ */
+async function refreshRegistry() {
+  const rows = await sql<{ id: string; ltid: string; code: string; name: string; zone1_id: string | null; fw_profile: FwProfile; lat: number; lng: number }[]>`
+    SELECT id, ltid, code, name, zone1_id, fw_profile, ST_Y(location) AS lat, ST_X(location) AS lng FROM cabinets WHERE active`;
+  const seen = new Set<string>();
+  const fresh: string[] = [];
+  for (const r of rows) {
+    seen.add(r.id);
+    const rt = byId.get(r.id);
+    if (!rt) {
+      fresh.push(r.id);
+      continue;
+    }
+    const ltid = r.ltid.toUpperCase();
+    if (ltid !== rt.ltid) {
+      byLtid.delete(rt.ltid);
+      rt.ltid = ltid;
+      byLtid.set(ltid, rt);
+    }
+    Object.assign(rt, { code: r.code, name: r.name, zoneId: r.zone1_id, fwProfile: r.fw_profile, declaredLocation: { lat: Number(r.lat), lng: Number(r.lng) } });
+  }
+  let dropped = 0;
+  for (const [id, rt] of byId) {
+    if (seen.has(id)) continue;
+    byId.delete(id);
+    if (byLtid.get(rt.ltid) === rt) byLtid.delete(rt.ltid);
+    for (const [imei, x] of imeiIndex) if (x === rt) imeiIndex.delete(imei);
+    dirty.delete(id);
+    stateEvents.delete(id);
+    dropped++;
+  }
+  const added = fresh.length ? await loadCabinets(fresh) : 0;
+  await loadConfig();
+  console.log(`[ingest] registry reloaded: ${byId.size} cabinets (+${added}, -${dropped})`);
+}
+
+/** Editable settings (M8): offline detection delay. */
+let offlineAfterMs = OFFLINE_AFTER_MS;
+async function loadSettings() {
+  const r = (await sql<{ value: number }[]>`SELECT value FROM system_settings WHERE key = 'offline_after_s'`)[0];
+  const ms = r ? Number(r.value) * 1000 : OFFLINE_AFTER_MS;
+  if (Number.isFinite(ms) && ms >= 30_000 && ms !== offlineAfterMs) {
+    offlineAfterMs = ms;
+    console.log(`[ingest] offline after ${ms / 1000} s`);
+  }
 }
 
 /** Thresholds (cabinet override > zone > default) and the schedule each cabinet last acked. */
@@ -266,7 +324,8 @@ async function onTelemetry(payload: string) {
     ts: now, cabinet_id: rt.id, online: true, bus_status: t.busStatus, branch1_on: t.branch1On, branch2_on: t.branch2On, manual_mode: t.manualMode,
     v_l1: t.vL1, v_l2: t.vL2, v_l3: t.vL3, i_l1: t.iL1, i_l2: t.iL2, i_l3: t.iL3, pf_l1: t.pfL1, pf_l2: t.pfL2, pf_l3: t.pfL3, pf_total: t.pfTotal,
     p_total_kw: t.pTotalKw, leak_ma: t.leakMa, temp_c: t.tempC, battery_mv: t.batteryMv,
-    extra: Object.keys(t.unknownKeys).length ? JSON.stringify(t.unknownKeys) : null,
+    // objects, not JSON.stringify: postgres.js serialises them, a string would be stored as a JSON string
+    extra: Object.keys(t.unknownKeys).length ? t.unknownKeys : null,
   });
   await syncAlarms(rt);
   dirty.add(rt.id);
@@ -377,7 +436,7 @@ async function flush() {
           v_l1: r.vL1, v_l2: r.vL2, v_l3: r.vL3, i_l1: r.iL1, i_l2: r.iL2, i_l3: r.iL3, pf_total: r.pf.total, p_total_kw: r.pTotalKw,
           leak_ma: r.leakMa, temp_c: r.tempC, temp_sensor_fault: r.tempSensorFault, battery_mv: r.batteryMv, gps_device: geom(r.gpsDevice),
           gps_sats: r.sats, device_time: r.deviceTime, device_time_changed_at: r.deviceTimeChangedAt, door_open: r.doorOpen,
-          contactor_fault: r.contactorFault, extra: JSON.stringify(r.extra), active_alarm_count: r.activeAlarms.size, updated_at: new Date(),
+          contactor_fault: r.contactorFault, extra: r.extra, active_alarm_count: r.activeAlarms.size, updated_at: new Date(),
         };
       });
       for (let i = 0; i < rows.length; i += MAX_BATCH) {
@@ -423,7 +482,7 @@ async function markOffline(list: Runtime[], now: number) {
   if (!list.length) return;
   const def = errorOf('offline')!;
   const started = new Date(now);
-  const message = `Không nhận frame telemetry quá ${OFFLINE_AFTER_MS / 1000} s`;
+  const message = `Không nhận frame telemetry quá ${offlineAfterMs / 1000} s`;
   for (const rt of list) {
     rt.online = false;
     rt.samples = [];
@@ -461,7 +520,7 @@ async function sweep() {
   const wentSilent: Runtime[] = [];
   for (const rt of byId.values()) {
     updateBootCounters(rt, now);
-    const silent = !rt.lastSeenAt || now - Date.parse(rt.lastSeenAt) > OFFLINE_AFTER_MS;
+    const silent = !rt.lastSeenAt || now - Date.parse(rt.lastSeenAt) > offlineAfterMs;
     if (rt.online && silent) {
       wentSilent.push(rt);
     } else if (rt.online) {
@@ -482,8 +541,18 @@ await loadRegistry();
 {
   const sub = redis.duplicate();
   await sub.subscribe(CONFIG_CHANNEL);
-  // thresholds / schedules change rarely: reload all (10k rows, a few ms) inside the handler chain
-  sub.on('message', () => void (chain = chain.then(loadConfig).catch((e) => console.error('[ingest] config', (e as Error).message))));
+  // thresholds / schedules / cabinets / settings change rarely: reload inside the handler chain
+  sub.on('message', (_ch, msg) => {
+    const type = (() => {
+      try {
+        return (JSON.parse(msg) as { type?: string }).type;
+      } catch {
+        return undefined;
+      }
+    })();
+    const job = type === 'registry' ? refreshRegistry : type === 'settings' ? loadSettings : loadConfig;
+    chain = chain.then(job).catch((e) => console.error('[ingest] config', (e as Error).message));
+  });
 }
 setInterval(() => void (chain = chain.then(loadConfig).catch(() => undefined)), CONFIG_RELOAD_MS);
 const mq = mqtt.connect(MQTT_URL, {

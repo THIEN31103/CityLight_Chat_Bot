@@ -25,7 +25,7 @@ export class SystemController {
   @RequirePerm('system.view')
   async stats() {
     const c = await this.sql<{ online: number; total: number }[]>`
-      SELECT count(*) FILTER (WHERE s.online)::int AS online, count(*)::int AS total FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id`;
+      SELECT count(*) FILTER (WHERE s.online)::int AS online, count(*)::int AS total FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE c.active`;
     const ingest = JSON.parse((await this.redis.get('cl:ingest:stats')) ?? '{}') as { lastFlushMs?: number; queue?: number };
     const size = await this.sql<{ gb: number }[]>`SELECT round(pg_database_size(current_database()) / 1024.0 / 1024 / 1024, 2)::float AS gb`;
     const rate = await this.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM telemetry WHERE ts > now() - interval '1 minute'`;

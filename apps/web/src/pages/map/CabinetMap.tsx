@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { ExpressionSpecification, GeoJSONSource, Map as MlMap, MapMouseEvent, PaddingOptions } from 'maplibre-gl';
 import type { CabinetStatus, CabinetSummary, GeoPoint } from '@citylight/shared';
-import { api, type PoleAsset } from '@/lib/api';
+import { api, type MapAssets, type PoleAsset } from '@/lib/api';
 import { useUi } from '@/stores/session';
 import { FONT_BOLD, FONT_REGULAR, resolveBasemap, type BasemapId } from './mapStyle';
 import { addMapIcons } from './mapIcons';
@@ -19,6 +19,15 @@ export interface MapLayers {
   labels: boolean;
   codes: boolean;
 }
+
+/** Map editor draft drawn over the saved assets (M8). */
+export interface MapDraft {
+  lines: [number, number][][];
+  points: { lng: number; lat: number }[];
+  /** saved poles hidden because they are deleted or moved in the draft */
+  hiddenPoleIds: string[];
+}
+export type EditTool = 'select' | 'route' | 'pole';
 
 export interface CabinetMapHandle {
   flyTo: (p: GeoPoint, zoom?: number, padding?: Partial<PaddingOptions>) => void;
@@ -39,6 +48,14 @@ interface Props {
   onMeasure: (points: GeoPoint[]) => void;
   onViewChange: (center: GeoPoint, zoom: number) => void;
   measurePoints: GeoPoint[];
+  tool?: EditTool;
+  draft?: MapDraft;
+  /** bump to reload routes / poles after a save */
+  assetsVersion?: number;
+  onAssets?: (a: MapAssets) => void;
+  onMapClick?: (p: GeoPoint) => void;
+  onMapDblClick?: () => void;
+  onPoleDrag?: (pole: PoleAsset, p: GeoPoint) => void;
 }
 
 const HCMC: [number, number] = [106.7, 10.79];
@@ -137,7 +154,7 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
       id: 'routes-casing',
       type: 'line',
       source: 'routes',
-      minzoom: 14,
+      minzoom: 13,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': dark ? '#0b0f17' : '#ffffff', 'line-width': 6, 'line-opacity': 0.9 },
     });
@@ -145,7 +162,7 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
       id: 'routes',
       type: 'line',
       source: 'routes',
-      minzoom: 14,
+      minzoom: 13,
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': ['match', ['get', 'state'], 'on', '#f59e0b', 'off', '#94a3b8', '#a78bfa'], 'line-width': 3 },
     });
@@ -243,15 +260,69 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
       paint: { 'circle-radius': 5, 'circle-color': '#ef4444', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 },
     });
 
+    m.addSource('pole-drag', { type: 'geojson', data: EMPTY });
+    m.addLayer({ id: 'pole-drag', type: 'circle', source: 'pole-drag', paint: { 'circle-radius': 7, 'circle-color': '#f59e0b', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
+    m.addSource('draft', { type: 'geojson', data: EMPTY });
+    m.addLayer({ id: 'draft-lines', type: 'line', source: 'draft', filter: ['==', ['geometry-type'], 'LineString'], paint: { 'line-color': '#2563eb', 'line-width': 3, 'line-dasharray': [2, 1.5] } });
+    m.addLayer({
+      id: 'draft-points',
+      type: 'circle',
+      source: 'draft',
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: { 'circle-radius': 6, 'circle-color': '#2563eb', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 },
+    });
+
     applyLayerVisibility(m);
     applySelected(m);
     applyMeasure(m);
+    applyDraft(m);
     void loadPoles(m);
   }
 
   function installHandlers(m: MlMap) {
     m.on('click', (e: MapMouseEvent) => {
-      if (propsRef.current.measureMode) propsRef.current.onMeasure([...propsRef.current.measurePoints, { lat: e.lngLat.lat, lng: e.lngLat.lng }]);
+      const p = propsRef.current;
+      if (p.measureMode) p.onMeasure([...p.measurePoints, { lat: e.lngLat.lat, lng: e.lngLat.lng }]);
+      else if (p.editMode && p.tool && p.tool !== 'select') p.onMapClick?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+    });
+    m.on('dblclick', (e) => {
+      const p = propsRef.current;
+      if (p.editMode && p.tool === 'route') {
+        e.preventDefault(); // finish the route instead of zooming in
+        p.onMapDblClick?.();
+      }
+    });
+    // edit mode: drag a saved pole (select tool)
+    let dragging: PoleAsset | null = null;
+    let dragFrom: { x: number; y: number } | null = null;
+    m.on('mousedown', 'poles', (e) => {
+      const p = propsRef.current;
+      if (!p.editMode || p.tool !== 'select') return;
+      const id = e.features?.[0]?.properties?.id as string | undefined;
+      dragging = poleCache.current.find((x) => x.id === id) ?? null;
+      if (!dragging) return;
+      dragFrom = { x: e.point.x, y: e.point.y };
+      e.preventDefault();
+      m.dragPan.disable();
+      m.getCanvas().style.cursor = 'grabbing';
+    });
+    m.on('mousemove', (e) => {
+      if (!dragging) return;
+      (m.getSource('pole-drag') as GeoJSONSource | undefined)?.setData({
+        type: 'FeatureCollection',
+        features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [e.lngLat.lng, e.lngLat.lat] }, properties: {} }],
+      });
+    });
+    m.on('mouseup', (e) => {
+      if (!dragging) return;
+      const pole = dragging;
+      dragging = null;
+      m.dragPan.enable();
+      m.getCanvas().style.cursor = '';
+      (m.getSource('pole-drag') as GeoJSONSource | undefined)?.setData(EMPTY);
+      // a click on a pole is not a move: it opens the pole panel (the click handler)
+      const moved = dragFrom ? Math.hypot(e.point.x - dragFrom.x, e.point.y - dragFrom.y) : 0;
+      if (moved > 4) propsRef.current.onPoleDrag?.(pole, { lat: e.lngLat.lat, lng: e.lngLat.lng });
     });
     m.on('click', 'clusters', async (e) => {
       const f = m.queryRenderedFeatures(e.point, { layers: ['clusters'] })[0];
@@ -293,39 +364,47 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
 
   async function loadPoles(m: MlMap) {
     const p = propsRef.current;
-    if (!m.getSource('poles') || m.getZoom() < 14 || (!p.layers.poles && !p.layers.routes)) return;
+    if (!m.getSource('poles') || m.getZoom() < 13 || (!p.layers.poles && !p.layers.routes)) return;
     const b = m.getBounds();
-    const poles = await api.mapAssets([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]).catch(() => []);
-    poleCache.current = poles;
+    const assets = await api.mapAssets([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()], m.getZoom()).catch(() => null);
+    if (!assets) return;
+    poleCache.current = assets.poles;
+    p.onAssets?.(assets);
     const cab = new Map(p.cabinets.map((c) => [c.id, c]));
-    const stateOf = (x: PoleAsset) => {
-      const c = cab.get(x.cabinetId);
-      const on = x.branch === 'N1' ? c?.branch1On : c?.branch2On;
+    const stateOf = (cabinetId: string, branch: 'N1' | 'N2') => {
+      const c = cab.get(cabinetId);
+      const on = branch === 'N1' ? c?.branch1On : c?.branch2On;
       return on === null || on === undefined ? 'unknown' : on ? 'on' : 'off';
     };
-    const byRoute = new Map<string, PoleAsset[]>();
-    poles.forEach((x) => byRoute.set(x.routeCode, [...(byRoute.get(x.routeCode) ?? []), x]));
+    const hidden = new Set(p.draft?.hiddenPoleIds ?? []);
     (m.getSource('poles') as GeoJSONSource | undefined)?.setData({
       type: 'FeatureCollection',
-      features: poles.map((x) => ({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [x.location.lng, x.location.lat] },
-        properties: { id: x.id, code: x.code, cabinetName: x.cabinetName, routeCode: x.routeCode, lampCount: x.lampCount, state: stateOf(x) },
-      })),
+      features: assets.poles
+        .filter((x) => !hidden.has(x.id))
+        .map((x) => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [x.location.lng, x.location.lat] },
+          properties: { id: x.id, code: x.code, cabinetName: x.cabinetName, routeCode: x.routeCode, lampCount: x.lampCount, state: stateOf(x.cabinetId, x.branch) },
+        })),
     });
     (m.getSource('routes') as GeoJSONSource | undefined)?.setData({
       type: 'FeatureCollection',
-      features: [...byRoute.values()].flatMap((list) => {
-        const start = cab.get(list[0]!.cabinetId)?.location;
-        if (!start) return [];
-        return [
-          {
-            type: 'Feature' as const,
-            geometry: { type: 'LineString' as const, coordinates: [[start.lng, start.lat], ...list.map((x) => [x.location.lng, x.location.lat])] },
-            properties: { state: stateOf(list[0]!) },
-          },
-        ];
-      }),
+      features: assets.routes.map((r) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'LineString' as const, coordinates: r.path },
+        properties: { id: r.id, code: r.code, state: stateOf(r.cabinetId, r.branch) },
+      })),
+    });
+  }
+
+  function applyDraft(m: MlMap) {
+    const d = propsRef.current.draft;
+    (m.getSource('draft') as GeoJSONSource | undefined)?.setData({
+      type: 'FeatureCollection',
+      features: [
+        ...(d?.lines ?? []).filter((l) => l.length > 1).map((l) => ({ type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: l }, properties: {} })),
+        ...(d?.points ?? []).map((pt) => ({ type: 'Feature' as const, geometry: { type: 'Point' as const, coordinates: [pt.lng, pt.lat] }, properties: {} })),
+      ],
     });
   }
 
@@ -375,6 +454,19 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
     void loadPoles(m);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.layers]);
+
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+    applyDraft(m);
+    void loadPoles(m); // hidden / moved poles
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.draft, props.assetsVersion]);
+
+  useEffect(() => {
+    const m = map.current;
+    if (m) m.getCanvas().style.cursor = props.editMode && props.tool && props.tool !== 'select' ? 'crosshair' : '';
+  }, [props.editMode, props.tool]);
 
   useEffect(() => {
     if (map.current) applySelected(map.current);

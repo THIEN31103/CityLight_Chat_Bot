@@ -8,3 +8,4 @@ export * from './defaults';
 export * from './rules';
 export * from './schedule';
 export * from './incidents';
+export * from './gis';

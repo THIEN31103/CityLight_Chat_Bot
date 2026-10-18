@@ -85,7 +85,7 @@ async function refresh() {
     all: r.role === 'admin' || r.scope_all, areas: byUser.get(r.user_id) ?? new Set(),
   }));
   const cabs = await sql<{ id: string; district_id: string | null; ward_id: string | null; district: string | null }[]>`
-    SELECT c.id, c.district_id, c.ward_id, d.name AS district FROM cabinets c LEFT JOIN areas d ON d.id = c.district_id`;
+    SELECT c.id, c.district_id, c.ward_id, d.name AS district FROM cabinets c LEFT JOIN areas d ON d.id = c.district_id WHERE c.active`;
   cabinetAreas = new Map(cabs.map((c) => [c.id, { district: c.district_id, ward: c.ward_id, districtName: c.district }]));
 }
 

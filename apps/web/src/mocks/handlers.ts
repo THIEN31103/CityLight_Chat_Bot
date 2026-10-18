@@ -174,7 +174,17 @@ export const handlers = [
     const url = new URL(request.url);
     const [w, s, e, n] = (url.searchParams.get('bbox') ?? '0,0,0,0').split(',').map(Number) as [number, number, number, number];
     const inside = cabinets.filter((c) => c.location.lng >= w && c.location.lng <= e && c.location.lat >= s && c.location.lat <= n).slice(0, 80);
-    return HttpResponse.json(inside.flatMap((c) => polesOf(c.id).map((p) => ({ ...p, cabinetName: c.name }))));
+    const poles = inside.flatMap((c) => polesOf(c.id).map((p) => ({ ...p, cabinetName: c.name })));
+    // M8 shape: routes drawn cabinet -> poles in order
+    const routes = inside.flatMap((c) =>
+      (['N1', 'N2'] as const).flatMap((br) => {
+        const list = poles.filter((p) => p.cabinetId === c.id && p.branch === br);
+        if (!list.length) return [];
+        return [{ id: `${c.id}-${br}`, cabinetId: c.id, code: list[0]!.routeCode, branch: br, updatedAt: new Date().toISOString(),
+          path: [[c.location.lng, c.location.lat], ...list.map((p) => [p.location.lng, p.location.lat])] }];
+      }),
+    );
+    return HttpResponse.json({ routes, poles, truncated: false });
   })),
   http.get(`${API}/search`, wrap(({ request }: { request: Request }) => {
     const q = (new URL(request.url).searchParams.get('q') ?? '').toLowerCase();
@@ -572,7 +582,8 @@ export const handlers = [
       { ltid: 'CTY9002', firstSeenAt: new Date(Date.now() - 86400000).toISOString(), lastSeenAt: new Date(Date.now() - 600000).toISOString(), frames: 8120, imei: '861234567890456' },
     ]),
   )),
-  http.get(`${API}/field-map`, wrap(() => HttpResponse.json(DEFAULT_FIELD_MAP))),
+  http.get(`${API}/field-map`, wrap(() => HttpResponse.json({ entries: DEFAULT_FIELD_MAP, unknownKeys: [] }))),
+  http.get(`${API}/settings`, wrap(() => HttpResponse.json({ offlineAfterS: 60, lampGroupLabels: { 0: 'Đèn chính', 1: 'Đèn giao lộ', 2: 'Đèn trên cầu', 3: 'Nhóm mở rộng' }, updatedAt: null, updatedBy: null }))),
   http.get(`${API}/alarm-rules`, wrap(() =>
     HttpResponse.json([
       { type: 'offline', severity: 'critical', condition: 'Không có frame > 60 s', enabled: true },

@@ -26,6 +26,8 @@
     "e2e:alarms": "node --env-file=.env --import tsx apps/api/test/e2e-alarms.ts",
     "e2e:schedules": "node --env-file=.env --import tsx apps/api/test/e2e-schedules.ts",
     "e2e:incidents": "node --env-file=.env --import tsx apps/api/test/e2e-incidents.ts",
+    "e2e:gis": "node --env-file=.env --import tsx apps/api/test/e2e-gis.ts",
+    "e2e:admin": "node --env-file=.env --import tsx apps/api/test/e2e-admin.ts",
     "db:seed": "npm run seed -w @citylight/db",
     "sim:register": "npm run register -w @citylight/simulator --",
     "dev:web:hybrid": "npm run dev:hybrid -w @citylight/web",

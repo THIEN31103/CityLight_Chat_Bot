@@ -20,11 +20,15 @@ export async function loadScope(sql: Sql, userId: string, role: string, scopeAll
 }
 
 /** SQL condition on a query that aliases cabinets as `c`. */
+/**
+ * Cabinets (alias c) the user may see. Also hides decommissioned cabinets (M8): every list, map and
+ * counter goes through here, so a decommissioned cabinet disappears everywhere at once.
+ */
 export function scopeWhere(sql: Sql, scope: Scope) {
-  if (scope.all) return sql`TRUE`;
+  if (scope.all) return sql`c.active`;
   if (!scope.areaIds.length) return sql`FALSE`;
   const ids = sql.array(scope.areaIds);
-  return sql`(c.district_id = ANY(${ids}::uuid[]) OR c.ward_id = ANY(${ids}::uuid[]))`;
+  return sql`(c.active AND (c.district_id = ANY(${ids}::uuid[]) OR c.ward_id = ANY(${ids}::uuid[])))`;
 }
 
 export function inScope(scope: Scope, districtId: string | null | undefined, wardId: string | null | undefined): boolean {

@@ -120,6 +120,69 @@ export interface PoleAsset {
   branch: 'N1' | 'N2';
   location: GeoPoint;
   lampCount: number;
+  routeId?: string;
+  seq?: number;
+  updatedAt?: string;
+}
+
+export interface RouteAsset {
+  id: string;
+  cabinetId: string;
+  code: string;
+  branch: 'N1' | 'N2';
+  path: [number, number][];
+  updatedAt: string;
+}
+
+export interface MapAssets {
+  routes: RouteAsset[];
+  poles: PoleAsset[];
+  truncated: boolean;
+}
+
+/** One step of the map editor's draft; saved together in one transaction (POST /map/edits). */
+export type MapEditOp =
+  | { op: 'moveCabinet'; cabinetId: string; lat: number; lng: number }
+  | { op: 'upsertRoute'; cabinetId: string; branch: 1 | 2; path: [number, number][]; expectedUpdatedAt?: string }
+  | { op: 'deleteRoute'; routeId: string; expectedUpdatedAt?: string }
+  | { op: 'addPole'; cabinetId: string; branch: 1 | 2; lat: number; lng: number; lampCount?: number; ratedPowerW?: number | null; lampGroup?: number }
+  | { op: 'movePole'; poleId: string; lat: number; lng: number; expectedUpdatedAt?: string }
+  | { op: 'deletePole'; poleId: string; expectedUpdatedAt?: string }
+  | { op: 'setPoleLamps'; poleId: string; lampCount: number; ratedPowerW: number | null; lampGroup: number };
+
+export interface PoleDetail extends PoleAsset {
+  lamps: { id: string; code: string; lampGroup: LampGroup; ratedPowerW: number | null; isSmart: boolean }[];
+}
+
+export interface ImportReport {
+  rows: number;
+  poles: number;
+  lamps: number;
+  routes: number;
+  cabinets: number;
+  errors: { row: number; message: string }[];
+  errorCount: number;
+  dryRun: boolean;
+}
+
+export interface SystemSettings {
+  offlineAfterS: number;
+  lampGroupLabels: Record<string, string>;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
+export interface CabinetInput {
+  ltid: string;
+  code: string;
+  name: string;
+  location: GeoPoint;
+  address?: string | null;
+  districtId?: string | null;
+  wardId?: string | null;
+  managementUnitId?: string | null;
+  zone1Id?: string | null;
+  notes?: string | null;
 }
 
 /** User row in the admin screen: adds the temporary lockout end. */
@@ -218,12 +281,22 @@ export const api = {
   // map
   mapStats: () => req<MapStats>('GET', '/map/stats'),
   mapCabinets: () => req<CabinetSummary[]>('GET', '/map/cabinets'),
-  mapAssets: (bbox: [number, number, number, number]) => req<PoleAsset[]>('GET', `/map/assets${qs({ bbox: bbox.join(','), layers: 'poles' })}`),
+  mapAssets: (bbox: [number, number, number, number], zoom: number) =>
+    req<MapAssets>('GET', `/map/assets${qs({ bbox: bbox.join(','), zoom: Math.floor(zoom), layers: 'routes,poles' })}`),
+  pole: (id: string) => req<PoleDetail>('GET', `/poles/${id}`),
+  generatePoles: (routeId: string, b: { spacingM: number; lampCount: number; ratedPowerW: number | null; lampGroup: number }) =>
+    req<{ poles: number }>('POST', `/routes/${routeId}/generate-poles`, b),
+  importTemplate: () => downloadFile('/gis/import/template.xlsx', 'mau-nhap-tru.xlsx'),
+  importPoles: (file: File, dryRun: boolean) => {
+    const f = new FormData();
+    f.append('file', file);
+    return upload<ImportReport>(`/gis/import${qs({ dryRun })}`, f);
+  },
   search: (q: string) => req<CabinetSummary[]>('GET', `/search${qs({ q })}`),
   favorites: () => req<Favorite[]>('GET', '/favorites'),
   addFavorite: (f: Omit<Favorite, 'id'>) => req<Favorite>('POST', '/favorites', f),
   deleteFavorite: (id: string) => req<void>('DELETE', `/favorites/${id}`),
-  saveMapEdits: (moves: { cabinetId: string; lat: number; lng: number }[]) => req<{ saved: number }>('POST', '/map/edits', { moves }),
+  saveMapEdits: (ops: MapEditOp[]) => req<{ saved: number }>('POST', '/map/edits', { ops }),
 
   // hierarchy
   areaTree: () => req<{ areas: Area[]; unassigned: number }>('GET', '/areas/tree'),
@@ -304,7 +377,22 @@ export const api = {
   unlockUser: (id: string) => req<AdminUser>('POST', `/users/${id}/unlock`),
   resetUser2fa: (id: string) => req<AdminUser>('POST', `/users/${id}/reset-2fa`),
   unknownDevices: () => req<UnknownDevice[]>('GET', '/devices/unknown'),
-  fieldMap: () => req<FieldMapEntry[]>('GET', '/field-map'),
+  fieldMap: () => req<{ entries: FieldMapEntry[]; unknownKeys: { key: string; cabinets: number; sample: string }[] }>('GET', '/field-map'),
+  // admin catalog / devices / settings (M8)
+  createArea: (b: { kind: 'district' | 'ward'; name: string; parentId: string }) => req<{ id: string }>('POST', '/areas', b),
+  renameArea: (id: string, name: string) => req<{ id: string }>('PATCH', `/areas/${id}`, { name }),
+  deleteArea: (id: string) => req<void>('DELETE', `/areas/${id}`),
+  createUnit: (name: string) => req<ManagementUnit>('POST', '/management-units', { name }),
+  renameUnit: (id: string, name: string) => req<ManagementUnit>('PATCH', `/management-units/${id}`, { name }),
+  deleteUnit: (id: string) => req<void>('DELETE', `/management-units/${id}`),
+  createZone: (b: { name: string; center: GeoPoint }) => req<Zone>('POST', '/zones', b),
+  updateZone: (id: string, b: { name?: string; center?: GeoPoint }) => req<void>('PATCH', `/zones/${id}`, b),
+  deleteZone: (id: string) => req<void>('DELETE', `/zones/${id}`),
+  assignZone: (id: string, b: { areaIds?: string[]; cabinetIds?: string[] }) => req<{ assigned: number }>('POST', `/zones/${id}/assign`, b),
+  registerCabinet: (b: CabinetInput) => req<{ id: string }>('POST', '/cabinets', b),
+  decommissionCabinet: (id: string) => req<void>('POST', `/cabinets/${id}/decommission`),
+  settings: () => req<SystemSettings>('GET', '/settings'),
+  saveSettings: (b: { offlineAfterS: number; lampGroupLabels: Record<string, string> }) => req<SystemSettings>('PUT', '/settings', b),
   alarmRules: () => req<AlarmRule[]>('GET', '/alarm-rules'),
   systemStats: () => req<SystemStats>('GET', '/system/stats'),
 };

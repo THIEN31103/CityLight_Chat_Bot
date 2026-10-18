@@ -100,7 +100,7 @@ export class AlarmsController {
   zones() {
     return this.sql`
       SELECT z.id, z.name, json_build_object('lat', ST_Y(z.center), 'lng', ST_X(z.center)) AS center,
-             (SELECT count(*)::int FROM cabinets c WHERE c.zone1_id = z.id OR c.zone2_id = z.id) AS "cabinetCount"
+             (SELECT count(*)::int FROM cabinets c WHERE c.active AND (c.zone1_id = z.id OR c.zone2_id = z.id)) AS "cabinetCount"
       FROM zones z ORDER BY z.name`;
   }
 

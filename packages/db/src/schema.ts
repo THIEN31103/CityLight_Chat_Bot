@@ -96,9 +96,15 @@ export const cabinets = pgTable(
     statusOverride: text('status_override'),
     notes: text('notes'),
     createdAt: createdAt(),
+    /** false = decommissioned (M8): hidden from map, lists and workers, history kept */
+    active: boolean('active').notNull().default(true),
+    decommissionedAt: tsz('decommissioned_at'),
+    /** optimistic lock for map edits / admin changes */
+    updatedAt: tsz('updated_at').notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex('cabinets_ltid_uq').on(t.ltid),
+    uniqueIndex('cabinets_code_uq').on(t.code),
     index('cabinets_location_gix').using('gist', t.location),
     index('cabinets_district_idx').on(t.districtId),
   ],
@@ -142,13 +148,18 @@ export const cabinetState = pgTable('cabinet_state', {
   updatedAt: tsz('updated_at').notNull().defaultNow(),
 });
 
-export const routes = pgTable('routes', {
-  id: id(),
-  cabinetId: uuid('cabinet_id').notNull().references(() => cabinets.id, { onDelete: 'cascade' }),
-  code: text('code').notNull(),
-  branch: smallint('branch').notNull(),
-  path: lineString('path'),
-});
+export const routes = pgTable(
+  'routes',
+  {
+    id: id(),
+    cabinetId: uuid('cabinet_id').notNull().references(() => cabinets.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    branch: smallint('branch').notNull(),
+    path: lineString('path'),
+    updatedAt: tsz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('routes_cabinet_branch_uq').on(t.cabinetId, t.branch), index('routes_path_gix').using('gist', t.path)],
+);
 
 export const poles = pgTable(
   'poles',
@@ -159,17 +170,32 @@ export const poles = pgTable(
     legacyCode: text('legacy_code'),
     location: point('location').notNull(),
     lampCount: smallint('lamp_count').notNull().default(1),
+    /** position along the route (1 = nearest the cabinet) */
+    seq: integer('seq').notNull().default(0),
+    updatedAt: tsz('updated_at').notNull().defaultNow(),
   },
-  (t) => [index('poles_location_gix').using('gist', t.location)],
+  (t) => [index('poles_location_gix').using('gist', t.location), uniqueIndex('poles_code_uq').on(t.code), index('poles_route_idx').on(t.routeId, t.seq)],
 );
 
-export const lamps = pgTable('lamps', {
-  id: id(),
-  poleId: uuid('pole_id').notNull().references(() => poles.id, { onDelete: 'cascade' }),
-  code: text('code').notNull(),
-  lampGroup: smallint('lamp_group').notNull().default(0),
-  ratedPowerW: integer('rated_power_w'),
-  isSmart: boolean('is_smart').notNull().default(false),
+export const lamps = pgTable(
+  'lamps',
+  {
+    id: id(),
+    poleId: uuid('pole_id').notNull().references(() => poles.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    lampGroup: smallint('lamp_group').notNull().default(0),
+    ratedPowerW: integer('rated_power_w'),
+    isSmart: boolean('is_smart').notNull().default(false),
+  },
+  (t) => [index('lamps_pole_idx').on(t.poleId)],
+);
+
+/** Editable system settings (M8): offline_after_s, lamp_group_labels… */
+export const systemSettings = pgTable('system_settings', {
+  key: text('key').primaryKey(),
+  value: jsonb('value').notNull(),
+  updatedAt: tsz('updated_at').notNull().defaultNow(),
+  updatedBy: text('updated_by'),
 });
 
 // ---------- configuration ----------

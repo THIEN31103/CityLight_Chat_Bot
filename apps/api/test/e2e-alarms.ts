@@ -138,6 +138,9 @@ async function main() {
     check('Quy tắc cảnh báo: quá áp bật, cửa tủ chờ firmware', rule('over_voltage')?.enabled === true && rule('door_open')?.enabled === false && rule('schedule_mismatch')?.enabled === true);
 
     // ---------- cabinets ----------
+    // simulators of an earlier e2e must be seen offline first, or their "mất kết nối" alarms land in our messages
+    await waitFor('earlier simulators offline', async () => (await sql`SELECT 1 FROM cabinet_state WHERE online LIMIT 1`).length === 0, 120_000);
+    await sleep(5000); // their offline alarms are batched and sent before we start counting
     for (const ltid of [A.ltid, B.ltid]) sims.push(new SimCabinet({ ltid, brokerUrl: MQTT_URL, fault: 'none', location: { lat: 10.78, lng: 106.7 }, telemetryMs: 2000 }));
     sims.forEach((s) => s.start());
     await waitFor('sims online', async () => (await sql`SELECT 1 FROM cabinet_state WHERE online AND cabinet_id IN (${A.id}, ${B.id})`).length === 2, 30_000);

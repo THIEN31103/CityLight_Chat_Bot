@@ -86,9 +86,10 @@ export class CommandsService {
     if (n === 1) await this.redis.expire(`cl:rl:cmd:${u.id}`, 60);
     if (n > CMD_PER_MIN) throw new ApiError(429, 'rate_limited', `Tối đa ${CMD_PER_MIN} lệnh/phút, vui lòng đợi`);
 
-    const rows = await this.sql<{ ltid: string; code: string; name: string; fw_profile: FwProfile; online: boolean | null }[]>`
-      SELECT c.ltid, c.code, c.name, c.fw_profile, s.online FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE c.id = ${cid}`;
+    const rows = await this.sql<{ ltid: string; code: string; name: string; fw_profile: FwProfile; online: boolean | null; active: boolean }[]>`
+      SELECT c.ltid, c.code, c.name, c.fw_profile, s.online, c.active FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE c.id = ${cid}`;
     const cab = rows[0]!;
+    if (!cab.active) throw new ApiError(409, 'cabinet_decommissioned', 'Tủ đã ngừng sử dụng');
     if (firmwareBlocksCommands(cab.fw_profile))
       throw new ApiError(409, 'cabinet_unsafe_firmware', 'Firmware cũ không lọc LTID: chặn điều khiển để tránh ảnh hưởng tủ khác');
     const need = COMMAND_CAPABILITY[type];

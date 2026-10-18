@@ -6,6 +6,7 @@ import { IoAdapter } from '@nestjs/platform-socket.io';
 import compress from '@fastify/compress';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
+import { AdminModule } from './admin';
 import { AlarmConfigModule } from './alarm-config';
 import { AlarmsModule } from './alarms';
 import { AuthModule } from './auth';
@@ -13,6 +14,7 @@ import { CabinetsModule } from './cabinets';
 import { CommandsModule } from './commands';
 import { ProblemFilter } from './errors';
 import { FavoritesModule } from './favorites';
+import { GisModule } from './gis';
 import { IncidentsModule, MAX_PHOTO_BYTES } from './incidents';
 import { InfraModule } from './infra';
 import { RealtimeModule } from './realtime';
@@ -21,7 +23,7 @@ import { SystemModule } from './system';
 import { UsersModule } from './users';
 
 @Module({
-  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, FavoritesModule, AlarmsModule, AlarmConfigModule, SchedulesModule, IncidentsModule, UsersModule, SystemModule, RealtimeModule],
+  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, FavoritesModule, AlarmsModule, AlarmConfigModule, SchedulesModule, IncidentsModule, GisModule, AdminModule, UsersModule, SystemModule, RealtimeModule],
   providers: [{ provide: APP_FILTER, useClass: ProblemFilter }],
 })
 class AppModule {}

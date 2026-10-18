@@ -7,11 +7,12 @@ import {
 } from 'lucide-react';
 import type { CabinetStatus, GeoPoint } from '@citylight/shared';
 import { STATUS_LABELS } from '@citylight/shared';
-import { api, type PoleAsset } from '@/lib/api';
+import { api, ApiError, type MapAssets, type MapEditOp, type PoleAsset } from '@/lib/api';
+import { EditToolbar, GeneratePolesModal, ImportPolesModal, PolePanel } from './MapEditor';
 import { useSession } from '@/stores/session';
 import { cn } from '@/lib/utils';
 import { Button, Checkbox, Input, Modal, STATUS_ICON, StatusBadge, confirm, toast, Field, Select } from '@/components/ui';
-import { CabinetMap, type CabinetMapHandle, type MapLayers } from './CabinetMap';
+import { CabinetMap, type CabinetMapHandle, type MapLayers, type EditTool, type MapDraft } from './CabinetMap';
 import { LeftPanel } from './LeftPanel';
 import { CabinetDrawer } from '../cabinet/CabinetDrawer';
 import { BASEMAPS, type BasemapId } from './mapStyle';
@@ -73,7 +74,50 @@ export function MapPage() {
   const flyPadding = detailMode === 'dock' ? { right: Math.min(760, window.innerWidth * 0.6) } : undefined;
   const [center, setCenter] = useState<GeoPoint>({ lat: 10.79, lng: 106.7 });
   const [editMode, setEditMode] = useState(false);
-  const [moves, setMoves] = useState<Record<string, GeoPoint>>({});
+  // map editor draft (M8): saved in one transaction by "Lưu"
+  const [ops, setOps] = useState<MapEditOp[]>([]);
+  const [tool, setTool] = useState<EditTool>('select');
+  const [branch, setBranch] = useState<1 | 2>(1);
+  const [drawing, setDrawing] = useState<[number, number][] | null>(null);
+  const [editCabinetId, setEditCabinetId] = useState<string | null>(null);
+  const [assets, setAssets] = useState<MapAssets | null>(null);
+  const [assetsVersion, setAssetsVersion] = useState(0);
+  const [importOpen, setImportOpen] = useState(false);
+  const moves = useMemo(() => {
+    const m: Record<string, GeoPoint> = {};
+    for (const o of ops) if (o.op === 'moveCabinet') m[o.cabinetId] = { lat: o.lat, lng: o.lng };
+    return m;
+  }, [ops]);
+  const draft = useMemo<MapDraft>(() => {
+    const lines: [number, number][][] = ops.flatMap((o) => (o.op === 'upsertRoute' ? [o.path] : []));
+    if (drawing) lines.push(drawing);
+    const points = ops.flatMap((o) => (o.op === 'addPole' || o.op === 'movePole' ? [{ lat: o.lat, lng: o.lng }] : []));
+    const hiddenPoleIds = ops.flatMap((o) => (o.op === 'deletePole' || o.op === 'movePole' ? [o.poleId] : []));
+    return { lines, points, hiddenPoleIds };
+  }, [ops, drawing]);
+  /** add an op; a newer op on the same object replaces the older one */
+  const pushOp = (op: MapEditOp) =>
+    setOps((list) => {
+      const same = (x: MapEditOp) =>
+        (op.op === 'moveCabinet' && x.op === 'moveCabinet' && x.cabinetId === op.cabinetId) ||
+        (op.op === 'upsertRoute' && x.op === 'upsertRoute' && x.cabinetId === op.cabinetId && x.branch === op.branch) ||
+        (op.op === 'movePole' && x.op === 'movePole' && x.poleId === op.poleId) ||
+        (op.op === 'setPoleLamps' && x.op === 'setPoleLamps' && x.poleId === op.poleId);
+      return [...list.filter((x) => !same(x)), op];
+    });
+  const finishRoute = () => {
+    if (!drawing || drawing.length < 2 || !editCabinetId) return setDrawing(null);
+    const saved = assets?.routes.find((r) => r.cabinetId === editCabinetId && r.branch === `N${branch}`);
+    pushOp({ op: 'upsertRoute', cabinetId: editCabinetId, branch, path: drawing, expectedUpdatedAt: saved?.updatedAt });
+    setDrawing(null);
+  };
+  const leaveEdit = () => {
+    setOps([]);
+    setDrawing(null);
+    setTool('select');
+    setEditCabinetId(null);
+    setEditMode(false);
+  };
   const [measureMode, setMeasureMode] = useState(false);
   const [measurePts, setMeasurePts] = useState<GeoPoint[]>([]);
   const [pole, setPole] = useState<PoleAsset | null>(null);
@@ -98,13 +142,15 @@ export function MapPage() {
   }, [selectedId, cabinetsQ.data]);
 
   const saveEdits = useMutation({
-    mutationFn: () => api.saveMapEdits(Object.entries(moves).map(([cabinetId, p]) => ({ cabinetId, ...p }))),
+    mutationFn: () => api.saveMapEdits(ops),
     onSuccess: (r) => {
-      toast(`Đã lưu ${r.saved} thay đổi vị trí`, 'success');
-      setMoves({});
-      setEditMode(false);
-      qc.invalidateQueries({ queryKey: ['map-cabinets'] });
+      toast(`Đã lưu ${r.saved} thay đổi`, 'success');
+      setOps([]);
+      setDrawing(null);
+      setAssetsVersion((v) => v + 1);
+      void qc.invalidateQueries({ queryKey: ['map-cabinets'] });
     },
+    onError: (e) => toast(e instanceof ApiError ? e.message : 'Không lưu được', 'error'),
   });
 
   const select = (id: string | null) => {
@@ -188,13 +234,25 @@ export function MapPage() {
           statusFilter={statusFilter}
           layers={layers}
           basemap={basemap}
-          selectedId={selectedId}
+          selectedId={editMode ? editCabinetId : selectedId}
           editMode={editMode}
+          tool={tool}
+          draft={draft}
+          assetsVersion={assetsVersion}
+          onAssets={setAssets}
+          onMapClick={(pt) => {
+            const c = cabinets.find((x) => x.id === editCabinetId);
+            if (!c) return toast('Chọn tủ trước', 'error');
+            if (tool === 'route') setDrawing((d) => (d ? [...d, [pt.lng, pt.lat]] : [[c.location.lng, c.location.lat], [pt.lng, pt.lat]]));
+            if (tool === 'pole') pushOp({ op: 'addPole', cabinetId: c.id, branch, lat: pt.lat, lng: pt.lng, lampCount: 1 });
+          }}
+          onMapDblClick={finishRoute}
+          onPoleDrag={(pole, pt) => pushOp({ op: 'movePole', poleId: pole.id, lat: pt.lat, lng: pt.lng, expectedUpdatedAt: pole.updatedAt })}
           measureMode={measureMode}
           measurePoints={measurePts}
-          onSelectCabinet={flyToCabinet}
+          onSelectCabinet={(id) => (editMode ? (setEditCabinetId(id), setDrawing(null)) : flyToCabinet(id))}
           onSelectPole={setPole}
-          onMoveCabinet={(id, p) => setMoves((m) => ({ ...m, [id]: p }))}
+          onMoveCabinet={(id, p) => pushOp({ op: 'moveCabinet', cabinetId: id, lat: p.lat, lng: p.lng })}
           onMeasure={setMeasurePts}
           onViewChange={(c) => setCenter(c)}
         />
@@ -237,7 +295,7 @@ export function MapPage() {
             {basemap === 'hybrid' || basemap === 'satellite' ? <MapIcon className="h-4 w-4" /> : <Satellite className="h-4 w-4" />}
           </Button>
           {can('map.edit') && (
-            <Button variant={editMode ? 'primary' : 'outline'} size="sm" className="shadow" onClick={() => setEditMode((v) => !v)}>
+            <Button variant={editMode ? 'primary' : 'outline'} size="sm" className="shadow" onClick={() => (editMode ? undefined : (select(null), setEditMode(true)))}>
               <Pencil className="h-4 w-4" /> Chỉnh sửa
             </Button>
           )}
@@ -254,32 +312,35 @@ export function MapPage() {
         )}
 
         {editMode && (
-          <div className="absolute bottom-6 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-lg border bg-panel px-3 py-2 text-sm shadow-lg">
-            <span className="text-subtle">
-              Chế độ chỉnh sửa · chọn tủ rồi kéo marker xanh · {Object.keys(moves).length} thay đổi nháp
-            </span>
-            <Button size="sm" variant="outline" onClick={() => setGenOpen(true)}>
-              Sinh trụ hàng loạt
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={async () => {
-                if (Object.keys(moves).length && !(await confirm({ title: 'Hủy các thay đổi?', body: 'Các thay đổi vị trí chưa lưu sẽ bị bỏ.', danger: true, confirmLabel: 'Hủy thay đổi' }))) return;
-                setMoves({});
-                setEditMode(false);
-              }}
-            >
-              Hủy các thay đổi
-            </Button>
-            <Button size="sm" disabled={!Object.keys(moves).length} loading={saveEdits.isPending} onClick={() => saveEdits.mutate()}>
-              Lưu thay đổi
-            </Button>
-          </div>
+          <EditToolbar
+            tool={tool}
+            setTool={(t) => {
+              setTool(t);
+              setDrawing(null);
+            }}
+            branch={branch}
+            setBranch={setBranch}
+            cabinetName={cabinets.find((c) => c.id === editCabinetId)?.code ?? null}
+            ops={ops}
+            drawing={!!drawing}
+            onFinishRoute={finishRoute}
+            onUndo={() => setOps((l) => l.slice(0, -1))}
+            onCancel={async () => {
+              if (ops.length && !(await confirm({ title: 'Bỏ các thay đổi?', body: `${ops.length} thay đổi chưa lưu sẽ bị bỏ.`, danger: true, confirmLabel: 'Bỏ thay đổi' }))) return;
+              leaveEdit();
+            }}
+            onSave={() => saveEdits.mutate()}
+            saving={saveEdits.isPending}
+            onGenerate={() => setGenOpen(true)}
+            onImport={() => setImportOpen(true)}
+          />
         )}
 
-        {pole && !selectedId && <PolePanel pole={pole} onClose={() => setPole(null)} onOpenCabinet={() => select(pole.cabinetId)} />}
-        <GeneratePolesModal open={genOpen} onOpenChange={setGenOpen} />
+        {pole && !selectedId && (
+          <PolePanel key={pole.id} pole={pole} editMode={editMode} onClose={() => setPole(null)} onOpenCabinet={() => select(pole.cabinetId)} onOp={pushOp} />
+        )}
+        <GeneratePolesModal open={genOpen} onOpenChange={setGenOpen} assets={assets} cabinetId={editCabinetId} branch={branch} onDone={() => setAssetsVersion((v) => v + 1)} />
+        <ImportPolesModal open={importOpen} onOpenChange={setImportOpen} onDone={() => setAssetsVersion((v) => v + 1)} />
       </div>
 
       {selectedId && (
@@ -442,78 +503,3 @@ function FavoritesPopover({ getView, flyTo }: { getView: () => { center: GeoPoin
   );
 }
 
-function PolePanel({ pole, onClose, onOpenCabinet }: { pole: PoleAsset; onClose: () => void; onOpenCabinet: () => void }) {
-  return (
-    <div className="absolute right-3 top-3 z-10 w-72 rounded-lg border bg-panel shadow-lg">
-      <div className="flex items-center justify-between border-b px-3 py-2">
-        <div className="font-semibold">Trụ {pole.code}</div>
-        <button onClick={onClose} aria-label="Đóng">
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-      <div className="space-y-1 px-3 py-2 text-sm">
-        <div>
-          <span className="text-subtle">Tủ:</span> {pole.cabinetName}
-        </div>
-        <div>
-          <span className="text-subtle">Tuyến:</span> {pole.routeCode} ({pole.branch})
-        </div>
-        <div>
-          <span className="text-subtle">Số đèn:</span> {pole.lampCount}
-        </div>
-        <div className="pt-1">
-          {Array.from({ length: pole.lampCount }, (_, i) => (
-            <div key={i} className="flex items-center justify-between border-t py-1 text-xs">
-              <span>L{i + 1} · Đèn chính · 150 W</span>
-              <span className="text-subtle">Chưa có đèn thông minh</span>
-            </div>
-          ))}
-        </div>
-        <Button size="sm" variant="outline" className="mt-2 w-full" onClick={onOpenCabinet}>
-          Mở chi tiết tủ
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function GeneratePolesModal({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [dist, setDist] = useState(30);
-  return (
-    <Modal
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Sinh trụ hàng loạt"
-      footer={
-        <>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Hủy
-          </Button>
-          <Button
-            onClick={() => {
-              toast('Đã sinh trụ vào bản nháp (mock) — bấm Lưu thay đổi để ghi', 'success');
-              onOpenChange(false);
-            }}
-          >
-            Sinh trụ
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        <p className="text-subtle">Chọn 2 trụ đầu/cuối và khoảng cách; hệ thống sinh các trụ dọc đoạn giữa với mã tự tăng.</p>
-        <Field label="Trụ đầu (mã)">
-          <Input value={from} onChange={(e) => setFrom(e.target.value)} placeholder="vd TL01.001_N1_1" />
-        </Field>
-        <Field label="Trụ cuối (mã)">
-          <Input value={to} onChange={(e) => setTo(e.target.value)} placeholder="vd TL01.001_N1_8" />
-        </Field>
-        <Field label="Khoảng cách giữa các trụ (m)">
-          <Input type="number" min={5} value={dist} onChange={(e) => setDist(Number(e.target.value))} />
-        </Field>
-      </div>
-    </Modal>
-  );
-}

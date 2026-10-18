@@ -42,7 +42,7 @@ export async function loadDesired(sql: Sql, cabinetIds: string[] | null, now = D
   const centre = new Map<string, GeoPoint>(zones.map((z) => [z.id, { lat: Number(z.lat), lng: Number(z.lng) }]));
   const cabs = await sql<{ id: string; ltid: string; zone1_id: string | null; lat: number; lng: number }[]>`
     SELECT id, ltid, zone1_id, ST_Y(location) AS lat, ST_X(location) AS lng FROM cabinets
-    ${cabinetIds ? sql`WHERE id = ANY(${cabinetIds}::uuid[])` : sql``}`;
+    WHERE active ${cabinetIds ? sql`AND id = ANY(${cabinetIds}::uuid[])` : sql``}`;
   return cabs.map((c) => {
     const own = byCab.get(c.id) ?? null;
     const zone = c.zone1_id ? byZone.get(c.zone1_id) ?? null : null;
