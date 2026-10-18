@@ -3,7 +3,7 @@
 Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2. Hệ thống **mới hoàn toàn**. Quy mô thiết kế **10.000 tủ**.
 Tham khảo chức năng: `../prompt_xay_dung_lai_he_thong_chieu_sang.md` (chỉ tham khảo). Giao thức thiết bị: `device-contract.md`. Quyết định: `decisions.md`.
 
-Trạng thái: spec v0.1 Bảo duyệt "tương đối ổn" (2026-10-17). **M1-UI xong** (web mock, `apps/web`). **M0 + M1 xong** (ingest + API + web hybrid, thử tải 10.000 tủ). **M2 xong** (2FA TOTP, phạm vi khu vực ở REST + Socket.IO, quản lý user, CSRF, rate limit; quyết định S14–S16). **M4 lệnh xong** (command-worker, vòng đời lệnh, S17–S20; drawer các tab dữ liệu thật đã có từ M1). Tiếp theo: M3 (bản đồ) / M5 (cảnh báo).
+Trạng thái: spec v0.1 Bảo duyệt "tương đối ổn" (2026-10-17). **M1-UI xong** (web mock, `apps/web`). **M0 + M1 xong** (ingest + API + web hybrid, thử tải 10.000 tủ). **M2 xong** (2FA TOTP, phạm vi khu vực ở REST + Socket.IO, quản lý user, CSRF, rate limit; quyết định S14–S16). **M4 lệnh xong** (command-worker, vòng đời lệnh, S17–S20; drawer các tab dữ liệu thật đã có từ M1). **M3 bản đồ xong** (2026-10-18: favorites, gzip, đo 10k tủ, e2e:map; sửa mặc định `cabinet_state.status` = offline). Tiếp theo: M5 (cảnh báo).
 
 ---
 

@@ -3,19 +3,21 @@ import { Module } from '@nestjs/common';
 import { APP_FILTER, NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { IoAdapter } from '@nestjs/platform-socket.io';
+import compress from '@fastify/compress';
 import cookie from '@fastify/cookie';
 import { AlarmsModule } from './alarms';
 import { AuthModule } from './auth';
 import { CabinetsModule } from './cabinets';
 import { CommandsModule } from './commands';
 import { ProblemFilter } from './errors';
+import { FavoritesModule } from './favorites';
 import { InfraModule } from './infra';
 import { RealtimeModule } from './realtime';
 import { SystemModule } from './system';
 import { UsersModule } from './users';
 
 @Module({
-  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, AlarmsModule, UsersModule, SystemModule, RealtimeModule],
+  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, FavoritesModule, AlarmsModule, UsersModule, SystemModule, RealtimeModule],
   providers: [{ provide: APP_FILTER, useClass: ProblemFilter }],
 })
 class AppModule {}
@@ -34,6 +36,9 @@ const app = await NestFactory.create<NestFastifyApplication>(AppModule, new Fast
   logger: ['error', 'warn', 'log'],
 });
 await app.register(cookie);
+// /map/cabinets for 10k cabinets is ~3.4 MB of JSON, ~10x smaller gzipped. gzip only: brotli at its
+// default quality costs far more CPU per request than it saves on top of gzip.
+await app.register(compress, { encodings: ['gzip', 'deflate'], threshold: 1024 });
 app.setGlobalPrefix('api/v1');
 app.useWebSocketAdapter(new IoAdapter(app));
 app.enableShutdownHooks();

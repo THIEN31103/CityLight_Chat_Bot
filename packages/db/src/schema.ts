@@ -107,7 +107,8 @@ export const cabinets = pgTable(
 /** One row per cabinet, updated by ingest; the single source for map, counters and alarm consistency. */
 export const cabinetState = pgTable('cabinet_state', {
   cabinetId: uuid('cabinet_id').primaryKey().references(() => cabinets.id, { onDelete: 'cascade' }),
-  status: cabinetStatusEnum('status').notNull().default('unknown'),
+  // a row nobody has heard from yet is offline; 'unknown' = online but PLC lost (spec 6)
+  status: cabinetStatusEnum('status').notNull().default('offline'),
   online: boolean('online').notNull().default(false),
   lastSeenAt: tsz('last_seen_at'),
   lastBootAt: tsz('last_boot_at'),
@@ -459,6 +460,21 @@ export const userScopes = pgTable(
     areaId: uuid('area_id').notNull().references(() => areas.id, { onDelete: 'cascade' }),
   },
   (t) => [primaryKey({ columns: [t.userId, t.areaId] })],
+);
+
+/** Saved map views per user (map page "Vị trí đã lưu"). */
+export const mapFavorites = pgTable(
+  'map_favorites',
+  {
+    id: id(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    lat: doublePrecision('lat').notNull(),
+    lng: doublePrecision('lng').notNull(),
+    zoom: real('zoom').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('map_favorites_user_idx').on(t.userId)],
 );
 
 /** 2FA recovery codes, argon2id hashed, single use. */

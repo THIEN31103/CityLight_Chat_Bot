@@ -22,6 +22,7 @@
     "e2e:local": "npm run e2e:local -w @citylight/simulator",
     "e2e:api": "node --env-file=.env --import tsx apps/api/test/e2e-auth.ts",
     "e2e:commands": "node --env-file=.env --import tsx apps/api/test/e2e-commands.ts",
+    "e2e:map": "node --env-file=.env --import tsx apps/api/test/e2e-map.ts",
     "db:seed": "npm run seed -w @citylight/db",
     "sim:register": "npm run register -w @citylight/simulator --",
     "dev:web:hybrid": "npm run dev:hybrid -w @citylight/web",
