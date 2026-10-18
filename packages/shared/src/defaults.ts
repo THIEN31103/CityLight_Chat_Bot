@@ -1,5 +1,5 @@
 // Defaults used when a cabinet / zone has no stored configuration, and capability sets per firmware.
-import type { Capability, FwProfile, Schedule, Thresholds } from './domain';
+import type { Capability, CommandType, FwProfile, Schedule, Thresholds } from './domain';
 
 export function defaultSchedule(): Schedule {
   return {
@@ -41,3 +41,19 @@ export function capabilitiesFor(fw: FwProfile): Capability[] {
   if (fw === 'v3') return [...current, 'per_cabinet_topic'];
   return current;
 }
+
+/** Capability a command needs on the device; types not listed need only telemetry + the shared cmd topic. */
+export const COMMAND_CAPABILITY: Partial<Record<CommandType, Capability>> = {
+  MANUAL_ALL: 'manual_control',
+  MANUAL_BRANCH: 'manual_control',
+  AUTO: 'manual_control',
+  SET_SCHEDULE: 'schedule_write',
+  SET_DIMMING: 'dimming',
+  LAMP_CONTROL: 'smart_lamps',
+};
+
+/** Old field firmware 1307ebc does not filter LTID: any command would run on every cabinet (spec 4.2). */
+export const firmwareBlocksCommands = (fw: FwProfile) => fw === 'v2-1307ebc';
+
+/** Commands whose effect shows in telemetry (confirmed); the others end at "acked" (coreif confirmRule). */
+export const CONFIRMED_BY_TELEMETRY: readonly CommandType[] = ['MANUAL_ALL', 'MANUAL_BRANCH', 'AUTO', 'SET_TIME'];

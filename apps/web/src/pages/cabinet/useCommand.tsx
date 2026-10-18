@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Command, CommandType } from '@citylight/shared';
-import { COMMAND_TYPE_LABELS } from '@citylight/shared';
+import { COMMAND_TYPE_LABELS, CONFIRMED_BY_TELEMETRY } from '@citylight/shared';
 import { api, ApiError } from '@/lib/api';
 import { subscribe } from '@/lib/realtime';
 import { confirm, toast } from '@/components/ui';
@@ -14,6 +14,9 @@ export function useCommand(cabinetId: string, cabinetLabel: string) {
       setActive((cur) => (cur && cur.id === c.id ? c : cur));
       if (c.cabinetId !== cabinetId) return;
       if (c.status === 'confirmed') toast(`${COMMAND_TYPE_LABELS[c.type]}: tủ đã xác nhận`, 'success');
+      // these types have nothing in telemetry to confirm: "acked" is their final state
+      if (c.status === 'acked' && !CONFIRMED_BY_TELEMETRY.includes(c.type)) toast(`${COMMAND_TYPE_LABELS[c.type]}: tủ đã nhận lệnh`, 'success');
+      if (c.status === 'acked_unconfirmed') toast(`${COMMAND_TYPE_LABELS[c.type]}: tủ đã nhận nhưng trạng thái chưa đổi`, 'info');
       if (c.status === 'failed' || c.status === 'timeout') toast(`${COMMAND_TYPE_LABELS[c.type]}: ${c.error ?? c.status}`, 'error');
     });
   }, [cabinetId]);

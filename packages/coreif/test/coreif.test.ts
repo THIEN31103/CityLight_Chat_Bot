@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { CONFIRMED_BY_TELEMETRY, type CommandType } from '@citylight/shared';
 import {
   FrameError,
+  RETRYABLE,
+  ackError,
+  ackMatches,
   buildCommandFrame,
+  buildCommandFrames,
   buildFrame,
+  confirmRule,
   expectedAckKeys,
   isoVn,
   parseAck,
@@ -169,8 +175,58 @@ describe('commands', () => {
     expect(buildCommandFrame('ALL', 'SET_TIME', {}, now)).toBe("*#LTID'ALL&LTIM'2026-10-17T18:30:00+07:00$");
   });
 
+  it('sends PULSE_ON as two frames so the 0->1 edge always reaches LOGO', () => {
+    expect(buildCommandFrames('CTY0005', 'PULSE_ON', {})).toEqual(["*#LTID'CTY0005&PI2O'0$", "*#LTID'CTY0005&PI2O'1$"]);
+    expect(() => buildCommandFrame('CTY0005', 'PULSE_ON', {})).toThrow(FrameError);
+  });
+
   it('enforces the 16-key limit', () => {
     const pairs = Array.from({ length: 17 }, (_, i) => [`K${i}`, 1] as [string, number]);
     expect(() => buildFrame(pairs)).toThrow(FrameError);
+  });
+});
+
+describe('ack matching and confirmation', () => {
+  const frame = "*#LTID'CTY0005&PLN1'1&PLN2'1&PMAN'1$";
+  const ack = (json: object) => parseAck(JSON.stringify(json));
+
+  it('matches an ack by cabinet id and key set, in any order', () => {
+    expect(ackMatches('CTY0005', frame, ack({ id: 'cty0005', ack: [{ k: 'PMAN', rc: 0 }, { k: 'PLN1', rc: 0 }, { k: 'PLN2', rc: 0 }] }))).toBe(true);
+    expect(ackMatches('CTY0005', frame, ack({ id: 'CTY0006', ack: [{ k: 'PLN1', rc: 0 }, { k: 'PLN2', rc: 0 }, { k: 'PMAN', rc: 0 }] }))).toBe(false);
+    expect(ackMatches('CTY0005', frame, ack({ id: 'CTY0005', ack: [{ k: 'PMAN', rc: 0 }] }))).toBe(false);
+    // old firmware 1307ebc: no id, cannot be attributed
+    expect(ackMatches('CTY0005', frame, ack({ ack: [{ k: 'PLN1', rc: 0 }, { k: 'PLN2', rc: 0 }, { k: 'PMAN', rc: 0 }] }))).toBe(false);
+  });
+
+  it('reports rc != 0 per key', () => {
+    expect(ackError(ack({ id: 'CTY0005', ack: [{ k: 'PMAN', rc: 0 }] }))).toBeNull();
+    expect(ackError(ack({ id: 'CTY0005', ack: [{ k: 'PLN1', rc: -1 }, { k: 'PMAN', rc: 0 }] }))).toMatch(/^PLN1 rc=-1/);
+    expect(ackError(ack({ id: 'CTY0005', ack: [{ k: 'T12', rc: -2 }] }))).toContain('không hỗ trợ');
+  });
+
+  it('confirms manual control only when LQ2/LQ3/PMAN show it', () => {
+    const now = new Date();
+    const all = confirmRule('MANUAL_ALL', { on: true })!;
+    expect(all({ manualMode: true, branch1On: true, branch2On: true } as never, now)).toBe(true);
+    expect(all({ manualMode: true, branch1On: true, branch2On: null } as never, now)).toBe(false);
+    expect(all({ manualMode: false, branch1On: true, branch2On: true } as never, now)).toBe(false);
+    const br2 = confirmRule('MANUAL_BRANCH', { branch: 2, on: false })!;
+    expect(br2({ manualMode: true, branch1On: true, branch2On: false } as never, now)).toBe(true);
+    expect(confirmRule('AUTO', {})!({ manualMode: false } as never, now)).toBe(true);
+  });
+
+  it('confirms SET_TIME when PTIM is within 2 minutes', () => {
+    const now = new Date('2026-10-18T03:00:00Z');
+    const rule = confirmRule('SET_TIME', {})!;
+    expect(rule({ deviceTime: '2026-10-18T03:01:30.000Z' } as never, now)).toBe(true);
+    expect(rule({ deviceTime: '2026-10-18T02:50:00.000Z' } as never, now)).toBe(false);
+    expect(rule({ deviceTime: null } as never, now)).toBe(false);
+  });
+
+  it('keeps the confirmable list in step with shared (web toasts use it)', () => {
+    const all: CommandType[] = ['MANUAL_ALL', 'MANUAL_BRANCH', 'AUTO', 'SET_SCHEDULE', 'SET_TIME', 'PULSE_ON', 'DIAG'];
+    expect(all.filter((t) => confirmRule(t, { on: true, branch: 1 }) !== null)).toEqual([...CONFIRMED_BY_TELEMETRY]);
+    expect(RETRYABLE.has('PULSE_ON')).toBe(false);
+    expect(RETRYABLE.has('SET_SCHEDULE')).toBe(false);
   });
 });

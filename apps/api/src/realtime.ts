@@ -70,10 +70,11 @@ export class RealtimeGateway implements OnGatewayConnection, OnModuleInit, OnMod
     this.sub.on('message', (ch, msg) => {
       try {
         if (ch === AUTH_CHANNEL) return void this.onAuthEvent(JSON.parse(msg));
-        const ev = JSON.parse(msg) as { type: string; items?: { cabinetId: string }[]; alarm?: { cabinetId: string } };
+        const ev = JSON.parse(msg) as { type: string; items?: { cabinetId: string }[]; alarm?: { cabinetId: string }; command?: { cabinetId: string } };
         // socket.io de-duplicates a socket that is in several of the target rooms
         if (ev.type === 'cabinet.state') for (const it of ev.items ?? []) this.server?.to(this.roomsFor(it.cabinetId)).emit('cabinet.state', it);
         else if ((ev.type === 'alarm.raised' || ev.type === 'alarm.cleared') && ev.alarm) this.server?.to(this.roomsFor(ev.alarm.cabinetId)).emit(ev.type, ev.alarm);
+        else if (ev.type === 'command.updated' && ev.command) this.server?.to(this.roomsFor(ev.command.cabinetId)).emit('command.updated', ev.command);
       } catch {
         /* ignore malformed */
       }

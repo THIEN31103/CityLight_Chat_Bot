@@ -7,6 +7,7 @@ import cookie from '@fastify/cookie';
 import { AlarmsModule } from './alarms';
 import { AuthModule } from './auth';
 import { CabinetsModule } from './cabinets';
+import { CommandsModule } from './commands';
 import { ProblemFilter } from './errors';
 import { InfraModule } from './infra';
 import { RealtimeModule } from './realtime';
@@ -14,7 +15,7 @@ import { SystemModule } from './system';
 import { UsersModule } from './users';
 
 @Module({
-  imports: [InfraModule, AuthModule, CabinetsModule, AlarmsModule, UsersModule, SystemModule, RealtimeModule],
+  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, AlarmsModule, UsersModule, SystemModule, RealtimeModule],
   providers: [{ provide: APP_FILTER, useClass: ProblemFilter }],
 })
 class AppModule {}

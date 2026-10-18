@@ -18,7 +18,8 @@ export type Fault =
   | 'phase_loss'
   | 'temp_sensor_fault'
   | 'logo_lost'
-  | 'old_firmware';
+  | 'old_firmware'
+  | 'ack_lost';
 
 export interface CabinetOptions {
   ltid: string;
@@ -311,8 +312,11 @@ export class SimCabinet {
       acks.push({ k: key, rc });
     }
     const ack = this.newFirmware ? { id: this.ltid, ack: acks, ts: Date.now() - this.bootTick } : { ack: acks, ts: Date.now() - this.bootTick };
-    this.client?.publish(TOPICS.echo, JSON.stringify(ack));
-    this.stats.acks++;
+    // ack_lost: the command runs but the echo never reaches the server (server must time out / retry)
+    if (this.o.fault !== 'ack_lost') {
+      this.client?.publish(TOPICS.echo, JSON.stringify(ack));
+      this.stats.acks++;
+    }
     if (branchTouched || other) this.schedulePublish(branchTouched);
   }
 }

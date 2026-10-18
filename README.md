@@ -15,7 +15,8 @@ Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2 (broke
 | **M0** nền tảng backend | ✅ compose (EMQX 5.8.6, PG 16.15 + TimescaleDB 2.30.2 + PostGIS 3.6.4, Redis 7.4) chạy; migrate OK (30 bảng, 2 hypertable, 3 continuous aggregate); `coreif` 22 test; E2E với EMQX thật 20/20 (gồm ACL); tải thử 1.000 tủ giả |
 | **M1** ingest + API + web hybrid | ✅ ingest worker (batch, trạng thái, cảnh báo sức khỏe E1xx–E8xx, quét offline theo lô), API NestJS (đăng nhập session, bản đồ, tủ, telemetry, chẩn đoán, cảnh báo, Socket.IO), web `--mode hybrid`; thử tải 10.000 tủ 16 phút: 921.570 dòng, 0 lỗi, trễ ghi DB < 0,6 s; offline 9.923 tủ phát hiện trong 52–64 s |
 | **M2** 2FA + phân quyền khu vực | ✅ TOTP bắt buộc cho admin/operator (QR, mã khôi phục), phạm vi khu vực ở mọi API đọc + Socket.IO, quản lý user (mật khẩu tạm, đặt lại mật khẩu/2FA, mở khóa), CSRF, rate limit đăng nhập; `npm run e2e:api` 40/40 |
-| M3 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
+| **M4** lệnh thật | ✅ `command-worker` (hàng đợi Postgres, 1 lệnh/tủ, ack + retry + timeout, xác nhận bằng telemetry), API gửi/xem/hủy lệnh + đặt lịch, chặn tủ offline / firmware cũ, idempotency, nhật ký, Socket.IO; `npm run e2e:commands` 27/27 |
+| M3, M5 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
 
 ## Chạy web (M1-UI)
 
@@ -83,11 +84,12 @@ npm run db:migrate && npm run db:seed    # bảng + tài khoản admin (SEED_ADM
 npm run sim:register -- --count 10000    # đăng ký fleet tủ giả vào DB (vị trí cố định theo LTID)
 npm run dev:api                          # API :3000 (/api/v1, /socket.io)   — hoặc container: xem dưới
 npm run dev:ingest                       # ingest worker
+npm run dev:cmd                          # command-worker (gửi lệnh xuống tủ)
 npm run sim -- --count 300               # tủ giả gửi lên EMQX
 npm run dev:web:hybrid                   # web :5173/5174, API thật + mock cho phần chưa làm
 ```
 
-Chạy API + ingest bằng Docker: `docker compose -f infra/docker-compose.yml --env-file infra/.env --profile app up -d --build`.
+Chạy API + ingest + command-worker bằng Docker: `docker compose -f infra/docker-compose.yml --env-file infra/.env --profile app up -d --build`.
 
 ### Đăng nhập & phân quyền (M2)
 
@@ -96,7 +98,8 @@ Chạy API + ingest bằng Docker: `docker compose -f infra/docker-compose.yml -
 - Tạo user ở Quản trị → Người dùng: hệ thống trả mật khẩu tạm (hiện 1 lần), user phải đổi khi đăng nhập. User mới **không thấy tủ nào** tới khi gán khu vực hoặc tick "Toàn hệ thống".
 - Mất điện thoại: dùng mã khôi phục, hoặc admin bấm "Đặt lại 2FA".
 - `npm run e2e:api` (cần API container đang chạy): 40 kiểm tra 2FA/CSRF/phạm vi/thu hồi session/khóa tài khoản/rate limit, tự tạo và xóa user `*@e2e.citylight.test`. Bài rate limit chạy cuối: đợi 1 phút trước khi chạy lại.
-- Sau lưng proxy (Caddy trên VPS) đặt `TRUST_PROXY` để lấy IP thật cho rate limit; mặc định tắt.
+- `npm run e2e:commands` (cần api + ingest + command-worker đang chạy, ~90 s): 27 kiểm tra vòng đời lệnh với tủ giả SIM9991–9996 (mất PLC, mất LOGO, mất ack, firmware cũ), tự tạo và xóa user `*@e2e-cmd.citylight.test`. Không chạy cùng `npm run sim` ≥ 9990 tủ.
+- Sau lưng proxy (Caddy trên VPS) đặt `TRUST_PROXY` (IP/CIDR của proxy; số hop không còn được fastify ≥ 5.12 hỗ trợ) để lấy IP thật cho rate limit; mặc định tắt.
 
 **Thử tải 10.000 tủ trên Windows:** Docker Desktop chỉ chuyển tiếp ~2.000 kết nối từ host vào container (ECONNRESET sau đó) — chạy simulator *trong* mạng Docker:
 
@@ -117,7 +120,7 @@ infra/               docker-compose (EMQX 5.8, TimescaleDB-HA pg16, Redis 7.4) +
 docs/                spec, quyết định, device contract, kiến trúc
 ```
 
-`apps/api/` NestJS (Fastify, session cookie, Socket.IO) · `apps/workers/` ingest (command / rules / scheduler ở các mốc sau).
+`apps/api/` NestJS (Fastify, session cookie, Socket.IO) · `apps/workers/` ingest, command-worker (rules / scheduler ở các mốc sau).
 
 ## Ghi chú kỹ thuật
 

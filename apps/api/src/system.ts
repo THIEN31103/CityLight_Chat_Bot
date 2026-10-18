@@ -29,13 +29,17 @@ export class SystemController {
     const ingest = JSON.parse((await this.redis.get('cl:ingest:stats')) ?? '{}') as { lastFlushMs?: number; queue?: number };
     const size = await this.sql<{ gb: number }[]>`SELECT round(pg_database_size(current_database()) / 1024.0 / 1024 / 1024, 2)::float AS gb`;
     const rate = await this.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM telemetry WHERE ts > now() - interval '1 minute'`;
+    const cmd = await this.sql<{ open: number; errors: number }[]>`
+      SELECT count(*) FILTER (WHERE status = 'queued' OR deadline_at IS NOT NULL)::int AS open,
+             count(*) FILTER (WHERE status IN ('failed', 'timeout') AND queued_at > now() - interval '24 hours')::int AS errors
+      FROM commands WHERE queued_at > now() - interval '24 hours' OR status = 'queued' OR deadline_at IS NOT NULL`;
     return {
       cabinetsOnline: c[0]?.online ?? 0,
       cabinetsTotal: c[0]?.total ?? 0,
       msgPerSec: Math.round(((rate[0]?.n ?? 0) / 60) * 10) / 10,
       ingestLagMs: ingest.lastFlushMs ?? null,
-      commandQueue: 0,
-      ackErrors24h: 0,
+      commandQueue: cmd[0]?.open ?? 0,
+      ackErrors24h: cmd[0]?.errors ?? 0,
       dbSizeGb: size[0]?.gb ?? 0,
       brokerConnections: c[0]?.online ?? 0,
       uptimeHours: Math.round((process.uptime() / 3600) * 10) / 10,

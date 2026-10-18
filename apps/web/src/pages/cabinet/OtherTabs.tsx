@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Camera, MapPin, Upload } from 'lucide-react';
-import type { CabinetDetail, DimmingProfile, GeoPoint, LampGroup, Thresholds } from '@citylight/shared';
+import type { CabinetDetail, Command, DimmingProfile, GeoPoint, LampGroup, Thresholds } from '@citylight/shared';
 import { ALARM_TYPE_LABELS, COMMAND_STATUS_LABELS, LAMP_GROUP_LABELS, SEVERITY_LABELS, describeCommand } from '@citylight/shared';
 import { api, ApiError } from '@/lib/api';
+import { subscribe } from '@/lib/realtime';
 import { useSession } from '@/stores/session';
 import { fmtDuration, fmtNum, fmtTime } from '@/lib/utils';
 import { Badge, Button, Card, CardHeader, Checkbox, Empty, Input, KV, Select, Spinner, Unsupported, toast } from '@/components/ui';
@@ -294,10 +295,21 @@ export function CabinetAlarmsTab({ cabinetId }: { cabinetId: string }) {
 // ---------- Lịch sử lệnh ----------
 
 export function CommandsTab({ cabinetId }: { cabinetId: string }) {
+  const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ['cabinet-commands', cabinetId], queryFn: () => api.cabinetCommands(cabinetId) });
+  useEffect(
+    () =>
+      subscribe<Command>('command.updated', (c) => {
+        if (c.cabinetId !== cabinetId) return;
+        qc.setQueryData<Command[]>(['cabinet-commands', cabinetId], (list = []) =>
+          list.some((x) => x.id === c.id) ? list.map((x) => (x.id === c.id ? c : x)) : [c, ...list],
+        );
+      }),
+    [cabinetId, qc],
+  );
   const tone = (s: string) => (s === 'confirmed' ? 'green' : s === 'failed' || s === 'timeout' ? 'red' : s === 'acked_unconfirmed' ? 'amber' : 'blue');
   if (isLoading) return <Spinner />;
-  if (!data?.length) return <Empty>Chưa có lệnh nào gửi tới tủ này trong phiên mock. Thử gửi lệnh ở tab Điều khiển.</Empty>;
+  if (!data?.length) return <Empty>Chưa có lệnh nào gửi tới tủ này. Thử gửi lệnh ở tab Điều khiển.</Empty>;
   return (
     <Card>
       <CardHeader title="Lịch sử lệnh" />

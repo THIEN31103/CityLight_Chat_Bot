@@ -17,8 +17,8 @@ import type {
   TelemetryPoint,
   Thresholds,
 } from '@citylight/shared';
-import { decodeRs485SelfTest, describeCommand } from '@citylight/shared';
-import { buildCommandFrame } from '@citylight/coreif';
+import { COMMAND_CAPABILITY, decodeRs485SelfTest, describeCommand, firmwareBlocksCommands } from '@citylight/shared';
+import { buildCommandFrames } from '@citylight/coreif';
 import type { CabinetDiagnostics, DiagnosticItem, Rs485SelfTest } from '@citylight/shared';
 import {
   activityLogs,
@@ -238,17 +238,9 @@ export class MockApiError extends Error {
   }
 }
 
-const TYPE_CAPABILITY: Partial<Record<CommandType, Capability>> = {
-  MANUAL_ALL: 'manual_control',
-  MANUAL_BRANCH: 'manual_control',
-  AUTO: 'manual_control',
-  SET_DIMMING: 'dimming',
-  LAMP_CONTROL: 'smart_lamps',
-};
-
 function buildFrame(c: Cabinet, type: CommandType, p: Record<string, unknown>): string {
-  // Same builder the real command-worker will use.
-  return buildCommandFrame(c.ltid, type, p);
+  // Same builder the real command-worker uses (PULSE_ON = 2 frames).
+  return buildCommandFrames(c.ltid, type, p).join('\n');
 }
 
 export function createCommand(
@@ -262,8 +254,8 @@ export function createCommand(
   const c = cabinetById.get(cabinetId);
   if (!c) throw new MockApiError(404, 'not_found', 'Không tìm thấy tủ');
   const s = states.get(cabinetId)!;
-  const need = TYPE_CAPABILITY[type];
-  if (c.fwProfile === 'v2-1307ebc' && type !== 'SET_SCHEDULE')
+  const need = COMMAND_CAPABILITY[type];
+  if (firmwareBlocksCommands(c.fwProfile))
     throw new MockApiError(409, 'cabinet_unsafe_firmware', 'Firmware cũ không lọc LTID, chặn điều khiển để tránh ảnh hưởng tủ khác');
   if (need && !capabilitiesOf(c).includes(need))
     throw new MockApiError(409, 'capability_unsupported', 'Thiết bị chưa hỗ trợ chức năng này');

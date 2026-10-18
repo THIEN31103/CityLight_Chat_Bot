@@ -8,8 +8,8 @@ import { Redis } from 'ioredis';
 import { io, type Socket } from 'socket.io-client';
 import { createSql } from '@citylight/db';
 import { base32Decode, hotp, totpStep } from '../src/totp';
+import { BASE, Client, login, nextCode } from './client';
 
-const BASE = process.env.API_URL ?? 'http://localhost:3000';
 const DOMAIN = 'e2e.citylight.test';
 const sql = createSql(process.env.DATABASE_URL, 2);
 const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379');
@@ -20,52 +20,6 @@ const check = (name: string, ok: boolean, info?: string) => {
   console.log(`${ok ? '✔' : '✘'} ${name}${info ? ` — ${info}` : ''}`);
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** fetch with a cookie jar and the CSRF header, like the browser. */
-class Client {
-  jar = new Map<string, string>();
-  csrf = true;
-  async call(method: string, path: string, body?: unknown) {
-    const headers: Record<string, string> = { cookie: [...this.jar].map(([k, v]) => `${k}=${v}`).join('; ') };
-    if (body !== undefined) headers['content-type'] = 'application/json';
-    if (this.csrf && this.jar.has('cl_csrf')) headers['x-csrf-token'] = this.jar.get('cl_csrf')!;
-    const res = await fetch(`${BASE}/api/v1${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-    for (const c of res.headers.getSetCookie()) {
-      const [kv, ...attrs] = c.split(';');
-      const i = kv!.indexOf('=');
-      const k = kv!.slice(0, i).trim();
-      const v = kv!.slice(i + 1).trim();
-      const expired = attrs.some((a) => /expires=thu, 01 jan 1970/i.test(a)) || v === '';
-      if (expired) this.jar.delete(k);
-      else this.jar.set(k, decodeURIComponent(v));
-    }
-    const text = await res.text();
-    let data: any = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = text;
-    }
-    return { status: res.status, data };
-  }
-  get = (p: string) => this.call('GET', p);
-  post = (p: string, b: unknown = {}) => this.call('POST', p, b);
-  patch = (p: string, b: unknown) => this.call('PATCH', p, b);
-}
-
-async function login(email: string, password: string) {
-  const c = new Client();
-  const r = await c.post('/auth/login', { email, password, remember: false });
-  return { c, r };
-}
-
-/** Next acceptable code: never reuse a step (server rejects steps <= last). */
-function nextCode(secret: Buffer, last: { step: number }) {
-  const step = Math.max(totpStep(Date.now()), last.step + 1);
-  if (step > totpStep(Date.now()) + 1) throw new Error('no fresh TOTP step yet');
-  last.step = step;
-  return hotp(secret, step);
-}
 
 function socketFor(c: Client): Promise<{ s: Socket; events: { cabinetId: string }[] }> {
   return new Promise((resolve, reject) => {

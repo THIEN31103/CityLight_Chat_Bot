@@ -1,5 +1,5 @@
 // Map, hierarchy and cabinet read endpoints (spec 11). Shapes match apps/web/src/lib/api.ts.
-import { Controller, Get, HttpCode, Inject, Injectable, Module, Param, Post, Query, Req } from '@nestjs/common';
+import { Controller, Get, Inject, Injectable, Module, Param, Query, Req } from '@nestjs/common';
 import type { PendingQuery, Row } from 'postgres';
 import { z } from 'zod';
 import type { CabinetState, CabinetStatus, CabinetSummary, FwProfile, MapStats, Schedule, TelemetryPoint } from '@citylight/shared';
@@ -343,14 +343,7 @@ export class CabinetsController {
   }
 
   // Not built yet in M1: explicit answers so hybrid mode does not fall back to mock data for a real cabinet.
-  @Get('cabinets/:id/commands') async commands(@Req() r: AuthedRequest, @Param('id') id: string) { await this.svc.assertCabinet(r.user!.scope, id); return []; }
   @Get('cabinets/:id/lamps') async lamps(@Req() r: AuthedRequest, @Param('id') id: string) { await this.svc.assertCabinet(r.user!.scope, id); return []; }
-
-  @Post('cabinets/:id/commands')
-  @HttpCode(501)
-  sendCommand() {
-    throw new ApiError(501, 'not_implemented', 'Gửi lệnh xuống tủ thật sẽ có ở M4');
-  }
 }
 
 @Module({ controllers: [CabinetsController], providers: [CabinetsService], exports: [CabinetsService] })

@@ -246,8 +246,14 @@ export const commands = pgTable(
     cabinetId: uuid('cabinet_id').notNull().references(() => cabinets.id, { onDelete: 'cascade' }),
     type: text('type').notNull(),
     params: jsonb('params').notNull().default({}),
-    /** Raw CoreIF frame: server-side only, never returned to browsers. */
+    /** Raw CoreIF frame(s), newline-separated (PULSE_ON = 2): server-side only, never returned to browsers. */
     frame: text('frame').notNull(),
+    /** Index of the frame being sent / acked. */
+    step: smallint('step').notNull().default(0),
+    /** Sends of the current frame (1 retry for idempotent commands). */
+    attempts: smallint('attempts').notNull().default(0),
+    /** Set while the command-worker waits (ack or telemetry confirmation); null = queued or finished. */
+    deadlineAt: tsz('deadline_at'),
     batchId: uuid('batch_id').references(() => commandBatches.id),
     idempotencyKey: text('idempotency_key'),
     status: commandStatusEnum('status').notNull().default('queued'),
@@ -263,6 +269,7 @@ export const commands = pgTable(
     uniqueIndex('commands_idem_uq').on(t.idempotencyKey),
     index('commands_cabinet_idx').on(t.cabinetId, t.queuedAt),
     index('commands_open_idx').on(t.status).where(sql`status in ('queued','sent','acked')`),
+    index('commands_waiting_idx').on(t.cabinetId).where(sql`deadline_at is not null`),
   ],
 );
 

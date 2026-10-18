@@ -3,7 +3,7 @@
 Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2. Hệ thống **mới hoàn toàn**. Quy mô thiết kế **10.000 tủ**.
 Tham khảo chức năng: `../prompt_xay_dung_lai_he_thong_chieu_sang.md` (chỉ tham khảo). Giao thức thiết bị: `device-contract.md`. Quyết định: `decisions.md`.
 
-Trạng thái: spec v0.1 Bảo duyệt "tương đối ổn" (2026-10-17). **M1-UI xong** (web mock, `apps/web`). **M0 + M1 xong** (ingest + API + web hybrid, thử tải 10.000 tủ). **M2 xong** (2FA TOTP, phạm vi khu vực ở REST + Socket.IO, quản lý user, CSRF, rate limit; quyết định S14–S16). Tiếp theo: M4 (lệnh thật).
+Trạng thái: spec v0.1 Bảo duyệt "tương đối ổn" (2026-10-17). **M1-UI xong** (web mock, `apps/web`). **M0 + M1 xong** (ingest + API + web hybrid, thử tải 10.000 tủ). **M2 xong** (2FA TOTP, phạm vi khu vực ở REST + Socket.IO, quản lý user, CSRF, rate limit; quyết định S14–S16). **M4 lệnh xong** (command-worker, vòng đời lệnh, S17–S20; drawer các tab dữ liệu thật đã có từ M1). Tiếp theo: M3 (bản đồ) / M5 (cảnh báo).
 
 ---
 
@@ -55,7 +55,7 @@ Ghi chú: captcha dùng **tự host** (vd ALTCHA) hoặc chỉ rate-limit + khó
                     └──────┬──────────────────────────────▲─────────────────┘
           $share/ingest/…  │                              │ publish cmd
                     ┌──────▼──────┐   Redis    ┌──────────┴─────────┐
-                    │ ingest      │──streams──>│ command-worker     │ BullMQ: gửi, retry, timeout,
+                    │ ingest      │──streams──>│ command-worker     │ PG queue: gửi, retry, timeout,
                     │ parse CoreIF│            │ (ack matcher)      │ rate-limit hàng loạt
                     │ batch insert│            └──────────▲─────────┘
                     └──┬───────┬──┘                       │ job
@@ -345,19 +345,23 @@ Kết nối lại → FE gọi lại REST snapshot.
 
 ## 12. Vòng đời lệnh
 
+Đã làm ở M4 (quyết định S17–S20, code `apps/api/src/commands.ts`, `apps/workers/src/command-worker.ts`).
+
 ```text
 POST /cabinets/:id/commands {type, params}  + Idempotency-Key
-  api: kiểm quyền + scope, capability, fw an toàn, tủ online (hoặc cho xếp hàng nếu chọn), validate
-       → commands(status=queued) → BullMQ job → 202 {id}
-command-worker: build frame → publish → sent
-  ack (echo, khớp ltid + key, trong 30 s) → acked (rc 0) | failed (rc -1/-2, ghi lý do)
-  rules: telemetry thỏa "xác nhận bằng" (mục 4.1) trong 60 s → confirmed; quá hạn → acked_unconfirmed
-  không ack trong 30 s → retry 1 lần (chỉ lệnh idempotent) → timeout
-mọi bước → activity_logs + WebSocket command.updated
+  api: quyền + scope, fw an toàn, capability, tủ online (offline → 409, không xếp hàng), validate params
+       → commands(status=queued) → Socket.IO "queued" → NOTIFY cl_commands → 202 {id}
+command-worker (1 bản hoạt động, advisory lock), mỗi tủ 1 lệnh đang chạy:
+  build frame (SET_TIME lấy giờ lúc gửi) → publish → sent
+  ack (echo, khớp LTID + tập key, trong 30 s) → frame kế tiếp (PULSE_ON) | acked (rc 0) | failed (rc ≠ 0)
+  telemetry thỏa "xác nhận bằng" (mục 4.1) trong 20 s → confirmed; quá hạn → acked_unconfirmed
+  không ack 30 s → gửi lại 1 lần (MANUAL/AUTO/SET_TIME) → timeout
+  quá 120 s trong hàng đợi / tủ mất kết nối trước khi gửi → failed
+mọi bước → commands + Socket.IO command.updated; yêu cầu và kết quả → activity_logs
 ```
 
 - Lệnh nguy hiểm (tắt nhánh, hàng loạt) → hộp xác nhận ghi rõ tên tủ / số tủ; hàng loạt có thể yêu cầu nhập lại OTP.
-- Không cho 2 lệnh cùng loại chạy song song trên một tủ (khóa theo `cabinet_id+type`).
+- Mỗi tủ chỉ 1 lệnh đang chạy (ack không có mã lệnh); lệnh sau chờ. Hủy được khi còn `queued`.
 - Lệnh hàng loạt: rate-limit, tiến độ, gửi lại tủ lỗi.
 
 ---

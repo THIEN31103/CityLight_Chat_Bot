@@ -13,7 +13,7 @@ const prefix = arg('prefix', 'SIM');
 const faultRate = Number(arg('fault-rate', '0.08'));
 const telemetryMs = Number(arg('interval', '10000'));
 
-const FAULTS: Fault[] = ['offline', 'plc_lost', 'bus_down', 'pm_lost', 'ct_lost', 'dh_meter_lost', 'phase_loss', 'temp_sensor_fault', 'logo_lost', 'old_firmware'];
+const FAULTS: Fault[] = ['offline', 'plc_lost', 'bus_down', 'pm_lost', 'ct_lost', 'dh_meter_lost', 'phase_loss', 'temp_sensor_fault', 'logo_lost', 'old_firmware', 'ack_lost'];
 
 export function pickFault(i: number, rate: number): Fault {
   // deterministic spread so every scenario appears in a small fleet
