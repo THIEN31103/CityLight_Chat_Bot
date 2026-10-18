@@ -240,14 +240,23 @@ export const thresholds = pgTable(
   (t) => [uniqueIndex('thresholds_cabinet_uq').on(t.cabinetId), uniqueIndex('thresholds_zone_uq').on(t.zoneId)],
 );
 
-export const dimmingProfiles = pgTable('dimming_profiles', {
-  id: id(),
-  lampGroup: smallint('lamp_group').notNull(),
-  zoneId: uuid('zone_id').references(() => zones.id),
-  cabinetId: uuid('cabinet_id').references(() => cabinets.id, { onDelete: 'cascade' }),
-  segments: jsonb('segments').notNull(),
-  updatedAt: tsz('updated_at').notNull().defaultNow(),
-});
+/** One profile per lamp group at three levels (M9): cabinet > zone > system (zone + cabinet null). */
+export const dimmingProfiles = pgTable(
+  'dimming_profiles',
+  {
+    id: id(),
+    lampGroup: smallint('lamp_group').notNull(),
+    zoneId: uuid('zone_id').references(() => zones.id, { onDelete: 'cascade' }),
+    cabinetId: uuid('cabinet_id').references(() => cabinets.id, { onDelete: 'cascade' }),
+    segments: jsonb('segments').notNull(),
+    updatedAt: tsz('updated_at').notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('dimming_cabinet_uq').on(t.cabinetId, t.lampGroup).where(sql`cabinet_id is not null`),
+    uniqueIndex('dimming_zone_uq').on(t.zoneId, t.lampGroup).where(sql`cabinet_id is null and zone_id is not null`),
+    uniqueIndex('dimming_system_uq').on(t.lampGroup).where(sql`cabinet_id is null and zone_id is null`),
+  ],
+);
 
 export const deviceFieldMap = pgTable('device_field_map', {
   key: text('key').primaryKey(),

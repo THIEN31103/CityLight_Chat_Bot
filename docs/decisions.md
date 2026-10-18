@@ -38,6 +38,10 @@
 | S31 | M8 nhập Excel/CSV theo file mẫu (`Mã tủ, Nhánh, Thứ tự trụ, Vĩ độ, Kinh độ, Số đèn, Công suất, Nhóm đèn, Mã trụ cũ`): kiểm trước (dry run), lỗi theo dòng, **có lỗi thì không ghi gì**; tuyến = tủ → trụ theo thứ tự; nhập lại tủ + nhánh **thay** trụ tuyến đó. Chưa có dữ liệu thật: format có thể đổi khi Bảo có file. |
 | S32 | M8 quản trị: khu vực (quận → phường), khu quản lý, vùng (tâm vùng + gán tủ theo quận) — xóa bị chặn khi còn dùng; đăng ký tủ (từ tủ lạ hoặc nhập tay; ingest nhận ngay qua `cl:config` "registry"); sửa tủ; **ngừng sử dụng** = `cabinets.active=false` (ẩn ở mọi API qua `scopeWhere`, ingest/scheduler/notify bỏ qua, chặn lệnh, đóng cảnh báo, giữ lịch sử). Cấu hình: thời gian mất kết nối (30–900 s, ingest áp dụng ngay), tên nhóm đèn. Ánh xạ telemetry: chỉ xem + key lạ; sửa trên web để sau (đụng đường parse nóng). |
 | S33 | M8 sửa lỗi có từ M1: ingest ghi `cabinet_state.extra` bằng `JSON.stringify` qua postgres.js → lưu thành **chuỗi** JSON; nay truyền object, migration 0011 sửa dữ liệu cũ. |
+| S34 | M9 (Bảo duyệt A–E, 2026-10-18) hồ sơ tiết giảm theo **nhóm đèn**, 3 tầng: tủ > vùng (zone1 của tủ) > toàn hệ thống > mặc định có sẵn (không lưu). "Bỏ hồ sơ riêng" xóa tầng tủ / vùng để kế thừa lại. Hồ sơ hệ thống / vùng chỉ người có phạm vi toàn hệ thống sửa; hồ sơ tủ theo phạm vi khu vực. Quyền ghi `dimming.manage`. |
+| S35 | M9 kiểm hồ sơ dùng chung web + API (`shared/dimming.ts`): 1–5 thời đoạn liền nhau, mức 0–100 %, phút 0–2880 (qua nửa đêm) → sai = 422 nêu thời đoạn. Thời đoạn tắt tính như 100 %. |
+| S36 | M9 ước tính tiết kiệm theo **đèn GIS thật** của nhóm (tổng `rated_power_w`, đếm đèn thiếu công suất riêng) trong phạm vi người xem: kWh/đêm, kWh/năm (×365), đ/năm theo cấu hình giá điện (mặc định 2.000 đ/kWh, 0 = chỉ kWh). Không có đèn → "chưa có dữ liệu đèn", không đoán công suất. |
+| S37 | M9 gửi tiết giảm vẫn chặn: lô hàng loạt "dimming" và lệnh `SET_DIMMING` → 409 `capability_unsupported` nêu lý do; lô kiểm **trước** OTP (không phí mã). Tab Đèn hiện đèn thật, điều khiển đèn tắt tới khi có capability `smart_lamps`. |
 
 ## Đề xuất, chờ Bảo chốt
 

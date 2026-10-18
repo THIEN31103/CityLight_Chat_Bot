@@ -9,6 +9,7 @@ import { useSession } from '@/stores/session';
 import { fmtDuration, fmtNum, fmtTime } from '@/lib/utils';
 import { Badge, Button, Card, CardHeader, Checkbox, Empty, Input, KV, Select, Spinner, Unsupported, toast } from '@/components/ui';
 import { DimmingEditor } from '@/components/DimmingEditor';
+import { DIMMING_SOURCE } from '@/pages/DimmingPage';
 import { ErrorCodeBadge } from '@/components/ErrorHelp';
 
 type Detail = CabinetDetail & { cabinet: { districtName: string; wardName: string } };
@@ -75,12 +76,22 @@ export function DimmingTab({ detail }: { detail: Detail }) {
   const { data } = useQuery({ queryKey: ['cabinet-dimming', detail.cabinet.id, group], queryFn: () => api.cabinetDimming(detail.cabinet.id, group) });
   const [profile, setProfile] = useState<DimmingProfile | null>(null);
   useEffect(() => setProfile(data ?? null), [data]);
+  const fail = (e: unknown) => toast(e instanceof ApiError ? e.message : 'Lỗi', 'error');
   const save = useMutation({
     mutationFn: () => api.setCabinetDimming(detail.cabinet.id, profile!),
     onSuccess: () => {
       toast('Đã lưu hồ sơ tiết giảm cho tủ (chưa gửi được xuống thiết bị)', 'success');
       qc.invalidateQueries({ queryKey: ['cabinet-dimming', detail.cabinet.id] });
     },
+    onError: fail,
+  });
+  const drop = useMutation({
+    mutationFn: () => api.dropCabinetDimming(detail.cabinet.id, group),
+    onSuccess: () => {
+      toast('Tủ đã quay về hồ sơ vùng / hệ thống', 'success');
+      qc.invalidateQueries({ queryKey: ['cabinet-dimming', detail.cabinet.id] });
+    },
+    onError: fail,
   });
   const supported = detail.capabilities.includes('dimming');
   return (
@@ -89,7 +100,11 @@ export function DimmingTab({ detail }: { detail: Detail }) {
       <Card>
         <CardHeader
           title="Hồ sơ tiết giảm của tủ"
-          subtitle={profile?.inheritedFromZone ? 'Đang kế thừa cấu hình vùng — lưu để ghi đè riêng cho tủ' : 'Đang ghi đè riêng cho tủ'}
+          subtitle={
+            profile?.source
+              ? profile.source === 'cabinet' ? 'Đang dùng hồ sơ riêng của tủ' : `Đang kế thừa ${DIMMING_SOURCE[profile.source]} — lưu để ghi đè riêng cho tủ`
+              : profile?.inheritedFromZone ? 'Đang kế thừa cấu hình vùng — lưu để ghi đè riêng cho tủ' : 'Đang ghi đè riêng cho tủ'
+          }
           actions={
             <>
               <Select value={group} onChange={(e) => setGroup(Number(e.target.value) as LampGroup)}>
@@ -99,11 +114,16 @@ export function DimmingTab({ detail }: { detail: Detail }) {
                   </option>
                 ))}
               </Select>
+              {can && profile?.source === 'cabinet' && (
+                <Button size="sm" variant="outline" onClick={() => drop.mutate()} loading={drop.isPending}>
+                  Bỏ hồ sơ riêng
+                </Button>
+              )}
               {can && <Button size="sm" onClick={() => save.mutate()} loading={save.isPending} disabled={!profile}>Lưu</Button>}
             </>
           }
         />
-        <div className="p-4">{profile ? <DimmingEditor segments={profile.segments} onChange={(segments) => setProfile({ ...profile, segments })} disabled={!can} /> : <Spinner />}</div>
+        <div className="p-4">{profile ? <DimmingEditor segments={profile.segments} onChange={(segments) => setProfile({ ...profile, segments })} disabled={!can} estimate={profile.estimate} /> : <Spinner />}</div>
       </Card>
     </div>
   );

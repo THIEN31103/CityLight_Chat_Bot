@@ -85,6 +85,13 @@
       "when": 1792314179107,
       "tag": "0011_fix_state_extra_json",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792316255610,
+      "tag": "0012_dimming_levels",
+      "breakpoints": true
     }
   ]
 }

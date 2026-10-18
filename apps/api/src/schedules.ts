@@ -19,6 +19,7 @@ import { scopeWhere } from './scope';
 
 const uuid = z.string().uuid();
 const ZoneIds = z.array(uuid).min(1).max(50);
+export const DIMMING_UNSUPPORTED = 'Tủ hiện tại chưa hỗ trợ tiết giảm (cần firmware có lệnh tiết giảm và bộ điều khiển đèn thông minh); hồ sơ chỉ được lưu.';
 const BatchBody = z.object({ kind: z.enum(['schedule', 'time', 'dimming']), zoneIds: ZoneIds, otp: z.string().optional() });
 
 @Injectable()
@@ -135,8 +136,9 @@ export class SchedulesService {
 
   async createBatch(u: SessionUser, body: unknown, ip?: string): Promise<CommandBatch> {
     const b = BatchBody.parse(body);
+    // before the OTP: nothing could be sent anyway, so do not burn a code on it
+    if (b.kind === 'dimming') throw new ApiError(409, 'capability_unsupported', DIMMING_UNSUPPORTED);
     await this.auth.reauthTotp(u.id, b.otp);
-    if (b.kind === 'dimming') throw new ApiError(409, 'capability_unsupported', 'Thiết bị chưa hỗ trợ tiết giảm');
     const zones = await this.sql<{ name: string }[]>`SELECT name FROM zones WHERE id = ANY(${b.zoneIds}::uuid[]) ORDER BY name`;
     if (zones.length !== b.zoneIds.length) throw new ApiError(404, 'not_found', 'Không tìm thấy vùng');
     const cabs = await this.cabinetsOf(u, b.zoneIds);
@@ -158,8 +160,8 @@ export class SchedulesService {
 
   async retry(u: SessionUser, id: string, body: unknown, ip?: string) {
     const b = await this.ownBatch(u, id);
+    if (b.kind === 'dimming') throw new ApiError(409, 'capability_unsupported', DIMMING_UNSUPPORTED);
     await this.auth.reauthTotp(u.id, (body as { otp?: string })?.otp);
-    if (b.kind === 'dimming') throw new ApiError(409, 'capability_unsupported', 'Thiết bị chưa hỗ trợ tiết giảm');
     const cabs = await this.sql<{ id: string; ltid: string; fw_profile: FwProfile; online: boolean | null }[]>`
       SELECT c.id, c.ltid, c.fw_profile, s.online FROM command_batch_items i JOIN cabinets c ON c.id = i.cabinet_id
       LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE i.batch_id = ${b.id} AND i.result IN ('failed', 'offline')`;

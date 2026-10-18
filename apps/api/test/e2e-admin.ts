@@ -4,6 +4,8 @@
 // Users *@e2e-adm.citylight.test, test cabinet E2E.ADM01 (LTID E2EADM01), removed at the end. ~2 min.
 // Run: npm run e2e:admin
 import { hash } from '@node-rs/argon2';
+import { Redis } from 'ioredis';
+import { CONFIG_CHANNEL } from '@citylight/db/notify';
 import { createSql } from '@citylight/db';
 import { SimCabinet } from '../../simulator/src/cabinet';
 import { base32Decode } from '../src/totp';
@@ -14,6 +16,7 @@ const LTID = 'E2EADM01';
 const CODE = 'E2E.ADM01';
 const MQTT_URL = process.env.E2E_MQTT_URL ?? 'mqtt://localhost:1883';
 const sql = createSql(process.env.DATABASE_URL, 2);
+const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379');
 const checks: { name: string; ok: boolean }[] = [];
 const check = (name: string, ok: boolean, info?: string) => {
   checks.push({ name, ok });
@@ -38,7 +41,12 @@ async function main() {
     await sql`DELETE FROM management_units WHERE name LIKE 'E2E %'`;
     await sql`DELETE FROM zones WHERE name LIKE 'E2E %'`;
     await sql`DELETE FROM system_settings WHERE key = 'offline_after_s'`;
+    // deleted by SQL, not the API: tell the ingest worker, or it keeps the test cabinet as registered
+    await redis.publish(CONFIG_CHANNEL, JSON.stringify({ type: 'registry' }));
+    await redis.publish(CONFIG_CHANNEL, JSON.stringify({ type: 'settings' }));
   };
+  // the test renames lamp group 3: put the labels back as they were afterwards
+  const keepLabels = (await sql<{ value: unknown; updated_by: string | null }[]>`SELECT value, updated_by FROM system_settings WHERE key = 'lamp_group_labels'`)[0];
   await cleanup();
   await sql`DELETE FROM users WHERE email LIKE ${'%@' + DOMAIN}`;
   const org = (await sql<{ id: string }[]>`SELECT id FROM organizations LIMIT 1`)[0]!.id;
@@ -142,6 +150,8 @@ async function main() {
   } finally {
     await sim.stop().catch(() => undefined);
     await cleanup();
+    if (keepLabels) await sql`UPDATE system_settings SET value = ${sql.json(keepLabels.value as never)}, updated_by = ${keepLabels.updated_by} WHERE key = 'lamp_group_labels'`;
+    else await sql`DELETE FROM system_settings WHERE key = 'lamp_group_labels'`;
     await sql`DELETE FROM users WHERE email LIKE ${'%@' + DOMAIN}`;
     // put the ingest worker back on the default offline delay
     await fetch('http://localhost:3000/api/v1/health').catch(() => undefined);

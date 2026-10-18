@@ -1,7 +1,7 @@
 // MSW handlers implementing the /api/v1 contract of docs/spec.md section 11 against the in-browser mock DB.
 import { http, HttpResponse, delay, type PathParams } from 'msw';
 import type { Alarm, CommandType, DimmingProfile, Incident, LampGroup, Schedule, Thresholds, User } from '@citylight/shared';
-import { DEFAULT_FIELD_MAP, categoryForAlarm } from '@citylight/shared';
+import { DEFAULT_FIELD_MAP, categoryForAlarm, estimateDimming, validateDimming } from '@citylight/shared';
 import {
   MockApiError,
   batchItems,
@@ -70,6 +70,27 @@ const notify = {
   zalo: { available: false },
   email: { available: false },
 };
+
+// Dimming (M9): cabinet > zone > system > default, with a fake lamp count (20 × 150 W per cabinet) for the estimate.
+const zoneDimming = new Map<string, DimmingProfile>();
+function mockEstimate(segments: DimmingProfile['segments'], cabs: number) {
+  const lamps = cabs * 20;
+  return { ...estimateDimming(segments, lamps, lamps * 150, 2000), ratedW: lamps * 150, pricePerKwh: 2000, lampsWithoutPower: 0 };
+}
+function levelDimmingOf(group: LampGroup, zoneId: string | null): DimmingProfile {
+  const own = zoneId ? zoneDimming.get(`${zoneId}:${group}`) : undefined;
+  const sys = groupDimming.get(group);
+  const p = own ?? sys ?? defaultDimming(group);
+  const source = own ? 'zone' : sys && !sys.inheritedFromZone ? 'system' : 'default';
+  const cabs = zoneId ? cabinets.filter((c) => c.zone1Id === zoneId).length : cabinets.length;
+  return { lampGroup: group, segments: p.segments, source, inheritedFromZone: zoneId ? source !== 'zone' : source === 'default', estimate: mockEstimate(p.segments, cabs) };
+}
+function cabinetDimmingOf(id: string, group: LampGroup): DimmingProfile {
+  const own = dimming.get(`${id}:${group}`);
+  if (own) return { ...own, source: 'cabinet', inheritedFromZone: false, estimate: mockEstimate(own.segments, 1) };
+  const up = levelDimmingOf(group, cabinetById.get(id)?.zone1Id ?? null);
+  return { ...up, inheritedFromZone: true, estimate: mockEstimate(up.segments, 1) };
+}
 
 function problem(status: number, code: string, detail: string) {
   return HttpResponse.json({ type: `https://citylight.local/errors/${code}`, title: code, status, detail, code }, { status });
@@ -314,16 +335,23 @@ export const handlers = [
   })),
   http.get(`${API}/cabinets/:id/dimming`, wrap(({ params, request }: { params: Record<string, string>; request: Request }) => {
     const group = Number(new URL(request.url).searchParams.get('group') ?? 0) as LampGroup;
-    const key = `${params.id}:${group}`;
-    return HttpResponse.json(dimming.get(key) ?? { ...groupDimming.get(group)!, inheritedFromZone: true });
+    return HttpResponse.json(cabinetDimmingOf(params.id!, group));
   })),
   http.put(`${API}/cabinets/:id/dimming`, wrap(async ({ params, request }: { params: Record<string, string>; request: Request }) => {
     const u = requireUser();
     const body = (await request.json()) as DimmingProfile;
-    dimming.set(`${params.id}:${body.lampGroup}`, { ...body, inheritedFromZone: false });
+    const errors = validateDimming(body.segments);
+    if (errors.length) return problem(422, 'invalid_profile', errors.join('; '));
+    const group = (body.lampGroup ?? 0) as LampGroup;
+    dimming.set(`${params.id}:${group}`, { lampGroup: group, segments: body.segments, inheritedFromZone: false });
     const c = cabinetById.get(params.id!)!;
     addLog(u.email, 'Lưu hồ sơ tiết giảm', 'cabinet', `${c.code} - ${c.name}`, null, 'Chưa gửi xuống tủ (thiết bị chưa hỗ trợ)');
-    return HttpResponse.json(dimming.get(`${params.id}:${body.lampGroup}`));
+    return HttpResponse.json(cabinetDimmingOf(params.id!, group));
+  })),
+  http.delete(`${API}/cabinets/:id/dimming`, wrap(({ params, request }: { params: Record<string, string>; request: Request }) => {
+    requireUser();
+    dimming.delete(`${params.id}:${Number(new URL(request.url).searchParams.get('group') ?? 0)}`);
+    return new HttpResponse(null, { status: 204 });
   })),
   http.get(`${API}/cabinets/:id/alarms`, wrap(({ params, request }: { params: Record<string, string>; request: Request }) => {
     const limit = Number(new URL(request.url).searchParams.get('limit') ?? 20);
@@ -369,6 +397,7 @@ export const handlers = [
   http.post(`${API}/command-batches`, wrap(async ({ request }: { request: Request }) => {
     const u = requireUser();
     const body = (await request.json()) as { kind: 'schedule' | 'dimming' | 'time'; zoneIds: string[] };
+    if (body.kind === 'dimming') return problem(409, 'capability_unsupported', 'Tủ hiện tại chưa hỗ trợ tiết giảm (cần firmware có lệnh tiết giảm và bộ điều khiển đèn thông minh); hồ sơ chỉ được lưu.');
     const ids = cabinets.filter((c) => body.zoneIds.includes(c.zone1Id ?? '') || body.zoneIds.includes(c.zone2Id ?? '')).map((c) => c.id);
     const scope = zones.filter((z) => body.zoneIds.includes(z.id)).map((z) => z.name).join(', ');
     return HttpResponse.json(createBatch(body.kind, scope, ids, u.email), { status: 202 });
@@ -519,15 +548,26 @@ export const handlers = [
     addLog(u.email, 'Lưu lịch vùng', 'zone', z.name, null, body.source === 'astronomical' ? 'Lịch thiên văn' : `${body.on1} → ${body.off1}`);
     return HttpResponse.json(body);
   })),
-  http.get(`${API}/dimming-profiles/:group`, wrap(({ params }: { params: Record<string, string> }) =>
-    HttpResponse.json(groupDimming.get(Number(params.group) as LampGroup) ?? defaultDimming(Number(params.group) as LampGroup)),
+  http.get(`${API}/dimming-profiles/:group`, wrap(({ params, request }: { params: Record<string, string>; request: Request }) =>
+    HttpResponse.json(levelDimmingOf(Number(params.group) as LampGroup, new URL(request.url).searchParams.get('zoneId'))),
   )),
   http.put(`${API}/dimming-profiles/:group`, wrap(async ({ params, request }: { params: Record<string, string>; request: Request }) => {
     const u = requireUser();
+    const group = Number(params.group) as LampGroup;
+    const zoneId = new URL(request.url).searchParams.get('zoneId');
     const body = (await request.json()) as DimmingProfile;
-    groupDimming.set(Number(params.group) as LampGroup, body);
-    addLog(u.email, 'Lưu hồ sơ tiết giảm nhóm', 'dimming', `Nhóm ${params.group}`, null, null);
-    return HttpResponse.json(body);
+    const errors = validateDimming(body.segments);
+    if (errors.length) return problem(422, 'invalid_profile', errors.join('; '));
+    const p = { lampGroup: group, segments: body.segments, inheritedFromZone: false };
+    if (zoneId) zoneDimming.set(`${zoneId}:${group}`, p);
+    else groupDimming.set(group, p);
+    addLog(u.email, 'Lưu hồ sơ tiết giảm', zoneId ? 'zone' : 'system', zoneId ? `Vùng ${zones.find((z) => z.id === zoneId)?.name}` : 'Toàn hệ thống', null, null);
+    return HttpResponse.json(levelDimmingOf(group, zoneId));
+  })),
+  http.delete(`${API}/dimming-profiles/:group`, wrap(({ params, request }: { params: Record<string, string>; request: Request }) => {
+    requireUser();
+    zoneDimming.delete(`${new URL(request.url).searchParams.get('zoneId')}:${params.group}`);
+    return new HttpResponse(null, { status: 204 });
   })),
 
   // ---------- Logs ----------
@@ -583,7 +623,7 @@ export const handlers = [
     ]),
   )),
   http.get(`${API}/field-map`, wrap(() => HttpResponse.json({ entries: DEFAULT_FIELD_MAP, unknownKeys: [] }))),
-  http.get(`${API}/settings`, wrap(() => HttpResponse.json({ offlineAfterS: 60, lampGroupLabels: { 0: 'Đèn chính', 1: 'Đèn giao lộ', 2: 'Đèn trên cầu', 3: 'Nhóm mở rộng' }, updatedAt: null, updatedBy: null }))),
+  http.get(`${API}/settings`, wrap(() => HttpResponse.json({ offlineAfterS: 60, pricePerKwh: 2000, lampGroupLabels: { 0: 'Đèn chính', 1: 'Đèn giao lộ', 2: 'Đèn trên cầu', 3: 'Nhóm mở rộng' }, updatedAt: null, updatedBy: null }))),
   http.get(`${API}/alarm-rules`, wrap(() =>
     HttpResponse.json([
       { type: 'offline', severity: 'critical', condition: 'Không có frame > 60 s', enabled: true },

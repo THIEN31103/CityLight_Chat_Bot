@@ -168,6 +168,7 @@ export interface ImportReport {
 export interface SystemSettings {
   offlineAfterS: number;
   lampGroupLabels: Record<string, string>;
+  pricePerKwh?: number;
   updatedAt: string | null;
   updatedBy: string | null;
 }
@@ -314,7 +315,8 @@ export const api = {
   setSchedule: (id: string, s: Schedule) => req<Command>('PUT', `/cabinets/${id}/schedule`, s),
   setThresholds: (id: string, t: Thresholds) => req<Thresholds>('PUT', `/cabinets/${id}/thresholds`, t),
   cabinetDimming: (id: string, group: LampGroup) => req<DimmingProfile>('GET', `/cabinets/${id}/dimming${qs({ group })}`),
-  setCabinetDimming: (id: string, p: DimmingProfile) => req<DimmingProfile>('PUT', `/cabinets/${id}/dimming`, p),
+  setCabinetDimming: (id: string, p: DimmingProfile) => req<DimmingProfile>('PUT', `/cabinets/${id}/dimming`, { lampGroup: p.lampGroup, segments: p.segments }),
+  dropCabinetDimming: (id: string, group: LampGroup) => req<void>('DELETE', `/cabinets/${id}/dimming${qs({ group })}`),
   cabinetAlarms: (id: string, limit = 20) => req<Alarm[]>('GET', `/cabinets/${id}/alarms${qs({ limit })}`),
   cabinetCommands: (id: string) => req<Command[]>('GET', `/cabinets/${id}/commands`),
   cabinetLamps: (id: string) => req<LampItem[]>('GET', `/cabinets/${id}/lamps`),
@@ -363,8 +365,10 @@ export const api = {
   // schedules / dimming
   zoneSchedule: (id: string) => req<Schedule>('GET', `/zones/${id}/schedule`),
   setZoneSchedule: (id: string, s: Schedule) => req<Schedule>('PUT', `/zones/${id}/schedule`, s),
-  groupDimming: (g: LampGroup) => req<DimmingProfile>('GET', `/dimming-profiles/${g}`),
-  setGroupDimming: (g: LampGroup, p: DimmingProfile) => req<DimmingProfile>('PUT', `/dimming-profiles/${g}`, p),
+  // zoneId = zone level, none = whole system (M9)
+  groupDimming: (g: LampGroup, zoneId?: string) => req<DimmingProfile>('GET', `/dimming-profiles/${g}${qs({ zoneId })}`),
+  setGroupDimming: (g: LampGroup, p: DimmingProfile, zoneId?: string) => req<DimmingProfile>('PUT', `/dimming-profiles/${g}${qs({ zoneId })}`, { segments: p.segments }),
+  dropGroupDimming: (g: LampGroup, zoneId: string) => req<void>('DELETE', `/dimming-profiles/${g}${qs({ zoneId })}`),
 
   // logs
   activityLogs: (p: { user?: string; q?: string; from?: string; to?: string; page?: number; size?: number }) => req<Page<ActivityLog>>('GET', `/logs/activity${qs(p)}`),
@@ -392,7 +396,7 @@ export const api = {
   registerCabinet: (b: CabinetInput) => req<{ id: string }>('POST', '/cabinets', b),
   decommissionCabinet: (id: string) => req<void>('POST', `/cabinets/${id}/decommission`),
   settings: () => req<SystemSettings>('GET', '/settings'),
-  saveSettings: (b: { offlineAfterS: number; lampGroupLabels: Record<string, string> }) => req<SystemSettings>('PUT', '/settings', b),
+  saveSettings: (b: { offlineAfterS: number; lampGroupLabels: Record<string, string>; pricePerKwh?: number }) => req<SystemSettings>('PUT', '/settings', b),
   alarmRules: () => req<AlarmRule[]>('GET', '/alarm-rules'),
   systemStats: () => req<SystemStats>('GET', '/system/stats'),
 };

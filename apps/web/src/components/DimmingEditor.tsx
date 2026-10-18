@@ -1,14 +1,15 @@
 import { useMemo } from 'react';
-import type { DimmingSegment } from '@citylight/shared';
-import { minutesToHhmm } from '@citylight/shared';
+import type { DimmingProfile, DimmingSegment } from '@citylight/shared';
+import { estimateDimming, minutesToHhmm } from '@citylight/shared';
 import { EChart } from './EChart';
 import { Checkbox } from './ui';
 
 const MIN = 1020; // 17:00
 const MAX = 1800; // 06:00 next day
 
-/** 5 chained dimming segments: segment k starts where k-1 ends; levels 0–100 %. Shows HH:MM, never raw minutes. */
-export function DimmingEditor({ segments, onChange, disabled, ratedKw = 10 }: { segments: DimmingSegment[]; onChange: (s: DimmingSegment[]) => void; disabled?: boolean; ratedKw?: number }) {
+/** 5 chained dimming segments: segment k starts where k-1 ends; levels 0–100 %. Shows HH:MM, never raw minutes.
+ *  `estimate` (from the API) carries the real lamp power of the group; savings are recomputed here while dragging. */
+export function DimmingEditor({ segments, onChange, disabled, estimate }: { segments: DimmingSegment[]; onChange: (s: DimmingSegment[]) => void; disabled?: boolean; estimate?: DimmingProfile['estimate'] }) {
   const setSeg = (i: number, patch: Partial<DimmingSegment>) => {
     const next = segments.map((s) => ({ ...s }));
     Object.assign(next[i]!, patch);
@@ -34,7 +35,11 @@ export function DimmingEditor({ segments, onChange, disabled, ratedKw = 10 }: { 
       savedPct: full ? (1 - used / full) * 100 : 0,
       option: {
         grid: { left: 40, right: 16, top: 16, bottom: 28 },
-        tooltip: { trigger: 'axis', valueFormatter: (v: number) => `${v}%` },
+        tooltip: {
+          trigger: 'axis',
+          // header in HH:MM (not raw minutes); a step edge shows both levels
+          formatter: (ps: { value: [number, number] }[]) => `${minutesToHhmm(ps[0]!.value[0])}: ${ps.map((p) => `${p.value[1]}%`).join(' → ')}`,
+        },
         xAxis: { type: 'value', min: MIN, max: MAX, interval: 60, axisLabel: { formatter: (v: number) => minutesToHhmm(v) } },
         yAxis: { type: 'value', min: 0, max: 100, axisLabel: { formatter: '{value}%' } },
         series: [{ type: 'line', step: false, areaStyle: { opacity: 0.2 }, data: pts, showSymbol: false, lineStyle: { color: '#d97706' }, itemStyle: { color: '#d97706' } }],
@@ -42,7 +47,8 @@ export function DimmingEditor({ segments, onChange, disabled, ratedKw = 10 }: { 
     };
   }, [segments]);
 
-  const totalHours = segments.reduce((s, x) => s + (x.endMin - x.startMin) / 60, 0);
+  const est = estimate ? estimateDimming(segments, estimate.lamps, estimate.ratedW, estimate.pricePerKwh) : null;
+  const n = (v: number) => v.toLocaleString('vi-VN');
 
   return (
     <div className="space-y-4">
@@ -104,7 +110,15 @@ export function DimmingEditor({ segments, onChange, disabled, ratedKw = 10 }: { 
           <span>
             Tiết kiệm ước tính: <b className="text-st-on">{savedPct.toFixed(1)}%</b>
           </span>
-          <span className="text-subtle">≈ {((savedPct / 100) * ratedKw * totalHours).toFixed(1)} kWh/đêm/tủ (giả định {ratedKw} kW)</span>
+          {est && estimate && (estimate.lamps === 0 ? (
+            <span className="text-subtle">Chưa có dữ liệu đèn nhóm này (nhập trụ / đèn ở Bản đồ) — chưa ước tính được kWh</span>
+          ) : (
+            <span className="text-subtle">
+              {n(est.lamps)} đèn · {n(est.ratedKw)} kW → ≈ <b className="text-fg">{n(est.kwhPerNight)} kWh/đêm</b> · {n(est.kwhPerYear)} kWh/năm
+              {est.vndPerYear !== null && <> · <b className="text-fg">{n(est.vndPerYear)} đ/năm</b> (giá {n(estimate.pricePerKwh!)} đ/kWh)</>}
+              {estimate.lampsWithoutPower > 0 && <> · {n(estimate.lampsWithoutPower)} đèn chưa có công suất</>}
+            </span>
+          ))}
         </div>
       </div>
     </div>

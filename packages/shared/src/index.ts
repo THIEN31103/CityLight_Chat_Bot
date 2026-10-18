@@ -9,3 +9,4 @@ export * from './rules';
 export * from './schedule';
 export * from './incidents';
 export * from './gis';
+export * from './dimming';

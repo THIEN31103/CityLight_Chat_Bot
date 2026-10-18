@@ -197,7 +197,12 @@ export interface DimmingSegment {
 export interface DimmingProfile {
   lampGroup: LampGroup;
   segments: DimmingSegment[];
+  /** true when this level has no profile of its own and shows the one above it */
   inheritedFromZone: boolean;
+  /** where the segments come from (M9): cabinet > zone > system > built-in default */
+  source?: 'cabinet' | 'zone' | 'system' | 'default';
+  /** savings for the real GIS lamps of this group (M9) */
+  estimate?: import('./dimming').DimmingEstimate & { ratedW: number; pricePerKwh: number | null; lampsWithoutPower: number };
 }
 
 // ---------- Commands ----------

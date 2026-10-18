@@ -34,10 +34,12 @@ const CabinetBody = z.object({
 });
 const CabinetPatch = CabinetBody.partial().omit({ fwProfile: true }).extend({ fwProfile: z.enum(['v2-1307ebc', 'v2-current', 'v3']).optional() });
 
-export const SETTING_DEFAULTS = { offline_after_s: OFFLINE_AFTER_MS / 1000, lamp_group_labels: LAMP_GROUP_LABELS as Record<string, string> };
+export const SETTING_DEFAULTS = { offline_after_s: OFFLINE_AFTER_MS / 1000, lamp_group_labels: LAMP_GROUP_LABELS as Record<string, string>, price_per_kwh: 2000 };
 const SettingsBody = z.object({
   offlineAfterS: z.number().int().min(30).max(900),
   lampGroupLabels: z.record(z.enum(['0', '1', '2', '3']), z.string().trim().min(1).max(40)),
+  /** đ/kWh for the dimming savings estimate (M9); 0 = show kWh only; omitted = unchanged */
+  pricePerKwh: z.number().int().min(0).max(100_000).optional(),
 });
 
 @Injectable()
@@ -278,6 +280,7 @@ export class AdminService {
     return {
       offlineAfterS: Number(v.offline_after_s ?? SETTING_DEFAULTS.offline_after_s),
       lampGroupLabels: { ...SETTING_DEFAULTS.lamp_group_labels, ...(v.lamp_group_labels ?? {}) },
+      pricePerKwh: Number(v.price_per_kwh ?? SETTING_DEFAULTS.price_per_kwh),
       updatedAt: last?.updated_at.toISOString() ?? null, updatedBy: last?.updated_by ?? null,
     };
   }
@@ -285,7 +288,9 @@ export class AdminService {
   async saveSettings(u: SessionUser, body: unknown, ip?: string) {
     const b = SettingsBody.parse(body);
     await this.sql.begin(async (tx) => {
-      for (const [key, value] of [['offline_after_s', b.offlineAfterS], ['lamp_group_labels', b.lampGroupLabels]] as const) {
+      const items: [string, unknown][] = [['offline_after_s', b.offlineAfterS], ['lamp_group_labels', b.lampGroupLabels]];
+      if (b.pricePerKwh !== undefined) items.push(['price_per_kwh', b.pricePerKwh]);
+      for (const [key, value] of items) {
         await tx`INSERT INTO system_settings (key, value, updated_at, updated_by) VALUES (${key}, ${tx.json(value as never)}, now(), ${u.email})
                  ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now(), updated_by = excluded.updated_by`;
       }

@@ -547,12 +547,14 @@ function SettingsAdmin() {
   const { data, isLoading } = useQuery({ queryKey: ['settings'], queryFn: api.settings });
   const [offline, setOffline] = useState<number | null>(null);
   const [labels, setLabels] = useState<Record<string, string> | null>(null);
+  const [price, setPrice] = useState<number | null>(null);
   const save = useMutation({
-    mutationFn: () => api.saveSettings({ offlineAfterS: offline ?? data!.offlineAfterS, lampGroupLabels: labels ?? data!.lampGroupLabels }),
+    mutationFn: () => api.saveSettings({ offlineAfterS: offline ?? data!.offlineAfterS, lampGroupLabels: labels ?? data!.lampGroupLabels, pricePerKwh: price ?? data!.pricePerKwh }),
     onSuccess: (d) => {
       qc.setQueryData(['settings'], d);
       setOffline(null);
       setLabels(null);
+      setPrice(null);
       toast('Đã lưu cấu hình, áp dụng ngay', 'success');
     },
     onError: errToast,
@@ -567,6 +569,9 @@ function SettingsAdmin() {
           <Field label="Coi tủ mất kết nối sau (giây, 30–900)">
             <Input type="number" min={30} max={900} value={offline ?? data.offlineAfterS} onChange={(e) => setOffline(Number(e.target.value))} />
           </Field>
+          <Field label="Giá điện để ước tính tiết giảm (đ/kWh, 0 = chỉ hiện kWh)">
+            <Input type="number" min={0} max={100000} step={50} value={price ?? data.pricePerKwh ?? 2000} onChange={(e) => setPrice(Number(e.target.value))} />
+          </Field>
           <div className="text-sm font-medium">Tên nhóm đèn</div>
           {['0', '1', '2', '3'].map((k) => (
             <Field key={k} label={`Nhóm ${k}`}>
@@ -574,7 +579,7 @@ function SettingsAdmin() {
             </Field>
           ))}
           <p className="text-xs text-subtle">Tốc độ gửi lệnh, thời gian chờ ack / xác nhận, thời gian lưu dữ liệu đặt bằng biến môi trường của worker (xem README).</p>
-          <Button loading={save.isPending} disabled={offline === null && labels === null} onClick={() => save.mutate()}>Lưu</Button>
+          <Button loading={save.isPending} disabled={offline === null && labels === null && price === null} onClick={() => save.mutate()}>Lưu</Button>
         </div>
       </Card>
     </>
