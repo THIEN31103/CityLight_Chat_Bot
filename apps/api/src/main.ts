@@ -19,12 +19,14 @@ import { UsersModule } from './users';
 })
 class AppModule {}
 
-/** Trust X-Forwarded-For only behind a known proxy (Caddy on the VPS): TRUST_PROXY=true | IP/CIDR list | hop count. */
-function trustProxy(): boolean | string | number {
+/** Trust X-Forwarded-For only behind a known proxy (Caddy on the VPS): TRUST_PROXY=true | IP/CIDR list. */
+function trustProxy(): boolean | string {
   const v = process.env.TRUST_PROXY;
   if (!v || v === 'false') return false; // otherwise anyone can fake their IP and dodge the login rate limit
   if (v === 'true') return true;
-  return /^\d+$/.test(v) ? Number(v) : v;
+  // fastify >= 5.12 turns a hop count into "trust nobody"; fail loudly instead of silently.
+  if (/^\d+$/.test(v)) throw new Error('TRUST_PROXY: hop count is not supported, use the proxy IP/CIDR (e.g. 127.0.0.1)');
+  return v;
 }
 
 const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter({ trustProxy: trustProxy(), bodyLimit: 256 * 1024 }), {

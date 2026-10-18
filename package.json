@@ -31,5 +31,8 @@
     "@types/node": "^22.20.5",
     "tsx": "^4.23.15",
     "vitest": "^2.1.9"
+  },
+  "overrides": {
+    "fastify": "5.12.7"
   }
 }
