@@ -18,13 +18,14 @@ import { FavoritesModule } from './favorites';
 import { GisModule } from './gis';
 import { IncidentsModule, MAX_PHOTO_BYTES } from './incidents';
 import { InfraModule } from './infra';
+import { LogsModule } from './logs';
 import { RealtimeModule } from './realtime';
 import { SchedulesModule } from './schedules';
 import { SystemModule } from './system';
 import { UsersModule } from './users';
 
 @Module({
-  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, FavoritesModule, AlarmsModule, AlarmConfigModule, SchedulesModule, DimmingModule, IncidentsModule, GisModule, AdminModule, UsersModule, SystemModule, RealtimeModule],
+  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, FavoritesModule, AlarmsModule, AlarmConfigModule, SchedulesModule, DimmingModule, IncidentsModule, GisModule, AdminModule, UsersModule, LogsModule, SystemModule, RealtimeModule],
   providers: [{ provide: APP_FILTER, useClass: ProblemFilter }],
 })
 class AppModule {}

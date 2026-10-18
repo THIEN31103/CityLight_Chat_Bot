@@ -153,6 +153,18 @@ async function main() {
       SELECT user_id, action FROM activity_logs WHERE user_id = ANY(${[uid('admin'), uid('opx')]}::uuid[]) AND action LIKE '%tiết giảm%'`;
     const n = (a: string) => logs.filter((l) => l.action === a).length;
     check('Nhật ký: 3 lần lưu, 2 lần bỏ hồ sơ riêng', n('Lưu hồ sơ tiết giảm') === 3 && n('Bỏ hồ sơ tiết giảm riêng') === 2, `${n('Lưu hồ sơ tiết giảm')}/${n('Bỏ hồ sơ tiết giảm riêng')}`);
+
+    // ---------- activity log API (GET /logs/activity) ----------
+    const la = await admin.get(`/logs/activity?q=${encodeURIComponent('tiết giảm')}&size=50`);
+    const emails = new Set((la.data.items as { userEmail: string }[]).map((x) => x.userEmail));
+    check('Nhật ký thao tác (API): admin thấy thao tác của mọi người, lọc theo nội dung',
+      la.status === 200 && la.data.total >= 5 && emails.has(`admin@${DOMAIN}`) && emails.has(`opx@${DOMAIN}`), `${la.data.total} dòng`);
+    const lx = await opx.get('/logs/activity?size=50');
+    check('Điều hành theo khu vực chỉ thấy thao tác của chính mình',
+      lx.status === 200 && lx.data.total >= 1 && (lx.data.items as { userEmail: string }[]).every((x) => x.userEmail === `opx@${DOMAIN}`));
+    const lu = await admin.get(`/logs/activity?user=${encodeURIComponent(`opx@${DOMAIN}`)}&from=${encodeURIComponent(new Date(Date.now() - 3600_000).toISOString())}`);
+    check('Lọc theo người + thời gian; giám sát → 403',
+      lu.data.total === lx.data.total && (await view.get('/logs/activity')).status === 403);
   } finally {
     await cleanup();
     await sql`DELETE FROM dimming_profiles WHERE cabinet_id IS NULL AND zone_id IS NULL AND lamp_group = ${G}`;

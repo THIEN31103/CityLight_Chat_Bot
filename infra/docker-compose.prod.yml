@@ -1,0 +1,54 @@
+# VPS overlay (M11): only MQTT 1883 and Caddy 80/443 are published; db / redis / api / EMQX dashboard
+# stay on the internal network (dashboard: ssh -L 18083:localhost:18083 is not available either, use
+# `docker compose exec emqx emqx ctl ...`). Web = static build served by Caddy, which proxies /api + /socket.io.
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml --env-file infra/.env --profile app up -d
+services:
+  emqx:
+    ports: !override
+      - "1883:1883"
+
+  db:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  api:
+    ports: !reset []
+    environment:
+      COOKIE_SECURE: "true"
+      # Caddy reaches the api from the compose network below
+      TRUST_PROXY: 172.30.0.0/24
+
+  notify-worker:
+    environment:
+      WEB_URL: https://${SITE_HOST:?set SITE_HOST in infra/.env}
+
+  caddy:
+    profiles: ["app"]
+    image: caddy:2.8.4-alpine
+    container_name: citylight-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_HOST: ${SITE_HOST:?set SITE_HOST in infra/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../web-dist:/srv/web:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api: { condition: service_started }
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  caddy-data:
+  caddy-config:

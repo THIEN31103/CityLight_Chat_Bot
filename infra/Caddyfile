@@ -1,0 +1,29 @@
+# VPS front door (M11): HTTPS via Let's Encrypt for SITE_HOST (a real domain, or <ip-with-dashes>.sslip.io
+# until there is one), API + Socket.IO to the api container, everything else = the web build (SPA).
+{$SITE_HOST} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+	handle /socket.io/* {
+		reverse_proxy api:3000
+	}
+	handle {
+		root * /srv/web
+		# hashed assets never change; index.html must always be fresh
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		header /index.html Cache-Control "no-cache"
+		file_server
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+}
