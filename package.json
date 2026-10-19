@@ -29,6 +29,7 @@
     "e2e:gis": "node --env-file=.env --import tsx apps/api/test/e2e-gis.ts",
     "e2e:admin": "node --env-file=.env --import tsx apps/api/test/e2e-admin.ts",
     "e2e:dimming": "node --env-file=.env --import tsx apps/api/test/e2e-dimming.ts",
+    "e2e:relocate": "node --env-file=.env --import tsx apps/api/test/e2e-relocate.ts",
     "db:seed": "npm run seed -w @citylight/db",
     "sim:register": "npm run register -w @citylight/simulator --",
     "dev:web:hybrid": "npm run dev:hybrid -w @citylight/web",

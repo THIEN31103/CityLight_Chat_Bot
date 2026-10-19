@@ -11,6 +11,7 @@ import { Badge, Button, Card, CardHeader, Checkbox, Empty, Input, KV, Select, Sp
 import { DimmingEditor } from '@/components/DimmingEditor';
 import { DIMMING_SOURCE } from '@/pages/DimmingPage';
 import { ErrorCodeBadge } from '@/components/ErrorHelp';
+import { RelocateGpsButton } from './RelocateGps';
 
 type Detail = CabinetDetail & { cabinet: { districtName: string; wardName: string } };
 
@@ -244,6 +245,10 @@ export function InfoTab({ detail, onLocate }: { detail: Detail; onLocate: (p: Ge
           <KV label="GPS thiết bị" value={s.gpsDevice ? `${s.gpsDevice.lat.toFixed(6)}, ${s.gpsDevice.lng.toFixed(6)}` : 'Chưa có fix GNSS'} />
           <KV label="Lệch" value={gpsDiff !== null && gpsDiff !== undefined ? <span className={gpsDiff > 200 ? 'text-st-offline' : ''}>{gpsDiff} m</span> : '—'} />
           <KV label="Zone 1 / Zone 2" value={`${c.zone1Id ?? '—'} / ${c.zone2Id ?? '—'}`} />
+        </div>
+        <div className="flex items-center justify-between gap-2 border-t px-4 py-2">
+          <span className="text-xs text-subtle">Vị trí trên bản đồ là tọa độ khai báo, không tự đổi theo GPS.</span>
+          <RelocateGpsButton cabinetId={c.id} label={`${c.code} - ${c.name}`} onLocate={onLocate} />
         </div>
       </Card>
       <Card>

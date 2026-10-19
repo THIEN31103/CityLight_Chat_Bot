@@ -196,7 +196,7 @@ function raw(topic: string, ltid: string | null, payload: string, parseError: st
   rawRows.push({ ts: new Date(), topic, ltid, payload, parse_error: parseError });
 }
 
-const unknownSeen = new Map<string, { imei: string | null; frames: number }>();
+const unknownSeen = new Map<string, { imei: string | null; frames: number; gps: { lat: number; lng: number } | null }>();
 
 // ---------------- alarms ----------------
 
@@ -273,9 +273,10 @@ async function onTelemetry(payload: string) {
   const rt = byLtid.get(t.ltid);
   if (!rt) {
     stats.unknown++;
-    const u = unknownSeen.get(t.ltid) ?? { imei: t.imei, frames: 0 };
+    const u = unknownSeen.get(t.ltid) ?? { imei: t.imei, frames: 0, gps: null };
     u.frames++;
     u.imei = t.imei ?? u.imei;
+    if (t.gps) u.gps = { lat: t.gps.lat, lng: t.gps.lng };
     unknownSeen.set(t.ltid, u);
     return;
   }
@@ -324,6 +325,7 @@ async function onTelemetry(payload: string) {
     ts: now, cabinet_id: rt.id, online: true, bus_status: t.busStatus, branch1_on: t.branch1On, branch2_on: t.branch2On, manual_mode: t.manualMode,
     v_l1: t.vL1, v_l2: t.vL2, v_l3: t.vL3, i_l1: t.iL1, i_l2: t.iL2, i_l3: t.iL3, pf_l1: t.pfL1, pf_l2: t.pfL2, pf_l3: t.pfL3, pf_total: t.pfTotal,
     p_total_kw: t.pTotalKw, leak_ma: t.leakMa, temp_c: t.tempC, battery_mv: t.batteryMv,
+    gps_lat: t.gps?.lat ?? null, gps_lng: t.gps?.lng ?? null,
     // objects, not JSON.stringify: postgres.js serialises them, a string would be stored as a JSON string
     extra: Object.keys(t.unknownKeys).length ? t.unknownKeys : null,
   });
@@ -457,9 +459,9 @@ async function flush() {
       const list = [...unknownSeen.entries()];
       unknownSeen.clear();
       for (const [ltid, u] of list) {
-        await sql`INSERT INTO unknown_devices (ltid, imei, frames) VALUES (${ltid}, ${u.imei}, ${u.frames})
+        await sql`INSERT INTO unknown_devices (ltid, imei, frames, gps) VALUES (${ltid}, ${u.imei}, ${u.frames}, ${geom(u.gps)})
                   ON CONFLICT (ltid) DO UPDATE SET last_seen_at = now(), frames = unknown_devices.frames + excluded.frames,
-                  imei = coalesce(excluded.imei, unknown_devices.imei)`;
+                  imei = coalesce(excluded.imei, unknown_devices.imei), gps = coalesce(excluded.gps, unknown_devices.gps)`;
       }
     }
     if (events.length) await publish({ type: 'cabinet.state', items: events });

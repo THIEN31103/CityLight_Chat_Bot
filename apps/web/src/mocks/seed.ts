@@ -349,6 +349,14 @@ for (const c of cabinets) {
     const v = t.v();
     newAlarm(c, t.type, t.msg(v), v, now - between(1, 300) * 60000, true);
     if (t.type === 'leak_current') s.leakMa = v;
+    // the device's fix really is v metres away (random direction), so the map line and the GPS dialog agree with E802
+    if (t.type === 'gps_drift') {
+      const a = r() * 2 * Math.PI;
+      s.gpsDevice = {
+        lat: c.location.lat + (v * Math.cos(a)) / 111_195,
+        lng: c.location.lng + (v * Math.sin(a)) / (111_195 * Math.cos((c.location.lat * Math.PI) / 180)),
+      };
+    }
   }
   const hist = Math.floor(r() * 4);
   for (let k = 0; k < hist; k++) {

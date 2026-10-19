@@ -10,3 +10,4 @@ export * from './schedule';
 export * from './incidents';
 export * from './gis';
 export * from './dimming';
+export * from './relocate';

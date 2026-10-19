@@ -1,7 +1,7 @@
 // MSW handlers implementing the /api/v1 contract of docs/spec.md section 11 against the in-browser mock DB.
 import { http, HttpResponse, delay, type PathParams } from 'msw';
-import type { Alarm, CommandType, DimmingProfile, Incident, LampGroup, Schedule, Thresholds, User } from '@citylight/shared';
-import { DEFAULT_FIELD_MAP, categoryForAlarm, estimateDimming, validateDimming } from '@citylight/shared';
+import type { Alarm, CommandType, DimmingProfile, GpsDriftItem, GpsSuggestion, Incident, LampGroup, Schedule, Thresholds, User } from '@citylight/shared';
+import { DEFAULT_FIELD_MAP, GPS_RELOCATE_WINDOW_MIN, categoryForAlarm, distanceM, estimateDimming, judgeGpsSuggestion, validateDimming } from '@citylight/shared';
 import {
   MockApiError,
   batchItems,
@@ -113,6 +113,14 @@ function wrap(fn: (info: Info) => Response | Promise<Response>) {
       throw e;
     }
   };
+}
+
+function mockGpsSuggestion(cabinetId: string): GpsSuggestion {
+  const c = cabinetById.get(cabinetId)!;
+  const st = states.get(cabinetId);
+  const gps = st?.online && st.gpsDevice ? st.gpsDevice : null;
+  const s = { samples: gps ? 180 : 0, spreadM: gps ? 8 : null, distanceM: gps ? Math.round(distanceM(c.location, gps)) : null };
+  return { declared: c.location, gps, ...s, windowMin: GPS_RELOCATE_WINDOW_MIN, ...judgeGpsSuggestion(s) };
 }
 
 function paginate<T>(items: T[], url: URL) {
@@ -307,6 +315,30 @@ export const handlers = [
     Object.assign(c, body);
     addLog(u.email, 'Cập nhật thông tin tủ', 'cabinet', `${c.code} - ${c.name}`, null, JSON.stringify(body));
     return HttpResponse.json(c);
+  })),
+  // GPS relocation (shared/relocate.ts): the mock has one fix per cabinet, treated as a steady 30-min median
+  http.get(`${API}/cabinets/:id/gps-suggestion`, wrap(({ params }: { params: Record<string, string> }) => HttpResponse.json(mockGpsSuggestion(params.id!)))),
+  http.post(`${API}/cabinets/:id/location-from-gps`, wrap(({ params }: { params: Record<string, string> }) => {
+    const u = requireUser();
+    if (!['admin'].includes(u.role)) return problem(403, 'forbidden', 'Bạn không có quyền thực hiện thao tác này');
+    const c = cabinetById.get(params.id!)!;
+    const s = mockGpsSuggestion(c.id);
+    if (!s.ok || !s.gps) return problem(409, 'gps_not_ready', s.reason ?? 'GPS chưa sẵn sàng');
+    const from = c.location;
+    c.location = s.gps;
+    for (const a of alarms) if (a.cabinetId === c.id && a.type === 'gps_drift' && a.active) Object.assign(a, { active: false, endedAt: new Date().toISOString() });
+    addLog(u.email, 'Cập nhật vị trí tủ theo GPS', 'cabinet', `${c.code} - ${c.name}`, JSON.stringify(from), JSON.stringify(s.gps));
+    return HttpResponse.json({ id: c.id, location: s.gps, movedM: s.distanceM });
+  })),
+  http.get(`${API}/map/gps-drift`, wrap(() => {
+    requireUser();
+    const items: GpsDriftItem[] = [];
+    for (const a of alarms) {
+      const g = a.active && a.type === 'gps_drift' ? states.get(a.cabinetId)?.gpsDevice : null;
+      const c = g && cabinetById.get(a.cabinetId);
+      if (g && c) items.push({ cabinetId: c.id, code: c.code, name: c.name, declared: c.location, gps: g, distanceM: Math.round(distanceM(c.location, g)) });
+    }
+    return HttpResponse.json(items);
   })),
   http.get(`${API}/cabinets/:id/telemetry`, wrap(({ params, request }: { params: Record<string, string>; request: Request }) => {
     const url = new URL(request.url);
@@ -618,8 +650,8 @@ export const handlers = [
   })),
   http.get(`${API}/devices/unknown`, wrap(() =>
     HttpResponse.json([
-      { ltid: 'CTY9001', firstSeenAt: new Date(Date.now() - 3600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 352, imei: '861234567890123' },
-      { ltid: 'CTY9002', firstSeenAt: new Date(Date.now() - 86400000).toISOString(), lastSeenAt: new Date(Date.now() - 600000).toISOString(), frames: 8120, imei: '861234567890456' },
+      { ltid: 'CTY9001', firstSeenAt: new Date(Date.now() - 3600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 352, imei: '861234567890123', gps: { lat: 10.7769401, lng: 106.7008765 } },
+      { ltid: 'CTY9002', firstSeenAt: new Date(Date.now() - 86400000).toISOString(), lastSeenAt: new Date(Date.now() - 600000).toISOString(), frames: 8120, imei: '861234567890456', gps: null },
     ]),
   )),
   http.get(`${API}/field-map`, wrap(() => HttpResponse.json({ entries: DEFAULT_FIELD_MAP, unknownKeys: [] }))),

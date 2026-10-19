@@ -2,8 +2,8 @@
 import { Controller, Get, Inject, Injectable, Module, Param, Query, Req } from '@nestjs/common';
 import type { PendingQuery, Row } from 'postgres';
 import { z } from 'zod';
-import type { CabinetState, CabinetStatus, CabinetSummary, FwProfile, MapStats, Schedule, TelemetryPoint } from '@citylight/shared';
-import { buildDiagnostics, capabilitiesFor, decodeRs485SelfTest, defaultSchedule, defaultThresholds, type HealthInput } from '@citylight/shared';
+import type { CabinetState, CabinetStatus, CabinetSummary, FwProfile, GpsDriftItem, GpsSuggestion, MapStats, Schedule, TelemetryPoint } from '@citylight/shared';
+import { GPS_RELOCATE_WINDOW_MIN, buildDiagnostics, capabilitiesFor, decodeRs485SelfTest, defaultSchedule, defaultThresholds, judgeGpsSuggestion, type HealthInput } from '@citylight/shared';
 import type { AuthedRequest } from './auth';
 import { ApiError } from './errors';
 import { SQL, type Sql } from './infra';
@@ -158,6 +158,51 @@ export class CabinetsService {
     return cid;
   }
 
+  /** Proposed position = median of the GPS fixes of the last window (shared/relocate.ts); nothing is changed here. */
+  async gpsSuggestion(scope: Scope, id: string): Promise<GpsSuggestion> {
+    return this.computeGpsSuggestion(await this.assertCabinet(scope, id));
+  }
+
+  async computeGpsSuggestion(cid: string): Promise<GpsSuggestion> {
+    const r = (
+      await this.sql<{ n: number; lat: number | null; lng: number | null; spread: number | null; dist: number | null; dlat: number; dlng: number }[]>`
+        WITH s AS (
+          SELECT gps_lat AS lat, gps_lng AS lng FROM telemetry
+          WHERE cabinet_id = ${cid} AND ts > now() - make_interval(mins => ${GPS_RELOCATE_WINDOW_MIN}::int)
+            AND gps_lat IS NOT NULL AND gps_lng IS NOT NULL
+        ), m AS (
+          SELECT count(*)::int AS n,
+                 percentile_cont(0.5) WITHIN GROUP (ORDER BY lat) AS lat,
+                 percentile_cont(0.5) WITHIN GROUP (ORDER BY lng) AS lng
+          FROM s
+        )
+        SELECT m.n, m.lat, m.lng,
+               (SELECT percentile_cont(0.9) WITHIN GROUP (ORDER BY ST_Distance(
+                  ST_SetSRID(ST_MakePoint(s.lng, s.lat), 4326)::geography, ST_SetSRID(ST_MakePoint(m.lng, m.lat), 4326)::geography)) FROM s) AS spread,
+               ST_Distance(ST_SetSRID(ST_MakePoint(m.lng, m.lat), 4326)::geography, c.location::geography) AS dist,
+               ST_Y(c.location) AS dlat, ST_X(c.location) AS dlng
+        FROM m, cabinets c WHERE c.id = ${cid}`
+    )[0];
+    if (!r) throw new ApiError(404, 'not_found', 'Không tìm thấy tủ');
+    const round = (v: number | null, f = 1) => (v === null ? null : Math.round(Number(v) * f) / f);
+    const gps = r.lat !== null && r.lng !== null ? { lat: round(r.lat, 1e7)!, lng: round(r.lng, 1e7)! } : null;
+    const s = { samples: r.n, spreadM: round(r.spread), distanceM: round(r.dist) };
+    return { declared: { lat: Number(r.dlat), lng: Number(r.dlng) }, gps, ...s, windowMin: GPS_RELOCATE_WINDOW_MIN, ...judgeGpsSuggestion(s) };
+  }
+
+  /** Cabinets with an open E802 (GPS far from the declared position), for the map overlay. */
+  async gpsDrift(scope: Scope): Promise<GpsDriftItem[]> {
+    const rows = await this.sql<{ id: string; code: string; name: string; lat: number; lng: number; glat: number; glng: number; dist: number }[]>`
+      SELECT DISTINCT ON (c.id) c.id, c.code, c.name, ST_Y(c.location) AS lat, ST_X(c.location) AS lng,
+             ST_Y(s.gps_device) AS glat, ST_X(s.gps_device) AS glng, ST_Distance(c.location::geography, s.gps_device::geography) AS dist
+      FROM alarms a JOIN cabinets c ON c.id = a.cabinet_id JOIN cabinet_state s ON s.cabinet_id = c.id
+      WHERE a.active AND a.type = 'gps_drift' AND s.gps_device IS NOT NULL AND ${scopeWhere(this.sql, scope)}
+      ORDER BY c.id`;
+    return rows.map((r) => ({
+      cabinetId: r.id, code: r.code, name: r.name, declared: { lat: r.lat, lng: r.lng }, gps: { lat: r.glat, lng: r.glng }, distanceM: Math.round(r.dist),
+    }));
+  }
+
   private async health(id: string): Promise<{ input: HealthInput; row: Record<string, unknown> }> {
     const rows = await this.sql<Record<string, unknown>[]>`
       SELECT c.*, ST_Y(c.location) AS lat, ST_X(c.location) AS lng, d.name AS district_name, w.name AS ward_name,
@@ -310,6 +355,7 @@ export class CabinetsController {
 
   @Get('map/cabinets') mapCabinets(@Req() r: AuthedRequest) { return this.svc.mapCabinets(r.user!.scope); }
   @Get('map/stats') stats(@Req() r: AuthedRequest) { return this.svc.stats(r.user!.scope); }
+  @Get('map/gps-drift') gpsDrift(@Req() r: AuthedRequest) { return this.svc.gpsDrift(r.user!.scope); }
   @Get('search') search(@Req() r: AuthedRequest, @Query('q') q = '') { return q.trim().length >= 2 ? this.svc.search(r.user!.scope, q.trim()) : []; }
   @Get('areas/tree') tree(@Req() r: AuthedRequest) { return this.svc.areaTree(r.user!.scope); }
   @Get('areas/:id/cabinets') areaCabinets(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.areaCabinets(r.user!.scope, id); }
@@ -327,6 +373,7 @@ export class CabinetsController {
   }
 
   @Get('cabinets/:id') detail(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.detail(r.user!.scope, id); }
+  @Get('cabinets/:id/gps-suggestion') gpsSuggestion(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.gpsSuggestion(r.user!.scope, id); }
   @Get('cabinets/:id/diagnostics') diagnostics(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.diagnostics(r.user!.scope, id); }
 
   @Get('cabinets/:id/telemetry')

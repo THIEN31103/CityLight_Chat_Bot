@@ -126,6 +126,7 @@ Chạy API + các worker (ingest, command, notify, scheduler) bằng Docker: `do
   Vận hành (kiểm nhanh, watchdog, backup/khôi phục, cập nhật, sự cố): [`docs/runbook.md`](docs/runbook.md). E2E trình duyệt: `npm run e2e:vps` (production, không đăng nhập), `npm run e2e:browser` (+ luồng đăng nhập trên web mock; site thật: `E2E_UI_URL`, `E2E_EMAIL`, `E2E_PASSWORD`, `E2E_TOTP_SECRET`, `E2E_CABINET`, `E2E_ALLOW_COMMANDS=1`).
   Xem DB bằng GUI (DBeaver/pgAdmin): db chỉ bind `127.0.0.1:5432` trên VPS → `ssh -i ~/.ssh/citylight_aws -N -L 15432:127.0.0.1:5432 ubuntu@13.55.91.187`, rồi nối `localhost:15432`, DB/user `citylight`, mật khẩu `POSTGRES_PASSWORD` trong `/opt/citylight/infra/.env`.
 - `npm run e2e:dimming` (cần api, ~10 s): hồ sơ 3 tầng + kế thừa, kiểm 422, quyền / phạm vi, ước tính khớp đèn nhập, giá điện, đồng bộ → 409, nhật ký. Dùng nhóm đèn 3; hồ sơ hệ thống nhóm 3 và các dòng cấu hình có sẵn được trả lại.
+- `npm run e2e:relocate` (cần api + ingest, ~1 phút): GPS thiết bị lạ, đề xuất vị trí theo GPS (ít điểm / GPS nhảy / đạt / đã khớp), quyền + phạm vi, hộp thoại cũ → 409, dời tủ + nhật ký, lớp lệch GPS trên bản đồ (S41).
 - Ảnh sự cố nằm trong volume Docker `uploads` (`/data/uploads` trong container api): **sao lưu cùng với DB**.
 - Không chạy các e2e có simulator liền nhau quá sát: tủ giả của bài trước mất kết nối sau 60 s và sinh cảnh báo / thông báo trong bài sau.
 - Các e2e đều đăng nhập: chạy cách bài rate limit của `e2e:api` ít nhất 1 phút (cùng IP, 20 lần/phút), nếu không sẽ bị 429.

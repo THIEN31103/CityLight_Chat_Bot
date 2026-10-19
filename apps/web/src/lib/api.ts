@@ -14,6 +14,8 @@ import type {
   DimmingProfile,
   FieldMapEntry,
   GeoPoint,
+  GpsDriftItem,
+  GpsSuggestion,
   Incident,
   LampGroup,
   ManagementUnit,
@@ -265,6 +267,8 @@ export interface UnknownDevice {
   firstSeenAt: string;
   lastSeenAt: string;
   frames: number;
+  /** last GPS fix the device sent, pre-fills the register form */
+  gps: GeoPoint | null;
 }
 
 export const api = {
@@ -310,6 +314,11 @@ export const api = {
   cabinets: (p: { page?: number; size?: number; status?: string; q?: string }) => req<Page<CabinetListItem>>('GET', `/cabinets${qs(p)}`),
   cabinet: (id: string) => req<CabinetDetail & { cabinet: { districtName: string; wardName: string } }>('GET', `/cabinets/${id}`),
   updateCabinet: (id: string, patch: Record<string, unknown>) => req<unknown>('PATCH', `/cabinets/${id}`, patch),
+  gpsSuggestion: (id: string) => req<GpsSuggestion>('GET', `/cabinets/${id}/gps-suggestion`),
+  /** `expected` = the point the dialog showed; the server refuses when GPS moved since */
+  relocateFromGps: (id: string, expected: GeoPoint) =>
+    req<{ id: string; location: GeoPoint; movedM: number }>('POST', `/cabinets/${id}/location-from-gps`, { expected }),
+  gpsDrift: () => req<GpsDriftItem[]>('GET', '/map/gps-drift'),
   telemetry: (id: string, metrics: string[], from: string, to: string) => req<TelemetryPoint[]>('GET', `/cabinets/${id}/telemetry${qs({ metrics: metrics.join(','), from, to, interval: 'auto' })}`),
   energy: (id: string, range: 'day' | '30d') => req<{ estimated: boolean; points: { label: string; kwh: number }[] }>('GET', `/cabinets/${id}/energy${qs({ range })}`),
   setSchedule: (id: string, s: Schedule) => req<Command>('PUT', `/cabinets/${id}/schedule`, s),

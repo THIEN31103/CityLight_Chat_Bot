@@ -4,7 +4,7 @@
 import { Body, Controller, Delete, Get, HttpCode, Inject, Injectable, Module, Param, Patch, Post, Put, Req } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
-import { DEFAULT_FIELD_MAP, LAMP_GROUP_LABELS, OFFLINE_AFTER_MS } from '@citylight/shared';
+import { DEFAULT_FIELD_MAP, GPS_RELOCATE_STALE_M, LAMP_GROUP_LABELS, OFFLINE_AFTER_MS, distanceM } from '@citylight/shared';
 import { SCHEDULES_CHANNEL } from '@citylight/db/batches';
 import { CONFIG_CHANNEL } from '@citylight/db/notify';
 import { RequirePerm, type AuthedRequest, type SessionUser } from './auth';
@@ -246,6 +246,27 @@ export class AdminService {
     return { id: cid };
   }
 
+  /**
+   * Move the declared position to the median of the recent GPS fixes, after a person confirmed it (shared/relocate.ts).
+   * The server recomputes the point: the client only sends what it showed, so a stale dialog is refused.
+   * The E802 alarm closes by itself on the next frames once ingest reloads the registry.
+   */
+  async relocateFromGps(u: SessionUser, id: string, body: unknown, ip?: string) {
+    const cid = await this.cabinets.assertCabinet(u.scope, id);
+    const b = z.object({ expected: Point.optional() }).parse(body ?? {});
+    const cur = (await this.sql<{ code: string }[]>`SELECT code FROM cabinets WHERE id = ${cid} AND organization_id = ${u.organizationId}`)[0];
+    if (!cur) throw new ApiError(404, 'not_found', 'Không tìm thấy tủ');
+    const s = await this.cabinets.computeGpsSuggestion(cid);
+    if (!s.ok || !s.gps) throw new ApiError(409, 'gps_not_ready', s.reason ?? 'GPS chưa đủ tin cậy để cập nhật vị trí');
+    if (b.expected && distanceM(b.expected, s.gps) > GPS_RELOCATE_STALE_M)
+      throw new ApiError(409, 'gps_changed', 'Vị trí GPS vừa thay đổi, mở lại hộp thoại để xem số mới');
+    await this.sql`UPDATE cabinets SET location = ST_SetSRID(ST_MakePoint(${s.gps.lng}, ${s.gps.lat}), 4326), updated_at = now() WHERE id = ${cid}`;
+    const value = { from: s.declared, to: s.gps, movedM: s.distanceM, samples: s.samples, spreadM: s.spreadM };
+    await this.log(u, 'Cập nhật vị trí tủ theo GPS', 'cabinet', cid, cur.code, JSON.stringify(value), ip);
+    await this.reload('registry');
+    return { id: cid, location: s.gps, movedM: s.distanceM };
+  }
+
   /** Decommission: hidden everywhere (scopeWhere), workers drop it, open alarms closed, history kept. */
   async setActive(u: SessionUser, id: string, active: boolean, ip?: string) {
     const cid = uuid.parse(id);
@@ -332,6 +353,8 @@ export class AdminController {
   register(@Req() r: AuthedRequest, @Body() b: unknown) { return this.svc.registerCabinet(r.user!, b, r.ip); }
   @Patch('cabinets/:id') @RequirePerm('admin.devices')
   update(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.updateCabinet(r.user!, id, b, r.ip); }
+  @Post('cabinets/:id/location-from-gps') @HttpCode(200) @RequirePerm('admin.devices')
+  relocate(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.relocateFromGps(r.user!, id, b, r.ip); }
   @Post('cabinets/:id/decommission') @HttpCode(204) @RequirePerm('admin.devices')
   decommission(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.setActive(r.user!, id, false, r.ip); }
   @Post('cabinets/:id/reactivate') @HttpCode(204) @RequirePerm('admin.devices')

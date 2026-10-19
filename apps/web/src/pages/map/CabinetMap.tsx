@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { ExpressionSpecification, GeoJSONSource, Map as MlMap, MapMouseEvent, PaddingOptions } from 'maplibre-gl';
-import type { CabinetStatus, CabinetSummary, GeoPoint } from '@citylight/shared';
+import type { CabinetStatus, CabinetSummary, GeoPoint, GpsDriftItem } from '@citylight/shared';
 import { api, type MapAssets, type PoleAsset } from '@/lib/api';
 import { useUi } from '@/stores/session';
 import { FONT_BOLD, FONT_REGULAR, resolveBasemap, type BasemapId } from './mapStyle';
@@ -56,6 +56,8 @@ interface Props {
   onMapClick?: (p: GeoPoint) => void;
   onMapDblClick?: () => void;
   onPoleDrag?: (pole: PoleAsset, p: GeoPoint) => void;
+  /** cabinets with an open E802: dashed line declared -> GPS fix, so a misplaced cabinet shows on the map */
+  gpsDrift?: GpsDriftItem[];
 }
 
 const HCMC: [number, number] = [106.7, 10.79];
@@ -272,11 +274,49 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
       paint: { 'circle-radius': 6, 'circle-color': '#2563eb', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 },
     });
 
+    // GPS drift (E802): orange dashed line from the declared position to the GPS fix + hollow dot + distance label
+    m.addSource('gps-drift', { type: 'geojson', data: EMPTY });
+    m.addLayer({
+      id: 'gps-drift-line',
+      type: 'line',
+      source: 'gps-drift',
+      filter: ['==', ['geometry-type'], 'LineString'],
+      paint: { 'line-color': '#ea580c', 'line-width': 2, 'line-dasharray': [2, 2] },
+    });
+    m.addLayer({
+      id: 'gps-drift-pt',
+      type: 'circle',
+      source: 'gps-drift',
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: { 'circle-radius': 6, 'circle-color': 'rgba(234,88,12,0.15)', 'circle-stroke-color': '#ea580c', 'circle-stroke-width': 2 },
+    });
+    m.addLayer({
+      id: 'gps-drift-label',
+      type: 'symbol',
+      source: 'gps-drift',
+      minzoom: 13,
+      filter: ['==', ['geometry-type'], 'Point'],
+      layout: { 'text-field': ['get', 'label'], 'text-font': f.regular, 'text-size': 11, 'text-offset': [0, 1.3], 'text-anchor': 'top' },
+      paint: { 'text-color': '#ea580c', ...halo },
+    });
+
     applyLayerVisibility(m);
     applySelected(m);
     applyMeasure(m);
     applyDraft(m);
+    applyGpsDrift(m);
     void loadPoles(m);
+  }
+
+  function applyGpsDrift(m: MlMap) {
+    const list = propsRef.current.gpsDrift ?? [];
+    (m.getSource('gps-drift') as GeoJSONSource | undefined)?.setData({
+      type: 'FeatureCollection',
+      features: list.flatMap((d) => [
+        { type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: [[d.declared.lng, d.declared.lat], [d.gps.lng, d.gps.lat]] }, properties: {} },
+        { type: 'Feature' as const, geometry: { type: 'Point' as const, coordinates: [d.gps.lng, d.gps.lat] }, properties: { label: `GPS ${d.code} · lệch ${d.distanceM} m` } },
+      ]),
+    });
   }
 
   function installHandlers(m: MlMap) {
@@ -411,7 +451,7 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
   function applyLayerVisibility(m: MlMap) {
     const l = propsRef.current.layers;
     const set = (id: string, on: boolean) => m.getLayer(id) && m.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
-    ['cluster-halo', 'clusters', 'cluster-count', 'cabinet-points', 'cabinet-selected'].forEach((id) => set(id, l.cabinets));
+    ['cluster-halo', 'clusters', 'cluster-count', 'cabinet-points', 'cabinet-selected', 'gps-drift-line', 'gps-drift-pt', 'gps-drift-label'].forEach((id) => set(id, l.cabinets));
     if (m.getLayer('cabinet-points')) {
       const field = !l.labels && !l.codes ? '' : l.codes && l.labels ? ['concat', ['get', 'code'], ' · ', ['get', 'name']] : l.codes ? ['get', 'code'] : ['get', 'name'];
       m.setLayoutProperty('cabinet-points', 'text-field', field as unknown as ExpressionSpecification);
@@ -454,6 +494,12 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
     void loadPoles(m);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.layers]);
+
+  useEffect(() => {
+    const m = map.current;
+    if (m) applyGpsDrift(m);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.gpsDrift]);
 
   useEffect(() => {
     const m = map.current;

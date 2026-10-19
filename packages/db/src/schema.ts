@@ -351,6 +351,9 @@ export const telemetry = pgTable(
     leakMa: real('leak_ma'),
     tempC: real('temp_c'),
     batteryMv: integer('battery_mv'),
+    // LGPS of this frame (null = no fix): history for "update location from GPS" (median of recent fixes)
+    gpsLat: doublePrecision('gps_lat'),
+    gpsLng: doublePrecision('gps_lng'),
     extra: jsonb('extra').$type<Record<string, string>>(),
   },
   (t) => [primaryKey({ columns: [t.cabinetId, t.ts] })],
@@ -388,6 +391,8 @@ export const unknownDevices = pgTable('unknown_devices', {
   firstSeenAt: tsz('first_seen_at').notNull().defaultNow(),
   lastSeenAt: tsz('last_seen_at').notNull().defaultNow(),
   frames: integer('frames').notNull().default(1),
+  // last GPS fix the device sent: pre-fills the register form
+  gps: point('gps'),
 });
 
 // ---------- alarms / incidents / logs ----------

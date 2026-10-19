@@ -92,6 +92,13 @@
       "when": 1792316255610,
       "tag": "0012_dimming_levels",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792397703183,
+      "tag": "0013_gps_history",
+      "breakpoints": true
     }
   ]
 }

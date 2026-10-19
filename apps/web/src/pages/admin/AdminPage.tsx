@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import type { RoleKey } from '@citylight/shared';
 import { ALARM_TYPE_LABELS, LAMP_GROUP_LABELS, ROLE_LABELS, ROLE_PERMISSIONS, SEVERITY_LABELS, roleRequires2fa } from '@citylight/shared';
-import { api, ApiError, type AdminUser } from '@/lib/api';
+import { api, ApiError, type AdminUser, type UnknownDevice } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { ScopePicker, scopeLabel, useAreaNames, type ScopeValue } from '@/components/security';
 import { cn, fmtTime } from '@/lib/utils';
@@ -408,6 +408,12 @@ function DevicesAdmin() {
   const districts = tree.data?.areas.filter((a) => a.kind === 'district') ?? [];
   const blank = { ltid: '', code: '', name: '', lat: '', lng: '', districtId: '', wardId: '', zone1Id: '', address: '' };
   const [form, setForm] = useState<typeof blank | null>(null);
+  // the device's own GPS fix pre-fills the position (wrong hand-typed coordinates are the usual E802 cause)
+  const [fromGps, setFromGps] = useState(false);
+  const review = (d: UnknownDevice) => {
+    setFromGps(!!d.gps);
+    setForm({ ...blank, ltid: d.ltid, lat: d.gps ? d.gps.lat.toFixed(7) : '', lng: d.gps ? d.gps.lng.toFixed(7) : '' });
+  };
   const wards = tree.data?.areas.filter((a) => a.kind === 'ward' && a.parentId === form?.districtId) ?? [];
   const reg = useMutation({
     mutationFn: () =>
@@ -426,17 +432,19 @@ function DevicesAdmin() {
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setForm((f) => ({ ...f!, [k]: e.target.value }));
   return (
     <>
-      <PageHeader title="Đăng ký tủ" subtitle="Thiết bị gửi frame có LTID chưa đăng ký nằm ở đây chờ duyệt; tủ mới được nhận dữ liệu ngay" actions={<Button onClick={() => setForm(blank)}><Plus className="h-4 w-4" /> Đăng ký tủ mới</Button>} />
+      <PageHeader title="Đăng ký tủ" subtitle="Thiết bị gửi frame có LTID chưa đăng ký nằm ở đây chờ duyệt; tủ mới được nhận dữ liệu ngay" actions={<Button onClick={() => { setFromGps(false); setForm(blank); }}><Plus className="h-4 w-4" /> Đăng ký tủ mới</Button>} />
       <Card>
         <CardHeader title="Thiết bị chưa đăng ký" />
         <table className="w-full text-sm">
-          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">LTID</th><th className="px-3 py-2">IMEI</th><th className="px-3 py-2">Thấy lần đầu</th><th className="px-3 py-2">Thấy gần nhất</th><th className="px-3 py-2">Số frame</th><th /></tr></thead>
+          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">LTID</th><th className="px-3 py-2">IMEI</th><th className="px-3 py-2">GPS</th><th className="px-3 py-2">Thấy lần đầu</th><th className="px-3 py-2">Thấy gần nhất</th><th className="px-3 py-2">Số frame</th><th /></tr></thead>
           <tbody>
-            {!data?.length && <tr><td colSpan={6} className="px-3 py-4 text-center text-subtle">Không có thiết bị lạ</td></tr>}
+            {!data?.length && <tr><td colSpan={7} className="px-3 py-4 text-center text-subtle">Không có thiết bị lạ</td></tr>}
             {data?.map((d) => (
               <tr key={d.ltid} className="border-t">
-                <td className="px-3 py-2 font-medium">{d.ltid}</td><td className="px-3 py-2 font-mono text-xs">{d.imei}</td><td className="px-3 py-2 text-xs">{fmtTime(d.firstSeenAt)}</td><td className="px-3 py-2 text-xs">{fmtTime(d.lastSeenAt)}</td><td className="px-3 py-2">{d.frames}</td>
-                <td className="px-3 py-2"><Button size="sm" onClick={() => setForm({ ...blank, ltid: d.ltid })}>Duyệt & đăng ký</Button></td>
+                <td className="px-3 py-2 font-medium">{d.ltid}</td><td className="px-3 py-2 font-mono text-xs">{d.imei}</td>
+                <td className="px-3 py-2 font-mono text-xs">{d.gps ? `${d.gps.lat.toFixed(5)}, ${d.gps.lng.toFixed(5)}` : <span className="text-subtle">chưa có fix</span>}</td>
+                <td className="px-3 py-2 text-xs">{fmtTime(d.firstSeenAt)}</td><td className="px-3 py-2 text-xs">{fmtTime(d.lastSeenAt)}</td><td className="px-3 py-2">{d.frames}</td>
+                <td className="px-3 py-2"><Button size="sm" onClick={() => review(d)}>Duyệt & đăng ký</Button></td>
               </tr>
             ))}
           </tbody>
@@ -456,6 +464,11 @@ function DevicesAdmin() {
             <Field label="Địa chỉ"><Input value={form.address} onChange={set('address')} /></Field>
             <Field label="Vĩ độ"><Input value={form.lat} onChange={set('lat')} placeholder="10.7769" /></Field>
             <Field label="Kinh độ"><Input value={form.lng} onChange={set('lng')} placeholder="106.7009" /></Field>
+            {fromGps && (
+              <div className="col-span-2 -mt-1 text-xs text-subtle">
+                Tọa độ điền sẵn từ GPS thiết bị gửi lên (điểm gần nhất). Sửa lại nếu thiết bị đang ở chỗ khác chỗ lắp tủ.
+              </div>
+            )}
             <Field label="Quận / huyện">
               <Select value={form.districtId} onChange={(e) => setForm({ ...form, districtId: e.target.value, wardId: '' })}>
                 <option value="">— chưa phân —</option>
