@@ -22,7 +22,8 @@ Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2 (broke
 | **M7** sự cố | ✅ tạo từ cảnh báo / thủ công, luồng giao → xử lý → đóng do server kiểm (quyền + phạm vi), người xử lý là user Bảo trì, "Việc của tôi", ảnh hiện trường / sau xử lý (magic bytes, 5 MB), Excel `.xlsx` sự cố + cảnh báo theo bộ lọc, báo cáo tháng, nhắc quá hạn qua Telegram; `npm run e2e:incidents` 36/36 |
 | **M8** GIS & quản trị | ✅ tuyến/trụ/đèn trên bản đồ theo khung nhìn, chỉnh sửa nháp (vẽ tuyến, thêm/dời/xóa trụ, sửa đèn) lưu 1 lần có chống ghi đè, sinh trụ theo mét, nhập Excel/CSV có kiểm trước; quản trị khu vực / khu QL / vùng, đăng ký tủ lạ, sửa / ngừng dùng tủ, cấu hình mất kết nối; `npm run e2e:gis` 22/22 (+ tải 200.000 trụ), `npm run e2e:admin` 25/25 |
 | **M9** Tiết giảm | ✅ hồ sơ theo nhóm đèn 3 tầng (tủ > vùng > hệ thống > mặc định), bỏ hồ sơ riêng, kiểm 1–5 thời đoạn liền nhau, ước tính kWh / đ theo đèn GIS thật + giá điện (Cấu hình); đồng bộ / `SET_DIMMING` vẫn 409 tới khi firmware hỗ trợ; `npm run e2e:dimming` 26/26 |
-| M10 → M11 | chưa bắt đầu (xem `docs/spec.md` mục 16) |
+| M10 Tủ thật | chưa bắt đầu: VPS đã sẵn, chờ trỏ tủ bàn (`LDOM=13.55.91.187`, `LPOR=1883`) |
+| M11 VPS & vận hành | 🟡 VPS AWS Lightsail chạy (HTTPS sslip.io, chỉ mở 1883/80/443, backup 02:15); còn chép backup ra ngoài, diễn tập khôi phục, monitoring, Playwright |
 
 ## Chạy web (M1-UI)
 

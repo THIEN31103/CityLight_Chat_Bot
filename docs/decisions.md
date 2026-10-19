@@ -42,6 +42,8 @@
 | S35 | M9 kiểm hồ sơ dùng chung web + API (`shared/dimming.ts`): 1–5 thời đoạn liền nhau, mức 0–100 %, phút 0–2880 (qua nửa đêm) → sai = 422 nêu thời đoạn. Thời đoạn tắt tính như 100 %. |
 | S36 | M9 ước tính tiết kiệm theo **đèn GIS thật** của nhóm (tổng `rated_power_w`, đếm đèn thiếu công suất riêng) trong phạm vi người xem: kWh/đêm, kWh/năm (×365), đ/năm theo cấu hình giá điện (mặc định 2.000 đ/kWh, 0 = chỉ kWh). Không có đèn → "chưa có dữ liệu đèn", không đoán công suất. |
 | S37 | M9 gửi tiết giảm vẫn chặn: lô hàng loạt "dimming" và lệnh `SET_DIMMING` → 409 `capability_unsupported` nêu lý do; lô kiểm **trước** OTP (không phí mã). Tab Đèn hiện đèn thật, điều khiển đèn tắt tới khi có capability `smart_lamps`. |
+| S38 | Nhật ký thao tác có API đọc (`GET /logs/activity`, lọc người / nội dung / thời gian). Người có phạm vi toàn hệ thống xem mọi dòng; người theo khu vực chỉ xem thao tác của chính mình (dòng nhật ký nêu tên tủ / vùng ngoài khu vực). Trước đó trang này vẫn do mock trả ở chế độ hybrid. |
+| S39 | M11 (2026-10-19) VPS đầu tiên: AWS Lightsail **Sydney** 4 GB (tài khoản không đổi được vùng; Singapore nhanh hơn ~4 lần, chuyển sau bằng snapshot), static IP `13.55.91.187`. Chỉ mở 1883 + 80/443 (+22). Caddy HTTPS bằng `<ip>.sslip.io` tới khi có domain; web build chế độ `real` (không mock). Mật khẩu `.env` sinh trên VPS, không chép ra ngoài. Dữ liệu nền = bộ mẫu TP.HCM, admin đầu tiên phải đổi mật khẩu + bật 2FA. Telegram chưa bật trên VPS (1 bot chỉ 1 nơi nhận). Backup hằng ngày trên đĩa VPS, chưa chép ra ngoài, chưa diễn tập khôi phục. |
 
 ## Đề xuất, chờ Bảo chốt
 
