@@ -16,3 +16,7 @@ infra/emqx/acl.conf
 .tmp/
 # incident photos when the API runs from source (UPLOAD_DIR default)
 data/
+
+# Playwright (apps/e2e)
+apps/e2e/test-results/
+apps/e2e/report/

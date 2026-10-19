@@ -36,7 +36,9 @@
     "dev:ingest": "npm run dev -w @citylight/workers",
     "dev:cmd": "npm run dev:cmd -w @citylight/workers",
     "dev:notify": "npm run dev:notify -w @citylight/workers",
-    "dev:scheduler": "npm run dev:scheduler -w @citylight/workers"
+    "dev:scheduler": "npm run dev:scheduler -w @citylight/workers",
+    "e2e:browser": "npm run test -w @citylight/e2e",
+    "e2e:vps": "npm run test:vps -w @citylight/e2e"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

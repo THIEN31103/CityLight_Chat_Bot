@@ -26,6 +26,9 @@ services:
   notify-worker:
     environment:
       WEB_URL: https://${SITE_HOST:?set SITE_HOST in infra/.env}
+      # The VPS has no IPv6 route and Sydney -> Telegram (EU) takes > 250 ms to connect: Node 22's default
+      # 250 ms happy-eyeballs attempt aborts the IPv4 try and every Telegram call fails with ETIMEDOUT.
+      NODE_OPTIONS: --network-family-autoselection-attempt-timeout=2000
 
   caddy:
     profiles: ["app"]
