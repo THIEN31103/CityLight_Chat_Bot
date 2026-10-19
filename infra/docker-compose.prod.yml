@@ -1,6 +1,8 @@
 # VPS overlay (M11): only MQTT 1883 and Caddy 80/443 are published; db / redis / api / EMQX dashboard
 # stay on the internal network (dashboard: ssh -L 18083:localhost:18083 is not available either, use
 # `docker compose exec emqx emqx ctl ...`). Web = static build served by Caddy, which proxies /api + /socket.io.
+# Exception: db is bound to the VPS loopback only, for a GUI client over an SSH tunnel
+# (ssh -L 15432:127.0.0.1:5432 ...); the Lightsail firewall does not open 5432 either.
 #   docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml --env-file infra/.env --profile app up -d
 services:
   emqx:
@@ -8,7 +10,8 @@ services:
       - "1883:1883"
 
   db:
-    ports: !reset []
+    ports: !override
+      - "127.0.0.1:5432:5432"
 
   redis:
     ports: !reset []
