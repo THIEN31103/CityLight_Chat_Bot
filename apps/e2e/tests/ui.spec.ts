@@ -75,10 +75,20 @@ test('manual command goes through to "Đã xác nhận"', async () => {
   test.skip(!CABINET || !ALLOW_COMMANDS, 'commands on a real site need E2E_ALLOW_COMMANDS=1 and a test cabinet');
   await page.getByRole('tab', { name: 'Điều khiển' }).click();
   const on = page.getByRole('button', { name: 'Bật N1' });
-  await expect(on).toBeEnabled();
-  await on.click();
-  await page.getByRole('button', { name: 'Gửi lệnh', exact: true }).click();
-  await expect(page.getByText('Đã xác nhận').first()).toBeVisible({ timeout: 45_000 });
+  const confirmed = page.getByText('Đã xác nhận').first();
+  // the mock fails 5 % of commands on purpose (rc:-1): send again, at most 3 tries
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await expect(on).toBeEnabled();
+    await on.click();
+    await page.getByRole('button', { name: 'Gửi lệnh', exact: true }).click();
+    // the pressed button shows the command in flight until the cabinet answers
+    await expect(on).toHaveAttribute('aria-busy', 'true');
+    await expect(on).toHaveAttribute('aria-busy', 'false', { timeout: 45_000 });
+    if (REAL || (await confirmed.isVisible())) break;
+  }
+  await expect(confirmed).toBeVisible();
+  await expect(on).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Về tự động' })).toHaveAttribute('aria-pressed', 'false');
 });
 
 for (const [path, heading] of [

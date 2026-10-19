@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Clock, Lightbulb, LightbulbOff, Power, RotateCcw, Send } from 'lucide-react';
-import type { CabinetDetail, Schedule } from '@citylight/shared';
+import { Check, Clock, Lightbulb, LightbulbOff, Loader2, Power, RotateCcw, Send } from 'lucide-react';
+import type { CabinetDetail, Command, CommandType, Schedule } from '@citylight/shared';
 import { COMMAND_STATUS_LABELS, describeCommand } from '@citylight/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/stores/session';
@@ -41,6 +41,63 @@ const STATUS_TONE: Record<string, 'blue' | 'green' | 'red' | 'amber' | 'muted'> 
   cancelled: 'muted',
 };
 
+// still on its way to the cabinet: the pressed button shows it until the cabinet answers
+const IN_FLIGHT: Command['status'][] = ['queued', 'sent', 'acked'];
+
+type Look = 'on' | 'off' | 'auto';
+const SELECTED_LOOK: Record<Look, string> = {
+  on: 'border-st-on bg-st-on text-white hover:opacity-90',
+  off: 'border-st-off bg-st-off text-white hover:opacity-90',
+  auto: 'border-primary bg-primary text-white hover:opacity-90',
+};
+
+/**
+ * Manual-control button with two extra looks (owner feedback 2026-10-19: a pressed button looked unchanged):
+ * filled + check = what the cabinet reports right now (telemetry PMAN / LQ2 / LQ3),
+ * amber pulsing + spinner = this command is in flight.
+ */
+function ControlButton({
+  look,
+  selected,
+  pending,
+  disabled,
+  onClick,
+  className,
+  children,
+}: {
+  look: Look;
+  selected: boolean;
+  pending: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={selected}
+      aria-busy={pending}
+      title={pending ? 'Đang gửi lệnh, chờ tủ xác nhận' : selected ? 'Trạng thái hiện tại của tủ' : undefined}
+      className={cn(
+        'inline-flex h-9 items-center justify-center gap-1.5 rounded-md border px-3.5 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+        'disabled:cursor-not-allowed',
+        pending
+          ? 'animate-pulse border-2 border-st-dimming bg-st-dimming/15 text-st-dimming'
+          : selected
+            ? SELECTED_LOOK[look]
+            : 'bg-panel text-fg hover:bg-muted disabled:opacity-50',
+        className,
+      )}
+    >
+      {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : selected && <Check className="h-4 w-4" />}
+      {children}
+    </button>
+  );
+}
+
 export function ControlTab({ detail }: { detail: Detail }) {
   const { cabinet, state, capabilities } = detail;
   const can = useSession((s) => s.can);
@@ -57,6 +114,22 @@ export function ControlTab({ detail }: { detail: Detail }) {
         ? 'Tủ đang mất kết nối'
         : null;
 
+  const inFlight = !!active && IN_FLIGHT.includes(active.status);
+  const isPending = (type: CommandType, params: Record<string, unknown>) =>
+    inFlight && active!.type === type && (active!.params as Record<string, unknown>).on === params.on && (active!.params as Record<string, unknown>).branch === params.branch;
+  // what the cabinet says now; nothing is marked while it is offline or the PLC does not answer (null)
+  const known = state.online && state.manualMode !== null;
+  const manual = known && state.manualMode === true;
+  const branchOn = (b: number) => (b === 1 ? state.branch1On : state.branch2On);
+  const ctl = (look: Look, selected: boolean, type: CommandType, params: Record<string, unknown>, text: string, danger = false) => ({
+    look,
+    selected,
+    pending: isPending(type, params),
+    // one command per cabinet at a time (the server queues them anyway): the others wait
+    disabled: disabled || (inFlight && !isPending(type, params)),
+    onClick: () => !isPending(type, params) && send(type, params, text, danger),
+  });
+
   return (
     <div className="space-y-4">
       <Card>
@@ -69,25 +142,33 @@ export function ControlTab({ detail }: { detail: Detail }) {
       <Card>
         <CardHeader title="Điều khiển bằng tay" subtitle={disabledReason ?? 'Mọi lệnh đều có hộp xác nhận và được ghi nhật ký'} />
         <div className="grid gap-2 p-4 sm:grid-cols-3">
-          <Button disabled={disabled} onClick={() => send('MANUAL_ALL', { on: true }, 'Bật toàn tủ (chế độ thủ công)')}>
+          <ControlButton {...ctl('on', manual && state.branch1On === true && state.branch2On === true, 'MANUAL_ALL', { on: true }, 'Bật toàn tủ (chế độ thủ công)')}>
             <Lightbulb className="h-4 w-4" /> Bật toàn tủ
-          </Button>
-          <Button variant="danger" disabled={disabled} onClick={() => send('MANUAL_ALL', { on: false }, 'Tắt toàn tủ (chế độ thủ công)', true)}>
+          </ControlButton>
+          <ControlButton {...ctl('off', manual && state.branch1On === false && state.branch2On === false, 'MANUAL_ALL', { on: false }, 'Tắt toàn tủ (chế độ thủ công)', true)}>
             <LightbulbOff className="h-4 w-4" /> Tắt toàn tủ
-          </Button>
-          <Button variant="outline" disabled={disabled} onClick={() => send('AUTO', {}, 'Về chế độ tự động theo lịch')}>
+          </ControlButton>
+          <ControlButton {...ctl('auto', known && state.manualMode === false, 'AUTO', {}, 'Về chế độ tự động theo lịch')}>
             <RotateCcw className="h-4 w-4" /> Về tự động
-          </Button>
+          </ControlButton>
           {[1, 2].map((b) => (
             <div key={b} className="flex gap-2 sm:col-span-3 md:col-span-1">
-              <Button variant="outline" className="flex-1" disabled={disabled} onClick={() => send('MANUAL_BRANCH', { branch: b, on: true }, `Bật nhánh ${b}`)}>
+              <ControlButton className="flex-1" {...ctl('on', manual && branchOn(b) === true, 'MANUAL_BRANCH', { branch: b, on: true }, `Bật nhánh ${b}`)}>
                 Bật N{b}
-              </Button>
-              <Button variant="outline" className="flex-1" disabled={disabled} onClick={() => send('MANUAL_BRANCH', { branch: b, on: false }, `Tắt nhánh ${b}`, true)}>
+              </ControlButton>
+              <ControlButton className="flex-1" {...ctl('off', manual && branchOn(b) === false, 'MANUAL_BRANCH', { branch: b, on: false }, `Tắt nhánh ${b}`, true)}>
                 Tắt N{b}
-              </Button>
+              </ControlButton>
             </div>
           ))}
+        </div>
+        <div className="-mt-2 flex flex-wrap gap-x-4 gap-y-1 px-4 pb-3 text-xs text-subtle">
+          <span className="flex items-center gap-1">
+            <Check className="h-3.5 w-3.5" /> Nút tô màu = trạng thái tủ đang báo về
+          </span>
+          <span className="flex items-center gap-1">
+            <Loader2 className="h-3.5 w-3.5 text-st-dimming" /> Viền vàng = lệnh đang gửi, chờ tủ xác nhận
+          </span>
         </div>
         {active && (
           <div className="mx-4 mb-4 flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-sm">
