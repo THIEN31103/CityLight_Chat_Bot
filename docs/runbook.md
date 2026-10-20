@@ -11,6 +11,7 @@ Web `https://13-55-91-187.sslip.io`, MQTT `13.55.91.187:1883`. Code ở `/opt/ci
 | Compose (trên VPS) | `cd /opt/citylight && alias dc='docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml --env-file infra/.env --profile app'` |
 | DB bằng psql | `docker exec -it citylight-db psql -U citylight -d citylight` |
 | DB bằng DBeaver | tunnel `ssh -i ~/.ssh/citylight_aws -N -L 15432:127.0.0.1:5432 ubuntu@13.55.91.187`, nối `localhost:15432`, DB/user `citylight`, mật khẩu `POSTGRES_PASSWORD` trong `/opt/citylight/infra/.env` |
+| Xem frame thô (từ laptop) | `ssh -t -i ~/.ssh/citylight_aws ubuntu@13.55.91.187 'cd /opt/citylight && U=$(grep "^MQTT_BACKEND_USER=" infra/.env | cut -d= -f2-) && docker run --rm -it --network infra_default eclipse-mosquitto:2 mosquitto_sub -h emqx -p 1885 -u "$U" -i debug-sub-$ -v -t electrical_cabinets_default -t stm32/ec25/echo -t stm32/ec25/demo -t stm32/ec25/cmd'` — listener nội bộ 1885 từ chối subscribe ẩn danh, phải dùng tài khoản backend (đọc từ `.env`, không in ra). Không cần trực tiếp: bảng `frames_raw` (giữ 7 ngày) |
 | EMQX | `docker exec citylight-emqx emqx ctl clients list` (dashboard không mở ra ngoài; log level `warning` nên không có dòng connect/disconnect) |
 
 Firewall Lightsail chỉ mở 22, 80, 443, 1883. DB chỉ bind `127.0.0.1:5432`, Redis / API / EMQX dashboard chỉ trong mạng Docker.
@@ -134,3 +135,18 @@ Tạo lại `db` làm DB gián đoạn ~7 s; ingest giữ frame trong bộ đệ
   - EMQX: 500 kết nối/s, gói ≤ 8 KB, flapping → cấm 5 phút. Xem cấm: `docker exec citylight-emqx emqx ctl banned list`, gỡ: `emqx ctl banned delete clientid <id>`.
   - Vẫn giả được: ack lệnh trên `stm32/ec25/echo` (không có IMEI). Hết hẳn khi có user/pass.
 - **MQTT user/pass (S43)**: cổng 1883 bắt buộc tài khoản tủ chung `MQTT_DEVICE_USERNAME` / `MQTT_DEVICE_PASSWORD` (trong `/opt/citylight/infra/.env`); backend dùng 1885 trong mạng Docker (không mở ra ngoài). Tủ không có / sai mật khẩu: EMQX trả CONNACK 4/5, không thấy trong `emqx ctl clients list`. **Đổi mật khẩu**: sửa 2 dòng trong `.env` → `sh /opt/citylight/infra/scripts/emqx-device-account.sh` (tủ đang nối không bị ngắt; nạp firmware mật khẩu mới **trước**, không thì tủ không nối lại được). Kiểm local: `npm run e2e:mqtt-auth`.
+
+## 8. Dung lượng (đo 2026-10-21, chưa xử lý)
+
+Mỗi frame telemetry ghi **2 dòng**: `telemetry` (nén sau 2 ngày, giữ 90 ngày) và `frames_raw` (frame thô, **không nén**, giữ 7 ngày).
+Đo trên VPS: payload trung bình 315 B; khoảng **565 B/dòng `frames_raw`** và **280 B/dòng `telemetry`** gồm index
+(đo trên bảng còn nhỏ nên có thể cao hơn thực tế). Một tủ gửi ~8.640 frame/ngày (10 s/frame), nhiều hơn khi trạng thái đổi.
+
+| Số tủ | `frames_raw` 7 ngày | `telemetry` 2 ngày chưa nén | Tổng ước tính |
+|---|---|---|---|
+| 1.000 | ~34 GB | ~5 GB | ~60 GB (thêm ~21 GB telemetry đã nén, giả định nén ~10×): gần đầy đĩa |
+| 10.000 | ~340 GB | ~48 GB | ~600 GB (thêm ~210 GB telemetry đã nén cho 90 ngày, giả định nén ~10×) |
+
+Đĩa VPS 77 GB (còn ~59 GB). **Phải xử lý trước khi vượt vài trăm tủ**, ví dụ: giữ `frames_raw` vài giờ hoặc chỉ giữ frame lỗi /
+frame lạ, nén `telemetry` sau vài giờ thay vì 2 ngày, hoặc gắn thêm đĩa (Lightsail block storage). Theo dõi: `df -h /`,
+`SELECT pg_size_pretty(hypertable_size('frames_raw'))` trong psql.
