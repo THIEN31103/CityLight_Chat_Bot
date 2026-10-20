@@ -186,6 +186,13 @@ export interface CabinetInput {
   managementUnitId?: string | null;
   zone1Id?: string | null;
   notes?: string | null;
+  /** the IMEI to trust when the unknown device showed two (S42) */
+  imei?: string | null;
+}
+
+export interface ImeiCandidates {
+  registered: string | null;
+  seen: { imei: string | null; frames: number; lastSeenAt: string; registered: boolean }[];
 }
 
 /** User row in the admin screen: adds the temporary lockout end. */
@@ -269,6 +276,8 @@ export interface UnknownDevice {
   frames: number;
   /** last GPS fix the device sent, pre-fills the register form */
   gps: GeoPoint | null;
+  /** a second, different IMEI under the same LTID: the register form must pick one */
+  otherImei: string | null;
 }
 
 export const api = {
@@ -319,6 +328,9 @@ export const api = {
   relocateFromGps: (id: string, expected: GeoPoint) =>
     req<{ id: string; location: GeoPoint; movedM: number }>('POST', `/cabinets/${id}/location-from-gps`, { expected }),
   gpsDrift: () => req<GpsDriftItem[]>('GET', '/map/gps-drift'),
+  imeiCandidates: (id: string) => req<ImeiCandidates>('GET', `/cabinets/${id}/imei-candidates`),
+  /** null = forget it, the next frame's IMEI is learned */
+  setImei: (id: string, imei: string | null) => req<{ id: string; imei: string | null }>('PUT', `/cabinets/${id}/imei`, { imei }),
   telemetry: (id: string, metrics: string[], from: string, to: string) => req<TelemetryPoint[]>('GET', `/cabinets/${id}/telemetry${qs({ metrics: metrics.join(','), from, to, interval: 'auto' })}`),
   energy: (id: string, range: 'day' | '30d') => req<{ estimated: boolean; points: { label: string; kwh: number }[] }>('GET', `/cabinets/${id}/energy${qs({ range })}`),
   setSchedule: (id: string, s: Schedule) => req<Command>('PUT', `/cabinets/${id}/schedule`, s),

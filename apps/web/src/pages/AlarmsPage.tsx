@@ -13,6 +13,7 @@ import { DataTable } from '@/components/DataTable';
 import { Badge, Button, Input, KV, Modal, PageHeader, Select, Tabs, TabsList, TabsTrigger, toast } from '@/components/ui';
 import { ErrorCodeBadge, ErrorGuide } from '@/components/ErrorHelp';
 import { RelocateGpsButton } from './cabinet/RelocateGps';
+import { ImeiButton } from './cabinet/ImeiDecision';
 
 export function AlarmsPage() {
   const nav = useNavigate();
@@ -172,6 +173,11 @@ export function AlarmsPage() {
               <KV label="Kéo dài" value={`${fmtDuration(open.startedAt, open.endedAt)}${open.active ? ' (đang diễn ra)' : ''}`} />
               <KV label="Xác nhận" value={open.ackedBy ? `${open.ackedBy} · ${fmtTime(open.ackedAt)}` : 'Chưa'} />
             </div>
+            {open.type === 'spoof_suspect' && open.active && (
+              <div className="flex justify-end">
+                <ImeiButton cabinetId={open.cabinetId} label={`${open.cabinetCode} · ${open.cabinetName}`} onDone={() => setOpen(null)} />
+              </div>
+            )}
             {open.type === 'gps_drift' && open.active && (
               <div className="flex justify-end">
                 <RelocateGpsButton cabinetId={open.cabinetId} label={`${open.cabinetCode} · ${open.cabinetName}`} onDone={() => setOpen(null)} />

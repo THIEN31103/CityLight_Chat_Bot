@@ -25,6 +25,13 @@
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		X-Frame-Options "DENY"
+		# CSP (2026-10-20): scripts only from this site (the build has no inline script and needs no eval);
+		# inline styles stay allowed (React style attributes); map styles / tiles / glyphs from the basemap
+		# hosts in apps/web/src/pages/map/mapStyle.ts (add a host there = add it here); MapLibre workers are blobs.
+		# Tested by `E2E_CSP=1 npm run e2e:browser` (reads this line).
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tiles.openfreemap.org https://tiles.versatiles.org https://*.cartocdn.com https://server.arcgisonline.com; connect-src 'self' wss://{$SITE_HOST} https://tiles.openfreemap.org https://tiles.versatiles.org https://*.cartocdn.com https://server.arcgisonline.com; font-src 'self' data:; worker-src 'self' blob:; child-src blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		# map "my location" button + incident photo capture keep geolocation / camera for this site only
+		Permissions-Policy "camera=(self), microphone=(), geolocation=(self), payment=(), usb=(), serial=(), bluetooth=()"
 		-Server
 	}
 }

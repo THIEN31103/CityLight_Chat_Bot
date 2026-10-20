@@ -330,6 +330,27 @@ export const handlers = [
     addLog(u.email, 'Cập nhật vị trí tủ theo GPS', 'cabinet', `${c.code} - ${c.name}`, JSON.stringify(from), JSON.stringify(s.gps));
     return HttpResponse.json({ id: c.id, location: s.gps, movedM: s.distanceM });
   })),
+  // IMEI identity (S42): candidates = the registered IMEI + the foreign one of an open E805
+  http.get(`${API}/cabinets/:id/imei-candidates`, wrap(({ params }: { params: Record<string, string> }) => {
+    requireUser();
+    const c = cabinetById.get(params.id!)!;
+    const reg = (c as { imei?: string | null }).imei ?? null;
+    const seen: { imei: string | null; frames: number; lastSeenAt: string; registered: boolean }[] = reg ? [{ imei: reg, frames: 8640, lastSeenAt: new Date().toISOString(), registered: true }] : [];
+    if (alarms.some((a) => a.cabinetId === c.id && a.type === 'spoof_suspect' && a.active))
+      seen.unshift({ imei: '869999000123456', frames: 37, lastSeenAt: new Date(Date.now() - 120_000).toISOString(), registered: false });
+    return HttpResponse.json({ registered: reg, seen });
+  })),
+  http.put(`${API}/cabinets/:id/imei`, wrap(async ({ params, request }: { params: Record<string, string>; request: Request }) => {
+    const u = requireUser();
+    if (u.role !== 'admin') return problem(403, 'forbidden', 'Bạn không có quyền thực hiện thao tác này');
+    const c = cabinetById.get(params.id!)! as { id: string; code: string; name: string; imei?: string | null };
+    const { imei } = (await request.json()) as { imei: string | null };
+    const old = c.imei ?? null;
+    c.imei = imei;
+    for (const a of alarms) if (a.cabinetId === c.id && a.type === 'spoof_suspect' && a.active) Object.assign(a, { active: false, endedAt: new Date().toISOString() });
+    addLog(u.email, imei ? 'Đổi IMEI tủ' : 'Học lại IMEI tủ', 'cabinet', `${c.code} - ${c.name}`, old, imei ?? '(học từ frame tiếp theo)');
+    return HttpResponse.json({ id: c.id, imei });
+  })),
   http.get(`${API}/map/gps-drift`, wrap(() => {
     requireUser();
     const items: GpsDriftItem[] = [];
@@ -650,8 +671,8 @@ export const handlers = [
   })),
   http.get(`${API}/devices/unknown`, wrap(() =>
     HttpResponse.json([
-      { ltid: 'CTY9001', firstSeenAt: new Date(Date.now() - 3600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 352, imei: '861234567890123', gps: { lat: 10.7769401, lng: 106.7008765 } },
-      { ltid: 'CTY9002', firstSeenAt: new Date(Date.now() - 86400000).toISOString(), lastSeenAt: new Date(Date.now() - 600000).toISOString(), frames: 8120, imei: '861234567890456', gps: null },
+      { ltid: 'CTY9001', firstSeenAt: new Date(Date.now() - 3600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 352, imei: '861234567890123', otherImei: null, gps: { lat: 10.7769401, lng: 106.7008765 } },
+      { ltid: 'CTY9002', firstSeenAt: new Date(Date.now() - 86400000).toISOString(), lastSeenAt: new Date(Date.now() - 600000).toISOString(), frames: 8120, imei: '861234567890456', otherImei: '861999000111222', gps: null },
     ]),
   )),
   http.get(`${API}/field-map`, wrap(() => HttpResponse.json({ entries: DEFAULT_FIELD_MAP, unknownKeys: [] }))),

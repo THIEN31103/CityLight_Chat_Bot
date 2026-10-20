@@ -1,6 +1,7 @@
 // Main flows behind the login. Default target = mock web (fixed accounts, 2FA code 123456), see playwright.config.ts.
 import { createHmac } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
+import { CSP_ON, enforceCsp } from './csp';
 
 const REAL = !!process.env.E2E_UI_URL;
 const EMAIL = process.env.E2E_EMAIL ?? (REAL ? '' : 'dieuhanh@citylight.local');
@@ -44,10 +45,12 @@ test.describe.configure({ mode: 'serial' });
 
 let page: Page;
 const pageErrors: string[] = [];
+let cspViolations: string[] = [];
 
-test.beforeAll(async ({ browser }) => {
+test.beforeAll(async ({ browser }, info) => {
   page = await browser.newPage();
   page.on('pageerror', (e) => pageErrors.push(e.message));
+  if (CSP_ON) cspViolations = await enforceCsp(page, info.project.use.baseURL!);
   await login(page);
 });
 test.afterAll(async () => page?.close());
@@ -104,6 +107,25 @@ for (const [path, heading] of [
     await expect(page.getByText('Đã xảy ra lỗi')).toHaveCount(0);
   });
 }
+
+// every basemap pulls styles / tiles / glyphs from its own host: each must pass the production CSP
+const BASEMAPS = ['liberty', 'positron', 'voyager', 'darkmatter', 'colorful', 'eclipse', 'satellite', 'hybrid', 'custom'];
+test('every basemap loads under the production CSP', async () => {
+  test.skip(!CSP_ON, 'E2E_CSP=1 only');
+  for (const id of BASEMAPS) {
+    await page.evaluate((b) => localStorage.setItem('cl.basemap', b), id);
+    await page.goto('/');
+    await expect(page.locator('canvas.maplibregl-canvas')).toBeVisible();
+    await page.waitForLoadState('networkidle').catch(() => undefined);
+    expect(cspViolations, `basemap ${id}`).toEqual([]);
+  }
+  await page.evaluate(() => localStorage.removeItem('cl.basemap'));
+});
+
+test('no CSP violation anywhere in the run', async () => {
+  test.skip(!CSP_ON, 'E2E_CSP=1 only');
+  expect(cspViolations).toEqual([]);
+});
 
 test('no uncaught errors in the page, then log out', async () => {
   expect(pageErrors).toEqual([]);

@@ -18,7 +18,18 @@ services:
       EMQX_AUTHORIZATION__DENY_ACTION: ignore
       EMQX_AUTHORIZATION__CACHE__ENABLE: "true"
       EMQX_AUTHORIZATION__SOURCES: '[{type = file, enable = true, path = "/opt/emqx/etc/acl.conf"}]'
-      EMQX_MQTT__MAX_PACKET_SIZE: 64KB
+      # S42 broker guards while cabinets are anonymous. Frames are < 1 KB (acks <= 512 B): 8 KB is plenty.
+      EMQX_MQTT__MAX_PACKET_SIZE: 8KB
+      # new connections per second (10k cabinets reconnect within ~30 s after a broker restart: ~330/s)
+      EMQX_LISTENERS__TCP__DEFAULT__MAX_CONN_RATE: 500/s
+      EMQX_LISTENERS__TCP__DEFAULT__MAX_CONNECTIONS: "30000"
+      # a client id that connects 15 times in 1 min is banned 5 min (firmware retries every 30 s at most)
+      EMQX_FLAPPING_DETECT__ENABLE: "true"
+      EMQX_FLAPPING_DETECT__MAX_COUNT: "15"
+      EMQX_FLAPPING_DETECT__WINDOW_TIME: 1m
+      EMQX_FLAPPING_DETECT__BAN_TIME: 5m
+      # No per-client message rate here: the backend publishes commands on this listener too (batches ~17/s).
+      # Message floods are cut per LTID in the ingest worker (shared/identity.ts FrameBudget).
       # Ingest instances share the uplink topics; hashing on client id keeps one cabinet on one instance.
       EMQX_BROKER__SHARED_SUBSCRIPTION_STRATEGY: hash_clientid
     volumes:

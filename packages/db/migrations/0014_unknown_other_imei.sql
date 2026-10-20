@@ -1,0 +1,1 @@
+ALTER TABLE "unknown_devices" ADD COLUMN "other_imei" text;

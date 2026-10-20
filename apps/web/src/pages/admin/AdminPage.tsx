@@ -406,13 +406,16 @@ function DevicesAdmin() {
   const tree = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
   const zones = useQuery({ queryKey: ['zones'], queryFn: api.zones });
   const districts = tree.data?.areas.filter((a) => a.kind === 'district') ?? [];
-  const blank = { ltid: '', code: '', name: '', lat: '', lng: '', districtId: '', wardId: '', zone1Id: '', address: '' };
+  const blank = { ltid: '', code: '', name: '', lat: '', lng: '', districtId: '', wardId: '', zone1Id: '', address: '', imei: '' };
   const [form, setForm] = useState<typeof blank | null>(null);
   // the device's own GPS fix pre-fills the position (wrong hand-typed coordinates are the usual E802 cause)
   const [fromGps, setFromGps] = useState(false);
+  // S42: the IMEI becomes the cabinet's identity; two IMEIs under one LTID = the admin picks the real one
+  const [imeiChoices, setImeiChoices] = useState<string[]>([]);
   const review = (d: UnknownDevice) => {
     setFromGps(!!d.gps);
-    setForm({ ...blank, ltid: d.ltid, lat: d.gps ? d.gps.lat.toFixed(7) : '', lng: d.gps ? d.gps.lng.toFixed(7) : '' });
+    setImeiChoices(d.otherImei && d.imei ? [d.imei, d.otherImei] : []);
+    setForm({ ...blank, ltid: d.ltid, lat: d.gps ? d.gps.lat.toFixed(7) : '', lng: d.gps ? d.gps.lng.toFixed(7) : '', imei: d.otherImei ? '' : (d.imei ?? '') });
   };
   const wards = tree.data?.areas.filter((a) => a.kind === 'ward' && a.parentId === form?.districtId) ?? [];
   const reg = useMutation({
@@ -420,6 +423,7 @@ function DevicesAdmin() {
       api.registerCabinet({
         ltid: form!.ltid, code: form!.code, name: form!.name, location: { lat: Number(form!.lat), lng: Number(form!.lng) },
         districtId: form!.districtId || null, wardId: form!.wardId || null, zone1Id: form!.zone1Id || null, address: form!.address || null,
+        imei: form!.imei || null,
       }),
     onSuccess: () => {
       toast(`Đã đăng ký tủ ${form!.code}`, 'success');
@@ -441,7 +445,11 @@ function DevicesAdmin() {
             {!data?.length && <tr><td colSpan={7} className="px-3 py-4 text-center text-subtle">Không có thiết bị lạ</td></tr>}
             {data?.map((d) => (
               <tr key={d.ltid} className="border-t">
-                <td className="px-3 py-2 font-medium">{d.ltid}</td><td className="px-3 py-2 font-mono text-xs">{d.imei}</td>
+                <td className="px-3 py-2 font-medium">{d.ltid}</td>
+                <td className="px-3 py-2 font-mono text-xs">
+                  {d.imei}
+                  {d.otherImei && <div className="font-sans text-st-offline" title="Cùng LTID nhưng gửi từ 2 IMEI khác nhau: có thể có frame giả">⚠ cả IMEI {d.otherImei}</div>}
+                </td>
                 <td className="px-3 py-2 font-mono text-xs">{d.gps ? `${d.gps.lat.toFixed(5)}, ${d.gps.lng.toFixed(5)}` : <span className="text-subtle">chưa có fix</span>}</td>
                 <td className="px-3 py-2 text-xs">{fmtTime(d.firstSeenAt)}</td><td className="px-3 py-2 text-xs">{fmtTime(d.lastSeenAt)}</td><td className="px-3 py-2">{d.frames}</td>
                 <td className="px-3 py-2"><Button size="sm" onClick={() => review(d)}>Duyệt & đăng ký</Button></td>
@@ -454,7 +462,7 @@ function DevicesAdmin() {
         open={!!form}
         onOpenChange={(v) => !v && setForm(null)}
         title="Đăng ký tủ"
-        footer={<><Button variant="outline" onClick={() => setForm(null)}>Hủy</Button><Button loading={reg.isPending} disabled={!form?.ltid || !form.code || !form.name || !form.lat || !form.lng} onClick={() => reg.mutate()}>Đăng ký</Button></>}
+        footer={<><Button variant="outline" onClick={() => setForm(null)}>Hủy</Button><Button loading={reg.isPending} disabled={!form?.ltid || !form.code || !form.name || !form.lat || !form.lng || (imeiChoices.length > 0 && !form.imei)} onClick={() => reg.mutate()}>Đăng ký</Button></>}
       >
         {form && (
           <div className="grid grid-cols-2 gap-3">
@@ -468,6 +476,19 @@ function DevicesAdmin() {
               <div className="col-span-2 -mt-1 text-xs text-subtle">
                 Tọa độ điền sẵn từ GPS thiết bị gửi lên (điểm gần nhất). Sửa lại nếu thiết bị đang ở chỗ khác chỗ lắp tủ.
               </div>
+            )}
+            {imeiChoices.length > 0 ? (
+              <div className="col-span-2 space-y-1 rounded-md border border-st-offline/40 bg-st-offline/10 p-3 text-sm">
+                <div><b>LTID này gửi frame từ 2 IMEI khác nhau</b>: một trong hai có thể là frame giả. Đối chiếu tem trên module EC25 (hoặc log UART2) rồi chọn IMEI của tủ thật:</div>
+                <Select value={form.imei} onChange={set('imei')} aria-label="IMEI của tủ thật">
+                  <option value="">— chọn IMEI —</option>
+                  {imeiChoices.map((i) => <option key={i} value={i}>{i}</option>)}
+                </Select>
+              </div>
+            ) : (
+              <Field label="IMEI (tự lấy từ frame; frame sau mang IMEI khác sẽ bị bỏ qua)" className="col-span-2">
+                <Input value={form.imei} onChange={set('imei')} placeholder="để trống = ghi nhận từ frame đầu tiên" className="font-mono" />
+              </Field>
             )}
             <Field label="Quận / huyện">
               <Select value={form.districtId} onChange={(e) => setForm({ ...form, districtId: e.target.value, wardId: '' })}>

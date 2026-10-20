@@ -209,6 +209,7 @@ const ALARM_SEED: Seed[] = [
   { type: 'low_pf', msg: (v) => `cosφ tổng ${v} khi đèn sáng`, v: () => +between(0.7, 0.84).toFixed(2) },
   { type: 'gps_nofix', msg: () => 'LGPS=X sau 10 phút từ khi khởi động', v: () => 0 },
   { type: 'gps_drift', msg: (v) => `GPS thiết bị cách vị trí khai báo ${v} m`, v: () => Math.floor(between(220, 900)) },
+  { type: 'spoof_suspect', msg: () => 'Frame mang LTID của tủ với IMEI 869999000123456 khác IMEI đã ghi nhận: frame bị bỏ qua', v: () => 0 },
   { type: 'schedule_mismatch', msg: () => 'Nhánh 1 tắt trong giờ lịch (18:00–05:45) quá 10 phút', v: () => 0 },
 ];
 const HISTORY_ONLY: Seed[] = [

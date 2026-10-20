@@ -171,6 +171,7 @@ export const ERROR_CATALOG: ErrorDef[] = [
   { code: 'E802', type: 'gps_drift', title: 'Lệch vị trí GPS', category: 'Thiết bị', severity: 'minor', source: 'GPS thiết bị cách vị trí khai báo > 200 m', cause: 'Tọa độ khai báo sai hoặc bộ điều khiển bị lắp sang tủ khác.', checks: ['Đối chiếu vị trí thực tế, cập nhật tọa độ tủ.'], supported: true },
   { code: 'E803', type: 'battery_low', title: 'Pin dự phòng yếu', category: 'Thiết bị', severity: 'minor', source: 'LBAT < ngưỡng mV', cause: 'Pin dự phòng của bộ điều khiển xuống cấp.', checks: ['Thay pin dự phòng.'], supported: true },
   { code: 'E804', type: 'fw_unsafe', title: 'Firmware cũ không lọc LTID', category: 'Thiết bị', severity: 'major', source: 'fw_profile = v2-1307ebc', cause: 'Firmware cũ thực thi mọi lệnh trên topic chung — web chặn điều khiển tủ này.', checks: ['Nâng cấp firmware LTE lên bản có lọc LTID.'], supported: true },
+  { code: 'E805', type: 'spoof_suspect', title: 'Nghi giả mạo tủ (IMEI không khớp)', category: 'Thiết bị', severity: 'major', source: 'Frame mang LTID của tủ nhưng IMEI (LIME) khác IMEI đã ghi nhận; frame bị bỏ qua', cause: 'Ai đó gửi dữ liệu giả lên broker bằng LTID của tủ, hoặc modem EC25 của tủ vừa được thay.', checks: ['Nếu vừa thay modem: Chấp nhận IMEI mới trong cảnh báo (hoặc Học lại IMEI).', 'Nếu không thay gì: dữ liệu giả, giữ nguyên IMEI; xem IP/thời điểm trong frame thô và báo người quản trị hệ thống.'], supported: true },
 ];
 
 export const ERROR_BY_TYPE: Partial<Record<AlarmType, ErrorDef>> = Object.fromEntries(ERROR_CATALOG.map((e) => [e.type, e]));

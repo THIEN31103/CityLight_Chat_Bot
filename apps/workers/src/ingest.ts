@@ -6,12 +6,15 @@
 //  - measurement alarms (shared/rules.ts, M5): thresholds (cabinet > zone > default), schedule applied by
 //    the server, clock, GPS; debounced per cabinet; config reloaded on Redis "cl:config" + every 60 s
 //  - publish state + alarm events on Redis for the API's Socket.IO gateway
+//  - anonymous-broker guards (S42): per-LTID frame budget, implausible values dropped, frames whose IMEI does
+//    not match the cabinet's are not applied (E805 spoof_suspect, shared/identity.ts)
 import mqtt from 'mqtt';
 import { Redis } from 'ioredis';
-import { TOPICS, parseBoot, parseDemo, parseTelemetry, type TelemetryPatch } from '@citylight/coreif';
+import { TOPICS, parseBoot, parseDemo, parseTelemetry, sanitizeTelemetry, type TelemetryPatch } from '@citylight/coreif';
 import { createSql } from '@citylight/db';
 import {
-  Debouncer, MEASUREMENT_TYPES, OFFLINE_AFTER_MS, SWING_WINDOW_MS, activeHealthAlarms, defaultThresholds, deriveCabinetStatus, errorOf, measurementAlarms,
+  Debouncer, FrameBudget, MEASUREMENT_TYPES, OFFLINE_AFTER_MS, SPOOF_HOLD_MS, SWING_WINDOW_MS, activeHealthAlarms, checkImei, defaultThresholds,
+  deriveCabinetStatus, errorOf, measurementAlarms, normImei,
   type AlarmType, type FwProfile, type GeoPoint, type HealthInput, type MeasureSample, type ScheduleWindow, type Thresholds,
 } from '@citylight/shared';
 import { EVENTS_CHANNEL, type AlarmEvent, type CabinetStateEvent, type WorkerEvent } from './events';
@@ -50,6 +53,10 @@ interface Runtime extends HealthInput {
   schedule: ScheduleWindow | null;
   samples: MeasureSample[];
   debouncer: Debouncer;
+  /** registered IMEI (cabinets.imei); null = learn it from the next frame that carries one */
+  imei: string | null;
+  /** last frame with a foreign IMEI: keeps E805 open SPOOF_HOLD_MS */
+  spoof: { lastAt: number; imei: string | null; frames: number } | null;
 }
 
 const byLtid = new Map<string, Runtime>();
@@ -65,10 +72,10 @@ async function loadCabinets(ids: string[] | null) {
       v_l1: number | null; v_l2: number | null; v_l3: number | null; i_l1: number | null; i_l2: number | null; i_l3: number | null;
       leak_ma: number | null; temp_c: number | null; temp_sensor_fault: boolean | null; battery_mv: number | null;
       lat: number | null; lng: number | null; device_time: Date | null; device_time_changed_at: Date | null;
-      zone1_id: string | null; decl_lat: number; decl_lng: number;
+      zone1_id: string | null; decl_lat: number; decl_lng: number; imei: string | null;
     }[]
   >`
-    SELECT c.id, c.ltid, c.code, c.name, c.fw_profile, c.zone1_id, ST_Y(c.location) AS decl_lat, ST_X(c.location) AS decl_lng,
+    SELECT c.id, c.ltid, c.code, c.name, c.fw_profile, c.zone1_id, ST_Y(c.location) AS decl_lat, ST_X(c.location) AS decl_lng, c.imei,
            s.status, s.online, s.last_seen_at, s.last_boot_at, s.bus_status, s.branch1_on, s.branch2_on, s.manual_mode,
            s.plc_online, s.pm_online, s.v_l1, s.v_l2, s.v_l3, s.i_l1, s.i_l2, s.i_l3, s.leak_ma, s.temp_c, s.temp_sensor_fault,
            s.battery_mv, ST_Y(s.gps_device) AS lat, ST_X(s.gps_device) AS lng, s.device_time, s.device_time_changed_at
@@ -89,6 +96,7 @@ async function loadCabinets(ids: string[] | null) {
       pf: { l1: null, l2: null, l3: null, total: null }, pTotalKw: null, doorOpen: null, contactorFault: null,
       zoneId: r.zone1_id, declaredLocation: { lat: Number(r.decl_lat), lng: Number(r.decl_lng) },
       thresholds: defaultThresholds(), schedule: null, samples: [], debouncer: new Debouncer(),
+      imei: normImei(r.imei), spoof: null,
     };
     byLtid.set(rt.ltid, rt);
     byId.set(rt.id, rt);
@@ -107,6 +115,8 @@ async function loadRegistry() {
     rt.activeAlarms.set(a.type, { id: a.id, severity: a.severity });
     // measurement alarms open in the DB stay open until their condition is gone for the close hold
     if (MEASUREMENT_TYPES.includes(a.type)) rt.debouncer.seed([[a.type, a.message]]);
+    // an open E805 survives a restart for one more hold period
+    if (a.type === 'spoof_suspect') rt.spoof = { lastAt: Date.now(), imei: null, frames: 0 };
   }
   const boots = await sql<{ cabinet_id: string; ts: Date }[]>`
     SELECT cabinet_id, ts FROM device_events WHERE kind = 'boot' AND ts > now() - interval '24 hours'`;
@@ -120,8 +130,8 @@ async function loadRegistry() {
  * position, decommissioned ones dropped. Runtime state of unchanged cabinets is kept.
  */
 async function refreshRegistry() {
-  const rows = await sql<{ id: string; ltid: string; code: string; name: string; zone1_id: string | null; fw_profile: FwProfile; lat: number; lng: number }[]>`
-    SELECT id, ltid, code, name, zone1_id, fw_profile, ST_Y(location) AS lat, ST_X(location) AS lng FROM cabinets WHERE active`;
+  const rows = await sql<{ id: string; ltid: string; code: string; name: string; zone1_id: string | null; fw_profile: FwProfile; lat: number; lng: number; imei: string | null }[]>`
+    SELECT id, ltid, code, name, zone1_id, fw_profile, ST_Y(location) AS lat, ST_X(location) AS lng, imei FROM cabinets WHERE active`;
   const seen = new Set<string>();
   const fresh: string[] = [];
   for (const r of rows) {
@@ -138,6 +148,11 @@ async function refreshRegistry() {
       byLtid.set(ltid, rt);
     }
     Object.assign(rt, { code: r.code, name: r.name, zoneId: r.zone1_id, fwProfile: r.fw_profile, declaredLocation: { lat: Number(r.lat), lng: Number(r.lng) } });
+    // admin accepted a new IMEI or asked to re-learn it: E805 closes on the next sweep
+    if (normImei(r.imei) !== rt.imei) {
+      rt.imei = normImei(r.imei);
+      rt.spoof = null;
+    }
   }
   let dropped = 0;
   for (const [id, rt] of byId) {
@@ -190,13 +205,24 @@ const telemetryRows: Record<string, unknown>[] = [];
 const rawRows: { ts: Date; topic: string; ltid: string | null; payload: string; parse_error: string | null }[] = [];
 const dirty = new Set<string>();
 const stateEvents = new Map<string, CabinetStateEvent>();
-const stats = { frames: 0, telemetry: 0, unknown: 0, parseErrors: 0, flushes: 0, lastFlushMs: 0, lagMs: 0 };
+const stats = { frames: 0, telemetry: 0, unknown: 0, parseErrors: 0, throttled: 0, sanitized: 0, spoofed: 0, flushes: 0, lastFlushMs: 0, lagMs: 0 };
+/** per-LTID budget: firmware sends <= 1 frame/s; a flood under one LTID is dropped before it costs a DB write */
+const budget = new FrameBudget(5, 1);
+const lastWarn = new Map<string, number>();
+function warnOnce(key: string, msg: string) {
+  const now = Date.now();
+  if (now - (lastWarn.get(key) ?? 0) < 60_000) return;
+  lastWarn.set(key, now);
+  if (lastWarn.size > 10_000) lastWarn.clear();
+  console.warn(msg);
+}
 
+/** parseError also carries guard notes (dropped values, foreign IMEI): frames_raw is the debugging record. */
 function raw(topic: string, ltid: string | null, payload: string, parseError: string | null = null) {
   rawRows.push({ ts: new Date(), topic, ltid, payload, parse_error: parseError });
 }
 
-const unknownSeen = new Map<string, { imei: string | null; frames: number; gps: { lat: number; lng: number } | null }>();
+const unknownSeen = new Map<string, { imei: string | null; otherImei: string | null; frames: number; gps: { lat: number; lng: number } | null }>();
 
 // ---------------- alarms ----------------
 
@@ -237,7 +263,8 @@ async function syncAlarms(rt: Runtime, now = Date.now()) {
     }
   }
   for (const [type, a] of [...rt.activeAlarms]) {
-    if (want.has(type) || !errorOf(type)) continue;
+    // E805 is managed by the identity guard (onSpoof / sweep), not by the health / measurement rules
+    if (want.has(type) || !errorOf(type) || type === 'spoof_suspect') continue;
     const ended = new Date(now);
     await sql`UPDATE alarms SET active = false, ended_at = ${ended} WHERE id = ${a.id}`;
     rt.activeAlarms.delete(type);
@@ -246,6 +273,39 @@ async function syncAlarms(rt: Runtime, now = Date.now()) {
   const critical = [...rt.activeAlarms.values()].some((a) => a.severity === 'critical');
   const status = deriveCabinetStatus(rt, critical);
   if (status !== rt.status) rt.status = status;
+}
+
+/** A frame under this cabinet's LTID with another IMEI: not applied; E805 opened (closed by sweep after the hold). */
+async function onSpoof(rt: Runtime, imei: string | null, now = Date.now()) {
+  stats.spoofed++;
+  rt.spoof = { lastAt: now, imei, frames: (rt.spoof?.frames ?? 0) + 1 };
+  warnOnce(`spoof:${rt.ltid}`, `[ingest] ${rt.ltid}: frame with foreign IMEI ${imei ?? 'X'} ignored (registered ${rt.imei})`);
+  if (rt.activeAlarms.has('spoof_suspect')) return;
+  const def = errorOf('spoof_suspect')!;
+  const started = new Date(now);
+  const message = `Frame mang LTID ${rt.ltid} với IMEI ${imei ?? '(không có)'} khác IMEI đã ghi nhận ${rt.imei}: frame bị bỏ qua`;
+  const rows = await sql<{ id: string }[]>`
+    INSERT INTO alarms (cabinet_id, code, type, severity, message, started_at, active)
+    VALUES (${rt.id}, ${def.code}, 'spoof_suspect', ${def.severity}, ${message}, ${started}, true)
+    ON CONFLICT (cabinet_id, type) WHERE active DO NOTHING
+    RETURNING id`;
+  if (rows[0]) {
+    rt.activeAlarms.set('spoof_suspect', { id: rows[0].id, severity: def.severity });
+    void publish({ type: 'alarm.raised', alarm: alarmEvent(rt, rows[0].id, 'spoof_suspect', message, started, null) });
+    markChanged(rt);
+  }
+}
+
+/** E805 closes SPOOF_HOLD_MS after the last foreign frame, or at once when the admin changed the IMEI. */
+async function closeSpoofIfQuiet(rt: Runtime, now: number) {
+  const a = rt.activeAlarms.get('spoof_suspect');
+  if (!a || (rt.spoof && now - rt.spoof.lastAt < SPOOF_HOLD_MS)) return;
+  const ended = new Date(now);
+  await sql`UPDATE alarms SET active = false, ended_at = ${ended} WHERE id = ${a.id}`;
+  rt.activeAlarms.delete('spoof_suspect');
+  rt.spoof = null;
+  void publish({ type: 'alarm.cleared', alarm: alarmEvent(rt, a.id, 'spoof_suspect', '', ended, ended) });
+  markChanged(rt);
 }
 
 function markChanged(rt: Runtime, cameOnline = false) {
@@ -269,16 +329,43 @@ async function onTelemetry(payload: string) {
     raw(TOPICS.telemetry, null, payload, (e as Error).message);
     return;
   }
-  raw(TOPICS.telemetry, t.ltid, payload);
+  if (!budget.take(t.ltid)) {
+    // > 1 frame/s sustained under one LTID: not the firmware; dropped without a DB write
+    stats.throttled++;
+    warnOnce(`thr:${t.ltid}`, `[ingest] ${t.ltid}: too many frames, dropping (budget 5 + 1/s)`);
+    return;
+  }
+  const { patch, dropped } = sanitizeTelemetry(t);
+  if (dropped.length) {
+    stats.sanitized++;
+    warnOnce(`san:${t.ltid}`, `[ingest] ${t.ltid}: implausible values dropped: ${dropped.join(', ')}`);
+    t = patch;
+  }
   const rt = byLtid.get(t.ltid);
+  const verdict = rt ? checkImei(rt.imei, t.imei) : 'ok';
+  const foreign = verdict === 'mismatch' ? `IMEI ${normImei(t.imei) ?? 'X'} khác IMEI đã ghi nhận` : null;
+  raw(TOPICS.telemetry, t.ltid, payload, foreign ?? (dropped.length ? `bỏ giá trị: ${dropped.join(', ')}` : null));
   if (!rt) {
     stats.unknown++;
-    const u = unknownSeen.get(t.ltid) ?? { imei: t.imei, frames: 0, gps: null };
+    const imei = normImei(t.imei);
+    const u = unknownSeen.get(t.ltid) ?? { imei, otherImei: null, frames: 0, gps: null };
     u.frames++;
-    u.imei = t.imei ?? u.imei;
+    // first IMEI wins; a different one under the same LTID is kept apart so the admin sees the conflict
+    if (!u.imei) u.imei = imei;
+    else if (imei && imei !== u.imei) u.otherImei = imei;
     if (t.gps) u.gps = { lat: t.gps.lat, lng: t.gps.lng };
     unknownSeen.set(t.ltid, u);
     return;
+  }
+  if (verdict === 'mismatch') {
+    await onSpoof(rt, normImei(t.imei));
+    return;
+  }
+  if (verdict === 'learn') {
+    rt.imei = normImei(t.imei);
+    await sql`UPDATE cabinets SET imei = ${rt.imei} WHERE id = ${rt.id} AND imei IS NULL`;
+    await sql`INSERT INTO activity_logs (user_email, action, target_type, target_id, target_name, new_value)
+              VALUES ('hệ thống', 'Ghi nhận IMEI tủ (frame đầu tiên)', 'cabinet', ${rt.id}, ${rt.code}, ${rt.imei})`;
   }
   stats.telemetry++;
   indexImei(t.imei, rt);
@@ -394,7 +481,8 @@ async function onDemo(payload: string) {
     const rt = ltid ? byLtid.get(ltid) : undefined;
     if (!rt) return;
     if (d.kind === 'provision') {
-      indexImei(d.fields.LIME ?? null, rt);
+      // a forged provision frame must not map its IMEI (and so its boot frames) onto this cabinet
+      if (checkImei(rt.imei, d.fields.LIME ?? null) !== 'mismatch') indexImei(d.fields.LIME ?? null, rt);
     } else if (d.kind === 'selftest') {
       await sql`INSERT INTO device_events (cabinet_id, kind, data) VALUES (${rt.id}, 'selftest', ${JSON.stringify({ summary: d.summary, rx: d.rx, de: d.de, tx: d.tx, fail: d.fail, result: d.resultLine })}::jsonb)`;
       if (d.fail) {
@@ -459,9 +547,15 @@ async function flush() {
       const list = [...unknownSeen.entries()];
       unknownSeen.clear();
       for (const [ltid, u] of list) {
-        await sql`INSERT INTO unknown_devices (ltid, imei, frames, gps) VALUES (${ltid}, ${u.imei}, ${u.frames}, ${geom(u.gps)})
+        // the first IMEI seen is kept; a different one goes to other_imei (registration then asks which is real)
+        await sql`INSERT INTO unknown_devices (ltid, imei, other_imei, frames, gps) VALUES (${ltid}, ${u.imei}, ${u.otherImei}, ${u.frames}, ${geom(u.gps)})
                   ON CONFLICT (ltid) DO UPDATE SET last_seen_at = now(), frames = unknown_devices.frames + excluded.frames,
-                  imei = coalesce(excluded.imei, unknown_devices.imei), gps = coalesce(excluded.gps, unknown_devices.gps)`;
+                  imei = coalesce(unknown_devices.imei, excluded.imei),
+                  other_imei = coalesce(unknown_devices.other_imei,
+                    CASE WHEN unknown_devices.imei IS NULL THEN excluded.other_imei
+                         WHEN excluded.imei IS NOT NULL AND excluded.imei <> unknown_devices.imei THEN excluded.imei
+                         ELSE excluded.other_imei END),
+                  gps = coalesce(excluded.gps, unknown_devices.gps)`;
       }
     }
     if (events.length) await publish({ type: 'cabinet.state', items: events });
@@ -495,7 +589,7 @@ async function markOffline(list: Runtime[], now: number) {
     const chunk = ids.slice(i, i + MAX_BATCH);
     const closed = await sql<{ id: string; cabinet_id: string; type: AlarmType }[]>`
       UPDATE alarms SET active = false, ended_at = ${started}
-      WHERE active AND type <> 'offline' AND cabinet_id = ANY(${chunk}::uuid[])
+      WHERE active AND type NOT IN ('offline', 'spoof_suspect') AND cabinet_id = ANY(${chunk}::uuid[])
       RETURNING id, cabinet_id, type`;
     for (const c of closed) {
       const rt = byId.get(c.cabinet_id)!;
@@ -522,6 +616,7 @@ async function sweep() {
   const wentSilent: Runtime[] = [];
   for (const rt of byId.values()) {
     updateBootCounters(rt, now);
+    if (rt.activeAlarms.has('spoof_suspect')) await closeSpoofIfQuiet(rt, now);
     const silent = !rt.lastSeenAt || now - Date.parse(rt.lastSeenAt) > offlineAfterMs;
     if (rt.online && silent) {
       wentSilent.push(rt);
@@ -592,7 +687,7 @@ mq.on('message', (topic, buf) => {
 setInterval(() => void flush(), FLUSH_MS);
 setInterval(() => void (chain = chain.then(sweep)), SWEEP_MS);
 setInterval(() => {
-  console.log(`[ingest] frames ${stats.frames} · telemetry ${stats.telemetry} · unknown ${stats.unknown} · parse errors ${stats.parseErrors} · last flush ${stats.lastFlushMs} ms · queue ${telemetryRows.length}`);
+  console.log(`[ingest] frames ${stats.frames} · telemetry ${stats.telemetry} · unknown ${stats.unknown} · parse errors ${stats.parseErrors} · throttled ${stats.throttled} · sanitized ${stats.sanitized} · foreign IMEI ${stats.spoofed} · last flush ${stats.lastFlushMs} ms · queue ${telemetryRows.length}`);
   void redis.set('cl:ingest:stats', JSON.stringify({ ...stats, at: Date.now(), queue: telemetryRows.length })).catch(() => undefined);
 }, 30_000);
 

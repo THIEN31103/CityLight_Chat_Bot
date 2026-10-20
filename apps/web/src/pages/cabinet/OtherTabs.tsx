@@ -12,6 +12,7 @@ import { DimmingEditor } from '@/components/DimmingEditor';
 import { DIMMING_SOURCE } from '@/pages/DimmingPage';
 import { ErrorCodeBadge } from '@/components/ErrorHelp';
 import { RelocateGpsButton } from './RelocateGps';
+import { ImeiButton } from './ImeiDecision';
 
 type Detail = CabinetDetail & { cabinet: { districtName: string; wardName: string } };
 
@@ -231,7 +232,7 @@ export function InfoTab({ detail, onLocate }: { detail: Detail; onLocate: (p: Ge
         <CardHeader title="Thiết bị" />
         <div className="px-4 py-2">
           <KV label="Mã thiết bị (LTID)" value={c.ltid} />
-          <KV label="IMEI" value={c.imei} />
+          <KV label="IMEI" value={<span className="inline-flex items-center gap-2"><span className="font-mono">{c.imei || '(chưa có)'}</span><ImeiButton cabinetId={c.id} label={`${c.code} - ${c.name}`} text="IMEI…" /></span>} />
           <KV label="Firmware" value={<Badge tone={c.fwProfile === 'v2-1307ebc' ? 'orange' : 'blue'}>{c.fwProfile}</Badge>} />
           <KV label="Pin" value={fmtNum(s.batteryMv, 0, 'mV')} />
           <KV label="SIM seri / nhà mạng / sóng" value={<span className="text-subtle">Chờ firmware</span>} />

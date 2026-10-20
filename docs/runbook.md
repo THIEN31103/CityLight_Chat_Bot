@@ -92,3 +92,8 @@ Tạo lại `db` làm DB gián đoạn ~7 s; ingest giữ frame trong bộ đệ
 
 - Broker anonymous, mở Internet: ai cũng gửi được telemetry giả đúng LTID (lệnh thì ACL chặn). Đã thấy máy quét lạ kết nối. Hướng: firmware gửi user/pass ở `AT+QMTCONN` + EMQX bật authenticator (**chặn mọi tủ chưa có user/pass**, nên đổi cùng lúc với đợt nạp firmware) + ACL theo username.
 - Chưa có domain: dùng `sslip.io`. Có domain thì đổi `SITE_HOST`, `dc up -d caddy`.
+- **Lớp chống giả mạo đang chạy (S42)**, trong lúc broker còn ẩn danh:
+  - Khóa IMEI theo tủ. Frame IMEI lạ bị bỏ qua, mở **E805 "Nghi giả mạo tủ"**. Xử lý trong cảnh báo hoặc tab Thông tin → "IMEI…": *không ai thay modem* = giữ nguyên, không bấm gì; *vừa thay modem* = "Chấp nhận (đã thay modem)"; đứng ở tủ và không rõ IMEI = "Học lại IMEI".
+  - Giá trị vô lý → null; quá 1 frame/s cho một LTID → bỏ. Đếm trong log ingest: `throttled · sanitized · foreign IMEI`.
+  - EMQX: 500 kết nối/s, gói ≤ 8 KB, flapping → cấm 5 phút. Xem cấm: `docker exec citylight-emqx emqx ctl banned list`, gỡ: `emqx ctl banned delete clientid <id>`.
+  - Vẫn giả được: ack lệnh trên `stm32/ec25/echo` (không có IMEI). Hết hẳn khi có user/pass.

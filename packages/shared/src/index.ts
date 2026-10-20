@@ -11,3 +11,4 @@ export * from './incidents';
 export * from './gis';
 export * from './dimming';
 export * from './relocate';
+export * from './identity';

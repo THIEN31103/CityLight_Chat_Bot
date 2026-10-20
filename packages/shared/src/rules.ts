@@ -233,5 +233,7 @@ export const RAISED_ALARM_TYPES: readonly AlarmType[] = [
   'phase_loss', 'temp_sensor_fault', 'gps_nofix', 'fw_unsafe',
   // events: boot, LDIA report, command outcomes
   'reboot', 'rs485_selftest_fail', 'cmd_rejected', 'cmd_unconfirmed', 'cmd_timeout',
+  // identity guard (identity.ts)
+  'spoof_suspect',
   ...MEASUREMENT_TYPES,
 ];

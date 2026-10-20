@@ -388,6 +388,8 @@ export const deviceEvents = pgTable(
 export const unknownDevices = pgTable('unknown_devices', {
   ltid: text('ltid').primaryKey(),
   imei: text('imei'),
+  /** a second, different IMEI under the same LTID (spoofing or a reused LTID): registration must pick one */
+  otherImei: text('other_imei'),
   firstSeenAt: tsz('first_seen_at').notNull().defaultNow(),
   lastSeenAt: tsz('last_seen_at').notNull().defaultNow(),
   frames: integer('frames').notNull().default(1),

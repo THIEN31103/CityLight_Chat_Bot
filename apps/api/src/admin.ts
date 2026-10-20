@@ -17,6 +17,7 @@ const Name = z.string().trim().min(1).max(120);
 const Point = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180) });
 const CabinetCode = z.string().trim().min(2).max(40).regex(/^[\w.-]+$/, 'chỉ chữ, số, . _ -');
 const Ltid = z.string().trim().min(1).max(32).regex(/^[A-Za-z0-9_-]+$/).transform((s) => s.toUpperCase());
+const Imei = z.string().trim().regex(/^\d{14,17}$/, 'IMEI 14–17 chữ số');
 
 const CabinetBody = z.object({
   ltid: Ltid,
@@ -31,8 +32,10 @@ const CabinetBody = z.object({
   zone1Id: uuid.nullish(),
   fwProfile: z.enum(['v2-1307ebc', 'v2-current', 'v3']).default('v2-current'),
   notes: z.string().trim().max(2000).nullish(),
+  /** only when registering: which IMEI to trust when the unknown device showed two (S42); default = the one it reported */
+  imei: Imei.nullish(),
 });
-const CabinetPatch = CabinetBody.partial().omit({ fwProfile: true }).extend({ fwProfile: z.enum(['v2-1307ebc', 'v2-current', 'v3']).optional() });
+const CabinetPatch = CabinetBody.partial().omit({ imei: true }).omit({ fwProfile: true }).extend({ fwProfile: z.enum(['v2-1307ebc', 'v2-current', 'v3']).optional() });
 
 export const SETTING_DEFAULTS = { offline_after_s: OFFLINE_AFTER_MS / 1000, lamp_group_labels: LAMP_GROUP_LABELS as Record<string, string>, price_per_kwh: 2000 };
 const SettingsBody = z.object({
@@ -197,18 +200,24 @@ export class AdminService {
     await this.checkPlaces(u, { ...b, districtId });
     const dup = (await this.sql<{ ltid: string; code: string }[]>`SELECT ltid, code FROM cabinets WHERE upper(ltid) = ${b.ltid} OR code = ${b.code}`)[0];
     if (dup) throw new ApiError(409, 'duplicate', dup.ltid.toUpperCase() === b.ltid ? `LTID ${b.ltid} đã được đăng ký` : `Mã tủ ${b.code} đã có`);
+    // S42: the IMEI becomes the cabinet's identity on the anonymous broker. Two IMEIs under one unknown LTID
+    // means someone else uses it too: the admin must say which one is the real cabinet.
+    const unk = (await this.sql<{ imei: string | null; other_imei: string | null }[]>`SELECT imei, other_imei FROM unknown_devices WHERE upper(ltid) = ${b.ltid}`)[0];
+    if (unk?.other_imei && !b.imei)
+      throw new ApiError(409, 'imei_conflict', `LTID ${b.ltid} đã gửi frame với 2 IMEI khác nhau (${unk.imei} và ${unk.other_imei}): chọn IMEI của tủ thật`);
+    const imei = b.imei ?? unk?.imei ?? null;
     const id = await this.sql.begin(async (tx) => {
       const r = (await tx<{ id: string }[]>`
         INSERT INTO cabinets (organization_id, ltid, code, name, address, street, ward_id, district_id, management_unit_id, zone1_id, location, fw_profile, notes, imei)
         VALUES (${u.organizationId}, ${b.ltid}, ${b.code}, ${b.name}, ${b.address ?? null}, ${b.street ?? null}, ${b.wardId ?? null}, ${districtId},
                 ${b.managementUnitId ?? null}, ${b.zone1Id ?? null}, ST_SetSRID(ST_MakePoint(${b.location.lng}, ${b.location.lat}), 4326), ${b.fwProfile}, ${b.notes ?? null},
-                (SELECT imei FROM unknown_devices WHERE upper(ltid) = ${b.ltid}))
+                ${imei})
         RETURNING id`)[0]!;
       await tx`INSERT INTO cabinet_state (cabinet_id, status, online) VALUES (${r.id}, 'offline', false) ON CONFLICT DO NOTHING`;
       await tx`DELETE FROM unknown_devices WHERE upper(ltid) = ${b.ltid}`;
       return r.id;
     });
-    await this.log(u, 'Đăng ký tủ', 'cabinet', id, `${b.code} - ${b.name}`, `LTID ${b.ltid}`, ip);
+    await this.log(u, 'Đăng ký tủ', 'cabinet', id, `${b.code} - ${b.name}`, `LTID ${b.ltid}${imei ? `, IMEI ${imei}` : ''}`, ip);
     await this.reload('registry');
     return { id };
   }
@@ -265,6 +274,38 @@ export class AdminService {
     await this.log(u, 'Cập nhật vị trí tủ theo GPS', 'cabinet', cid, cur.code, JSON.stringify(value), ip);
     await this.reload('registry');
     return { id: cid, location: s.gps, movedM: s.distanceM };
+  }
+
+  /** IMEIs seen under this cabinet's LTID in the last 24 h (from frames_raw), for the E805 decision. */
+  async imeiCandidates(u: SessionUser, id: string) {
+    const cid = await this.cabinets.assertCabinet(u.scope, id);
+    const c = (await this.sql<{ ltid: string; imei: string | null }[]>`SELECT ltid, imei FROM cabinets WHERE id = ${cid}`)[0]!;
+    const rows = await this.sql<{ imei: string | null; frames: number; last: Date }[]>`
+      SELECT (regexp_match(payload, 'LIME''([^&$]*)'))[1] AS imei, count(*)::int AS frames, max(ts) AS last
+      FROM frames_raw WHERE upper(ltid) = ${c.ltid.toUpperCase()} AND topic = 'electrical_cabinets_default' AND ts > now() - interval '24 hours'
+      GROUP BY 1 ORDER BY max(ts) DESC LIMIT 20`;
+    return {
+      registered: c.imei,
+      seen: rows.map((r) => ({ imei: r.imei && /^\d{14,17}$/.test(r.imei) ? r.imei : null, frames: r.frames, lastSeenAt: r.last.toISOString(), registered: r.imei === c.imei })),
+    };
+  }
+
+  /**
+   * Accept a new IMEI (modem replaced) or clear it (null: the next frame's IMEI is learned). Ingest reloads the
+   * registry; an open E805 closes on its next sweep.
+   */
+  async setImei(u: SessionUser, id: string, body: unknown, ip?: string) {
+    const cid = await this.cabinets.assertCabinet(u.scope, id);
+    const b = z.object({ imei: Imei.nullable() }).parse(body);
+    const cur = (await this.sql<{ code: string; imei: string | null }[]>`SELECT code, imei FROM cabinets WHERE id = ${cid} AND organization_id = ${u.organizationId}`)[0];
+    if (!cur) throw new ApiError(404, 'not_found', 'Không tìm thấy tủ');
+    if (b.imei && (await this.sql`SELECT 1 FROM cabinets WHERE imei = ${b.imei} AND id <> ${cid}`).length)
+      throw new ApiError(409, 'duplicate', `IMEI ${b.imei} đang thuộc một tủ khác`);
+    await this.sql`UPDATE cabinets SET imei = ${b.imei}, updated_at = now() WHERE id = ${cid}`;
+    await this.sql`INSERT INTO activity_logs (user_id, user_email, action, target_type, target_id, target_name, old_value, new_value, ip)
+                   VALUES (${u.id}, ${u.email}, ${b.imei ? 'Đổi IMEI tủ' : 'Học lại IMEI tủ'}, 'cabinet', ${cid}, ${cur.code}, ${cur.imei}, ${b.imei ?? '(học từ frame tiếp theo)'}, ${ip ?? null})`;
+    await this.reload('registry');
+    return { id: cid, imei: b.imei };
   }
 
   /** Decommission: hidden everywhere (scopeWhere), workers drop it, open alarms closed, history kept. */
@@ -355,6 +396,10 @@ export class AdminController {
   update(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.updateCabinet(r.user!, id, b, r.ip); }
   @Post('cabinets/:id/location-from-gps') @HttpCode(200) @RequirePerm('admin.devices')
   relocate(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.relocateFromGps(r.user!, id, b, r.ip); }
+  @Get('cabinets/:id/imei-candidates') @RequirePerm('admin.devices')
+  imeiCandidates(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.imeiCandidates(r.user!, id); }
+  @Put('cabinets/:id/imei') @RequirePerm('admin.devices')
+  setImei(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.setImei(r.user!, id, b, r.ip); }
   @Post('cabinets/:id/decommission') @HttpCode(204) @RequirePerm('admin.devices')
   decommission(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.setActive(r.user!, id, false, r.ip); }
   @Post('cabinets/:id/reactivate') @HttpCode(204) @RequirePerm('admin.devices')

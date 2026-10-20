@@ -28,9 +28,20 @@ export interface CabinetOptions {
   location: { lat: number; lng: number };
   telemetryMs?: number;
   log?: (msg: string) => void;
+  /** default: derived from the LTID (stable across runs: the server locks a cabinet to its first IMEI, S42) */
+  imei?: string;
 }
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
+
+/** Stable 15-digit IMEI-like id for an LTID (FNV-1a), so a restarted simulator is the same "modem". */
+export function imeiFor(ltid: string): string {
+  let h = 0x811c9dc5;
+  for (const ch of ltid.toUpperCase()) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193) >>> 0;
+  let h2 = h;
+  for (const ch of `${ltid}#imei`) h2 = Math.imul(h2 ^ ch.charCodeAt(0), 0x01000193) >>> 0;
+  return `86${String(h).padStart(10, '0').slice(0, 7)}${String(h2).padStart(10, '0').slice(0, 6)}`;
+}
 const f1 = (n: number) => n.toFixed(1);
 
 function minutes(hhmm: string) {
@@ -61,7 +72,7 @@ export class SimCabinet {
 
   constructor(private readonly o: CabinetOptions) {
     this.ltid = o.ltid.toUpperCase();
-    this.imei = `86${Math.floor(rand(1e12, 9e12))}`;
+    this.imei = o.imei ?? imeiFor(this.ltid);
     if (o.fault === 'logo_lost') this.frozenPtim = isoVn(new Date(Date.now() - 14 * 60_000)).replace('+07:00', '.000+07:00');
   }
 
