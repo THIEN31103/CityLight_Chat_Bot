@@ -21,3 +21,5 @@ data/
 # Playwright (apps/e2e)
 apps/e2e/test-results/
 apps/e2e/report/
+# age public keys for backup encryption: per deployment, set up on the VPS (runbook 4)
+infra/backup-recipients.txt

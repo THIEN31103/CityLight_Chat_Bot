@@ -43,6 +43,14 @@ if [ -z "$newest" ]; then add "no backup file"; else
   age_h=$(( ($(date +%s) - $(stat -c %Y "$newest")) / 3600 ))
   [ "$age_h" -ge "$BACKUP_MAX_H" ] && add "newest backup is ${age_h} h old ($(basename "$newest"))"
 fi
+# encryption configured (S46): the laptop only pulls .age copies, so a stale one means no fresh off-VPS backup
+if [ -s "$ROOT/infra/backup-recipients.txt" ]; then
+  newest_enc=$(ls -t "$ROOT"/backups/db-*.sql.gz.age 2>/dev/null | head -1)
+  if [ -z "$newest_enc" ]; then add "no encrypted backup (.age): is age installed?"; else
+    age_h=$(( ($(date +%s) - $(stat -c %Y "$newest_enc")) / 3600 ))
+    [ "$age_h" -ge "$BACKUP_MAX_H" ] && add "newest encrypted backup is ${age_h} h old ($(basename "$newest_enc"))"
+  fi
+fi
 
 # registered cabinets but no frame at all for QUIET_MIN: broker or ingest is stuck (one offline cabinet is an alarm, not this)
 reg=$(SQL "SELECT count(*) FROM cabinets WHERE active")

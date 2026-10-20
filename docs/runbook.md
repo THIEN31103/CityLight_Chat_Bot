@@ -41,7 +41,25 @@ Từ laptop: `npm run e2e:vps` (Playwright, 6 kiểm tra không cần đăng nh�
 ## 4. Backup và khôi phục
 
 - Hằng ngày 02:15 (cron user `ubuntu`): `infra/scripts/backup-db.sh` → `/opt/citylight/backups/db-*.sql.gz` + `uploads-*.tar.gz`, giữ 14 ngày. Kiểm: `crontab -l`, `tail backups/backup.log`. Cron gọi script qua `sh …` (2026-10-20: deploy bằng `git archive` từng làm mất quyền thực thi → backup 02:15 và watchdog lỗi "Permission denied" suốt 17 h; script giờ lưu mode 755 trong git).
-- Bản ngoài VPS: Task Scheduler laptop **"CityLight backup pull"** (08:30 hằng ngày + khi đăng nhập, chạy bù) → `D:\CityLightBackups\vps`, giữ 60 ngày, log `pull.log`. Chạy tay: `powershell -ExecutionPolicy Bypass -File infra\scripts\pull-backups.ps1`.
+- Bản ngoài VPS: Task Scheduler laptop **"CityLight backup pull"** (08:30 hằng ngày + khi đăng nhập, chạy bù) → `D:\CityLightBackups\vps`, giữ 60 ngày, log `pull.log`. Chạy tay: `powershell -ExecutionPolicy Bypass -File infra\scripts\pull-backups.ps1`. Chỉ kéo bản **mã hóa** `*.age` (S46); khi VPS chưa có bản `.age` thì kéo bản rõ và ghi `WARN plain` vào log.
+
+### 4.1 Mã hóa backup (S46)
+
+VPS mã hóa mỗi file backup bằng **khóa công khai** `age` (`infra/backup-recipients.txt`, mỗi dòng một khóa `age1…`) thành `<file>.age`. Bản rõ vẫn ở VPS 14 ngày (diễn tập + khôi phục nhanh). **Khóa bí mật không bao giờ nằm trên VPS**, cũng không để dạng rõ trên ổ laptop. **Mất mọi bản khóa bí mật = mọi backup `.age` không đọc được nữa.**
+
+Thiết lập một lần:
+1. Laptop: cài `age` cho Windows (bản phát hành chính thức `github.com/FiloSottile/age/releases`, giải nén `age.exe` + `age-keygen.exe` vào một thư mục trong `PATH`).
+2. Cắm USB, tạo khóa: `age-keygen -o E:\citylight-backup-key.txt` → in `Public key: age1…`. Cất **bản thứ hai** của file khóa vào trình quản lý mật khẩu (hoặc in giấy cất tủ). Không gửi qua chat/email. Muốn khóa có mật khẩu: `age -p -o E:\citylight-backup-key.age E:\citylight-backup-key.txt` rồi xóa bản `.txt`.
+3. VPS: `sudo apt install -y age`, rồi `echo 'age1…' > /opt/citylight/infra/backup-recipients.txt` (khóa công khai, không bí mật). Chạy thử `sh /opt/citylight/infra/scripts/backup-db.sh` → log `backup ok: …, encrypted`; `ls /opt/citylight/backups/*.age`.
+4. Laptop: chạy `pull-backups.ps1` → `pull.log` ghi `ok (encrypted)`. Rồi `powershell -ExecutionPolicy Bypass -File infra\scripts\verify-backup.ps1 -Identity E:\citylight-backup-key.txt` → `OK: … dump complete`.
+5. Sau bước 4 OK: tự xóa các bản rõ cũ trong `D:\CityLightBackups\vps` (file **không** có đuôi `.age`).
+
+- **Hằng tháng**: chạy `verify-backup.ps1` (giải mã trong bộ nhớ, không ghi bản rõ ra ổ đĩa).
+- Watchdog báo khi đã cấu hình mã hóa mà bản `.age` mới nhất cũ hơn 26 h.
+- Thêm người giữ khóa (khóa thứ hai): thêm một dòng `age1…` vào `backup-recipients.txt`; mỗi khóa đều giải mã được. Đổi khóa: thêm khóa mới, bỏ khóa cũ, nhưng **giữ khóa cũ thêm 60 ngày** (backup cũ trên laptop vẫn cần nó).
+- Khôi phục từ bản trên laptop (VPS mới, mất hết bản trên VPS), trong **Git Bash** (PowerShell 5.1 làm hỏng dữ liệu nhị phân qua pipe), sau các bước `pre_restore` ở dưới:
+  `age -d -i /e/citylight-backup-key.txt db-<ts>.sql.gz.age | ssh -i ~/.ssh/citylight_aws ubuntu@<ip> 'gunzip | docker exec -i citylight-db psql -U citylight -d citylight -v ON_ERROR_STOP=1 -q'`;
+  ảnh: `age -d -i … uploads-<ts>.tar.gz.age | ssh … 'docker run --rm -i -v infra_uploads:/u alpine:3.20 tar xzf - -C /u'`.
 - Không chép `.env`: mất VPS thì khôi phục được dữ liệu, nhưng `TOTP_ENC_KEY` mới làm mọi user phải cài lại 2FA, và phải đặt lại mật khẩu DB/Redis/EMQX mới.
 - **Diễn tập** (không đụng DB thật): `infra/scripts/restore-drill.sh [file]` dựng container Timescale tạm, nạp dump, so số dòng 34 bảng với DB đang chạy. Lần đầu 2026-10-19: 0 lệch, 2 hypertable, 2 s. Nên chạy lại mỗi tháng.
 - **Khôi phục thật** (DB hỏng / VPS mới), dừng các service ghi trước:
