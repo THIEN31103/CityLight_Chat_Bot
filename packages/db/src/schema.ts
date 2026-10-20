@@ -522,6 +522,8 @@ export const users = pgTable(
     failedLogins: integer('failed_logins').notNull().default(0),
     lockedUntil: tsz('locked_until'),
     lastLoginAt: tsz('last_login_at'),
+    // UI / Telegram / export language (S49): 'vi' | 'en'
+    lang: text('lang').notNull().default('vi'),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex('users_email_uq').on(sql`lower(${t.email})`)],

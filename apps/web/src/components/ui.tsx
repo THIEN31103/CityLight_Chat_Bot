@@ -3,7 +3,8 @@ import * as Dialog from '@radix-ui/react-dialog';
 import * as RTabs from '@radix-ui/react-tabs';
 import { AlertTriangle, CircleDot, Loader2, Moon, PowerOff, Sun, WifiOff, X, HelpCircle, Lightbulb } from 'lucide-react';
 import type { CabinetStatus } from '@citylight/shared';
-import { STATUS_LABELS } from '@citylight/shared';
+import { useDict, useLabels } from '@/i18n';
+import { COMMON } from '@/i18n/dict/common';
 import { create } from 'zustand';
 import { cn } from '@/lib/utils';
 
@@ -105,10 +106,11 @@ export const STATUS_TONE: Record<CabinetStatus, 'red' | 'orange' | 'amber' | 'gr
 /** Status shown with icon + text + colour (never colour alone). */
 export function StatusBadge({ status, className }: { status: CabinetStatus; className?: string }) {
   const Icon = STATUS_ICON[status];
+  const L = useLabels();
   return (
     <Badge tone={STATUS_TONE[status]} className={className}>
       <Icon className="h-3.5 w-3.5" />
-      {STATUS_LABELS[status]}
+      {L.status[status]}
     </Badge>
   );
 }
@@ -121,15 +123,17 @@ export function Skeleton({ className }: { className?: string }) {
   return <div className={cn('animate-pulse rounded bg-muted', className)} />;
 }
 
-export function Empty({ children = 'Không có dữ liệu' }: { children?: React.ReactNode }) {
-  return <div className="py-10 text-center text-sm text-subtle">{children}</div>;
+export function Empty({ children }: { children?: React.ReactNode }) {
+  const c = useDict(COMMON);
+  return <div className="py-10 text-center text-sm text-subtle">{children ?? c.noData}</div>;
 }
 
-export function Unsupported({ children = 'Thiết bị chưa hỗ trợ — sẽ có khi firmware cập nhật' }: { children?: React.ReactNode }) {
+export function Unsupported({ children }: { children?: React.ReactNode }) {
+  const c = useDict(COMMON);
   return (
     <div className="flex items-center gap-2 rounded-md border border-dashed bg-muted/50 px-3 py-2 text-xs text-subtle">
       <HelpCircle className="h-4 w-4 shrink-0" />
-      {children}
+      {children ?? c.unsupported}
     </div>
   );
 }
@@ -218,6 +222,7 @@ export function Modal({
   footer?: React.ReactNode;
   className?: string;
 }) {
+  const c = useDict(COMMON);
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -226,7 +231,7 @@ export function Modal({
           <div className="flex items-center justify-between border-b px-4 py-3">
             <Dialog.Title className="font-semibold">{title}</Dialog.Title>
             <Dialog.Close asChild>
-              <Button variant="ghost" size="icon" aria-label="Đóng">
+              <Button variant="ghost" size="icon" aria-label={c.close}>
                 <X className="h-4 w-4" />
               </Button>
             </Dialog.Close>
@@ -249,17 +254,18 @@ interface ConfirmState {
   confirmLabel: string;
   resolve: ((ok: boolean) => void) | null;
 }
-const useConfirmStore = create<ConfirmState>(() => ({ open: false, title: '', body: null, danger: false, confirmLabel: 'Xác nhận', resolve: null }));
+const useConfirmStore = create<ConfirmState>(() => ({ open: false, title: '', body: null, danger: false, confirmLabel: '', resolve: null }));
 
 /** Promise-based confirm dialog: `if (await confirm({...})) ...` */
 export function confirm(o: { title: string; body: React.ReactNode; danger?: boolean; confirmLabel?: string }): Promise<boolean> {
   return new Promise((resolve) => {
-    useConfirmStore.setState({ open: true, title: o.title, body: o.body, danger: !!o.danger, confirmLabel: o.confirmLabel ?? 'Xác nhận', resolve });
+    useConfirmStore.setState({ open: true, title: o.title, body: o.body, danger: !!o.danger, confirmLabel: o.confirmLabel ?? '', resolve });
   });
 }
 
 export function ConfirmHost() {
   const s = useConfirmStore();
+  const c = useDict(COMMON);
   const close = (ok: boolean) => {
     s.resolve?.(ok);
     useConfirmStore.setState({ open: false, resolve: null });
@@ -272,10 +278,10 @@ export function ConfirmHost() {
       footer={
         <>
           <Button variant="outline" onClick={() => close(false)}>
-            Hủy
+            {c.cancel}
           </Button>
           <Button variant={s.danger ? 'danger' : 'primary'} onClick={() => close(true)}>
-            {s.confirmLabel}
+            {s.confirmLabel || c.confirm}
           </Button>
         </>
       }

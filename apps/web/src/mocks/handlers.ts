@@ -185,6 +185,7 @@ export const handlers = [
     return HttpResponse.json({ validForS: 300 });
   })),
   http.get(`${API}/auth/me`, wrap(() => HttpResponse.json(requireUser()))),
+http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request }) => {    const u = requireUser();    const body = (await request.json()) as { lang: 'vi' | 'en' };    u.lang = body.lang;    return HttpResponse.json(u);  })),
   http.post(`${API}/me/password`, wrap(() => {
     const u = requireUser();
     u.passwordChangeRequired = false;
@@ -662,7 +663,7 @@ export const handlers = [
     const role = body.role ?? 'viewer';
     const nu: User = {
       id: `u${Date.now()}`, email: body.email ?? '', fullName: body.fullName ?? '', role, scopeAll: role === 'admin' || !!body.scopeAll, scopeAreaIds: body.scopeAreaIds ?? [],
-      totpEnabled: false, totpRequired: roleRequires2fa(role), passwordChangeRequired: true, active: true, lastLoginAt: null,
+      totpEnabled: false, totpRequired: roleRequires2fa(role), passwordChangeRequired: true, active: true, lastLoginAt: null, lang: 'vi',
     };
     users.push(nu);
     addLog(u.email, 'Tạo người dùng', 'user', nu.email, null, nu.role);

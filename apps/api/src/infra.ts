@@ -28,6 +28,7 @@ class Closer implements OnApplicationShutdown {
 export class InfraModule {}
 
 /** RFC 9457 problem body (spec 11). */
-export function problem(status: number, code: string, detail: string) {
-  return { type: `https://citylight.local/errors/${code}`, title: code, status, detail, code };
+/** `params`: values the web puts into its own translation of `code` (S49); `detail` stays the Vietnamese text. */
+export function problem(status: number, code: string, detail: string, params?: Record<string, string | number>) {
+  return { type: `https://citylight.local/errors/${code}`, title: code, status, detail, code, ...(params ? { params } : {}) };
 }

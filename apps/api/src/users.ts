@@ -5,7 +5,7 @@ import { Body, Controller, Get, HttpCode, Inject, Injectable, Module, Param, Pat
 import { hash } from '@node-rs/argon2';
 import { z } from 'zod';
 import type { RoleKey, User } from '@citylight/shared';
-import { ROLE_LABELS, canManageRole, roleRequires2fa, roleSeesAll } from '@citylight/shared';
+import { ROLE_LABELS, canManageRole, isLang, roleRequires2fa, roleSeesAll } from '@citylight/shared';
 import { AuthModule, AuthService, RequirePerm, RequireReauth, require2faEnforced, type AuthedRequest, type SessionUser } from './auth';
 import { ApiError } from './errors';
 import { SQL, type Sql } from './infra';
@@ -42,7 +42,7 @@ const PatchBody = z.object({
 
 interface ListRow {
   id: string; email: string; full_name: string; role: RoleKey; scope_all: boolean; totp_enabled: boolean;
-  password_change_required: boolean; active: boolean; last_login_at: Date | null; locked_until: Date | null; areas: string[];
+  password_change_required: boolean; active: boolean; last_login_at: Date | null; locked_until: Date | null; areas: string[]; lang: string;
 }
 
 @Injectable()
@@ -56,6 +56,7 @@ export class UsersService {
       totpEnabled: r.totp_enabled, totpRequired: require2faEnforced() && roleRequires2fa(r.role),
       passwordChangeRequired: r.password_change_required, active: r.active,
       lastLoginAt: r.last_login_at ? r.last_login_at.toISOString() : null,
+      lang: isLang(r.lang) ? r.lang : 'vi',
       lockedUntil: r.locked_until && r.locked_until.getTime() > Date.now() ? r.locked_until.toISOString() : null,
       // provider accounts stay listed for a manager (who has access to their system), read-only
       manageable: actor ? canManageRole(actor, r.role) : true,
@@ -64,7 +65,7 @@ export class UsersService {
 
   async list(orgId: string, id?: string, actor?: RoleKey) {
     const rows = await this.sql<ListRow[]>`
-      SELECT u.id, u.email, u.full_name, u.role, u.scope_all, u.totp_enabled, u.password_change_required, u.active, u.last_login_at, u.locked_until,
+      SELECT u.id, u.email, u.full_name, u.role, u.scope_all, u.totp_enabled, u.password_change_required, u.active, u.last_login_at, u.locked_until, u.lang,
              coalesce(array_agg(s.area_id::text) FILTER (WHERE s.area_id IS NOT NULL), '{}') AS areas
       FROM users u LEFT JOIN user_scopes s ON s.user_id = u.id
       WHERE u.organization_id = ${orgId} AND (${id ?? null}::uuid IS NULL OR u.id = ${id ?? null})

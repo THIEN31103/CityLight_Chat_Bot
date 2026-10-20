@@ -5,7 +5,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, ChevronDown, CircleHelp, Home, Lightbulb, LogOut, Menu, Settings2, User as UserIcon, Wrench } from 'lucide-react';
 import dayjs from 'dayjs';
 import type { CabinetSummary, Permission } from '@citylight/shared';
-import { ROLE_LABELS, SEVERITY_LABELS } from '@citylight/shared';
+import { fill, useDict, useLabels } from '@/i18n';
+import { SHELL } from '@/i18n/dict/shell';
+import { LangSwitch } from '../LangSwitch';
 import { api } from '@/lib/api';
 import { subscribe } from '@/lib/realtime';
 import { useSession, useUi } from '@/stores/session';
@@ -14,6 +16,7 @@ import { Badge, ConfirmHost, ThemeIcon, ToastHost } from '../ui';
 import { ReauthHost } from '../security';
 
 function ServerClock() {
+  const t = useDict(SHELL);
   const { data } = useQuery({ queryKey: ['server-time'], queryFn: api.serverTime, staleTime: Infinity });
   const offset = useRef(0);
   const [now, setNow] = useState(Date.now());
@@ -25,7 +28,7 @@ function ServerClock() {
     return () => clearInterval(t);
   }, []);
   return (
-    <div className="hidden text-right leading-tight md:block" title="Giờ máy chủ">
+    <div className="hidden text-right leading-tight md:block" title={t.serverTime}>
       <div className="font-mono text-sm tabular-nums">{dayjs(now).format('HH:mm:ss')}</div>
       <div className="text-[11px] text-subtle">{dayjs(now).format('DD/MM/YYYY')}</div>
     </div>
@@ -71,13 +74,15 @@ function RealtimeBridge() {
 }
 
 function AlarmBell() {
+  const t = useDict(SHELL);
+  const L = useLabels();
   const nav = useNavigate();
   const { data } = useQuery({ queryKey: ['alarms', 'bell'], queryFn: () => api.alarms({ active: true, size: 10 }), refetchInterval: 30000 });
   const count = data?.total ?? 0;
   return (
     <DM.Root>
       <DM.Trigger asChild>
-        <button className="relative rounded-md p-2 hover:bg-muted" aria-label={`Cảnh báo: ${count} đang hiện hữu`}>
+        <button className="relative rounded-md p-2 hover:bg-muted" aria-label={fill(t.bellLabel, { n: count })}>
           <Bell className="h-5 w-5" />
           {count > 0 && (
             <span className="absolute -right-0.5 -top-0.5 min-w-[18px] rounded-full bg-st-offline px-1 text-center text-[10px] font-semibold leading-[18px] text-white">
@@ -88,7 +93,7 @@ function AlarmBell() {
       </DM.Trigger>
       <DM.Portal>
         <DM.Content align="end" sideOffset={6} className="z-50 w-96 rounded-lg border bg-panel shadow-xl">
-          <div className="border-b px-3 py-2 text-sm font-semibold">Cảnh báo mới nhất</div>
+          <div className="border-b px-3 py-2 text-sm font-semibold">{t.latestAlarms}</div>
           <div className="max-h-96 overflow-auto">
             {data?.items.length ? (
               data.items.map((a) => (
@@ -98,18 +103,18 @@ function AlarmBell() {
                       <span className="mr-1 font-mono text-xs text-primary">{a.code}</span>
                       {a.cabinetCode} · {a.cabinetName}
                     </span>
-                    <Badge tone={a.severity === 'critical' ? 'red' : a.severity === 'major' ? 'orange' : 'amber'}>{SEVERITY_LABELS[a.severity]}</Badge>
+                    <Badge tone={a.severity === 'critical' ? 'red' : a.severity === 'major' ? 'orange' : 'amber'}>{L.severity[a.severity]}</Badge>
                   </div>
                   <div className="truncate text-xs text-subtle">{a.message}</div>
                   <div className="text-[11px] text-subtle">{fmtTime(a.startedAt)}</div>
                 </DM.Item>
               ))
             ) : (
-              <div className="px-3 py-6 text-center text-sm text-subtle">Không có cảnh báo mới</div>
+              <div className="px-3 py-6 text-center text-sm text-subtle">{t.noNewAlarms}</div>
             )}
           </div>
           <DM.Item onSelect={() => nav('/alarms')} className="cursor-pointer border-t px-3 py-2 text-center text-sm text-primary outline-none hover:bg-muted">
-            Xem tất cả
+            {t.seeAll}
           </DM.Item>
         </DM.Content>
       </DM.Portal>
@@ -150,23 +155,25 @@ function NavMenu({ label, icon: Icon, items }: { label: string; icon: React.Comp
   );
 }
 
-const INCIDENT_MENU: MenuEntry[] = [
-  { label: 'Chưa xử lý', to: '/incidents?q=new' },
-  { label: 'Yêu cầu xử lý', to: '/incidents?q=assigned' },
-  { label: 'Chưa cần & đã xử lý', to: '/incidents?q=deferred_resolved' },
-  { label: 'Tất cả', to: '/incidents?q=all' },
-  { label: 'Báo cáo sự cố tổng quan', to: '/incidents/report' },
+type ShellText = (typeof SHELL)['vi'];
+
+const incidentMenu = (t: ShellText): MenuEntry[] => [
+  { label: t.incidentMenu.new, to: '/incidents?q=new' },
+  { label: t.incidentMenu.assigned, to: '/incidents?q=assigned' },
+  { label: t.incidentMenu.deferredResolved, to: '/incidents?q=deferred_resolved' },
+  { label: t.incidentMenu.all, to: '/incidents?q=all' },
+  { label: t.incidentMenu.report, to: '/incidents/report' },
 ];
 
-const FUNCTION_MENU: MenuEntry[] = [
-  { label: 'Cảnh báo lỗi', to: '/alarms', perm: 'alarm.view' },
-  { label: 'Lịch chiếu sáng', to: '/schedules', perm: 'schedule.manage' },
-  { label: 'Đồng bộ cấu hình tiết giảm', to: '/dimming', perm: 'dimming.manage' },
-  { label: 'Đồng bộ hàng loạt', to: '/batches', perm: 'batch.run' },
-  { label: 'Nhật ký thao tác', to: '/logs/activity', perm: 'log.view' },
-  { label: 'Nhật ký đồng bộ', to: '/logs/sync', perm: 'log.view' },
-  { label: 'Quản trị', to: '/admin/users', perm: 'admin.users' },
-  { label: 'Giám sát hệ thống', to: '/system', perm: 'system.view' },
+const functionMenu = (t: ShellText): MenuEntry[] => [
+  { label: t.functionMenu.alarms, to: '/alarms', perm: 'alarm.view' },
+  { label: t.functionMenu.schedules, to: '/schedules', perm: 'schedule.manage' },
+  { label: t.functionMenu.dimming, to: '/dimming', perm: 'dimming.manage' },
+  { label: t.functionMenu.batches, to: '/batches', perm: 'batch.run' },
+  { label: t.functionMenu.activityLog, to: '/logs/activity', perm: 'log.view' },
+  { label: t.functionMenu.syncLog, to: '/logs/sync', perm: 'log.view' },
+  { label: t.functionMenu.admin, to: '/admin/users', perm: 'admin.users' },
+  { label: t.functionMenu.system, to: '/system', perm: 'system.view' },
 ];
 
 export function AppShell() {
@@ -174,6 +181,8 @@ export function AppShell() {
   const qc = useQueryClient();
   const { user, setUser } = useSession();
   const { theme, toggleTheme } = useUi();
+  const t = useDict(SHELL);
+  const L = useLabels();
 
   async function logout() {
     await api.logout().catch(() => undefined);
@@ -191,30 +200,31 @@ export function AppShell() {
           </div>
           <span className="hidden font-semibold sm:inline">CityLight</span>
         </Link>
-        <NavLink to="/" end className={({ isActive }) => cn('rounded-md p-2 hover:bg-muted', isActive && 'bg-muted')} aria-label="Trang chính">
+        <NavLink to="/" end className={({ isActive }) => cn('rounded-md p-2 hover:bg-muted', isActive && 'bg-muted')} aria-label={t.home}>
           <Home className="h-4 w-4" />
         </NavLink>
-        <NavMenu label="Sự cố" icon={Wrench} items={INCIDENT_MENU.map((i) => ({ ...i, perm: 'incident.view' as Permission }))} />
-        <NavMenu label="Chức năng" icon={Menu} items={FUNCTION_MENU} />
+        <NavMenu label={t.incidents} icon={Wrench} items={incidentMenu(t).map((i) => ({ ...i, perm: 'incident.view' as Permission }))} />
+        <NavMenu label={t.functions} icon={Menu} items={functionMenu(t)} />
         <div className="flex-1" />
         <ServerClock />
         <AlarmBell />
-        <button className="rounded-md p-2 hover:bg-muted" onClick={toggleTheme} aria-label="Đổi giao diện sáng/tối">
+        <LangSwitch className="hidden sm:flex" />
+        <button className="rounded-md p-2 hover:bg-muted" onClick={toggleTheme} aria-label={t.themeToggle}>
           <ThemeIcon dark={theme === 'dark'} />
         </button>
         <DM.Root>
           <DM.Trigger asChild>
-            <button className="rounded-md p-2 hover:bg-muted" aria-label="Trợ giúp">
+            <button className="rounded-md p-2 hover:bg-muted" aria-label={t.help}>
               <CircleHelp className="h-5 w-5" />
             </button>
           </DM.Trigger>
           <DM.Portal>
             <DM.Content align="end" sideOffset={6} className="z-50 min-w-[200px] rounded-lg border bg-panel p-1 shadow-xl">
               <DM.Item onSelect={() => nav('/help')} className="cursor-pointer rounded px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-muted">
-                Hướng dẫn sử dụng
+                {t.userGuide}
               </DM.Item>
               <DM.Item onSelect={() => nav('/help#about')} className="cursor-pointer rounded px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-muted">
-                Giới thiệu
+                {t.about}
               </DM.Item>
             </DM.Content>
           </DM.Portal>
@@ -227,17 +237,17 @@ export function AppShell() {
               </div>
               <div className="hidden text-left leading-tight md:block">
                 <div className="text-sm font-medium">{user?.fullName}</div>
-                <div className="text-[11px] text-subtle">{user ? ROLE_LABELS[user.role] : ''}</div>
+                <div className="text-[11px] text-subtle">{user ? L.role[user.role] : ''}</div>
               </div>
             </button>
           </DM.Trigger>
           <DM.Portal>
             <DM.Content align="end" sideOffset={6} className="z-50 min-w-[200px] rounded-lg border bg-panel p-1 shadow-xl">
               <DM.Item onSelect={() => nav('/account')} className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-muted">
-                <Settings2 className="h-4 w-4" /> Tài khoản cá nhân
+                <Settings2 className="h-4 w-4" /> {t.account}
               </DM.Item>
               <DM.Item onSelect={logout} className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-sm text-st-offline outline-none data-[highlighted]:bg-muted">
-                <LogOut className="h-4 w-4" /> Đăng xuất
+                <LogOut className="h-4 w-4" /> {t.logout}
               </DM.Item>
             </DM.Content>
           </DM.Portal>

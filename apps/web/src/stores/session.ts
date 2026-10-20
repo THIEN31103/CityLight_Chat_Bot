@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { User } from '@citylight/shared';
 import { hasPermission, type Permission } from '@citylight/shared';
 import { api, AUTH_EVENT } from '@/lib/api';
+import { useLang } from '@/i18n';
 
 interface SessionState {
   user: User | null;
@@ -11,7 +12,11 @@ interface SessionState {
 
 export const useSession = create<SessionState>((set, get) => ({
   user: null,
-  setUser: (user) => set({ user }),
+  setUser: (user) => {
+    // the account's language wins over this browser's (S49)
+    if (user?.lang && user.lang !== useLang.getState().lang) useLang.getState().setLang(user.lang);
+    set({ user });
+  },
   can: (p) => {
     const u = get().user;
     return !!u && hasPermission(u.role, p);

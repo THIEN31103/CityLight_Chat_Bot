@@ -5,8 +5,8 @@ import { ZodError } from 'zod';
 import { problem } from './infra';
 
 export class ApiError extends HttpException {
-  constructor(status: number, public readonly code: string, detail: string) {
-    super(problem(status, code, detail), status);
+  constructor(status: number, public readonly code: string, detail: string, params?: Record<string, string | number>) {
+    super(problem(status, code, detail, params), status);
   }
 }
 

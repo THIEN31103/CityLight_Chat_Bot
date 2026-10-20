@@ -1,5 +1,6 @@
 // Domain types shared by api, workers, web and simulator.
 // Field meanings follow docs/spec.md sections 5-7.
+import type { Lang } from './i18n';
 
 export type CabinetStatus = 'offline' | 'fault' | 'dimming' | 'on' | 'off' | 'unknown';
 
@@ -402,6 +403,8 @@ export interface User {
   passwordChangeRequired: boolean;
   active: boolean;
   lastLoginAt: string | null;
+  /** UI / Telegram / export language (S49). */
+  lang: Lang;
 }
 
 export interface MapStats {

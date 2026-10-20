@@ -27,12 +27,26 @@ import type {
   User,
   Zone,
 } from '@citylight/shared';
+import { fill, type Lang } from '@citylight/shared';
+import { dictNow } from '@/i18n';
+import { COMMON } from '@/i18n/dict/common';
+import { ERRORS } from '@/i18n/dict/errors';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) {
     super(message);
   }
 }
+
+/** The user's-language text of an API error (S49): i18n/dict/errors.ts by code, else the server's detail. */
+function errorText(status: number, data: { code?: string; detail?: string; params?: Record<string, string | number> } | null): string {
+  const known = data?.code ? dictNow(ERRORS)[data.code] : undefined;
+  if (known) return fill(known, data?.params);
+  return data?.detail ?? fill(dictNow(COMMON).httpError, { status });
+}
+
+const apiError = (status: number, data: { code?: string; detail?: string; params?: Record<string, string | number> } | null) =>
+  new ApiError(status, data?.code ?? 'error', errorText(status, data));
 
 // Transport is swappable: real network by default, in-page mock handlers in M1-UI (see mocks/browser.ts).
 type Transport = (request: Request) => Promise<Response>;
@@ -85,7 +99,7 @@ async function send<T>(method: string, path: string, body?: unknown, headers: Re
     if (!path.startsWith('/auth/') && (res.status === 401 || code === 'totp_setup_required' || code === 'password_change_required')) {
       window.dispatchEvent(new CustomEvent(AUTH_EVENT, { detail: code }));
     }
-    throw new ApiError(res.status, code, data?.detail ?? `Lỗi ${res.status}`);
+    throw apiError(res.status, data);
   }
   return data as T;
 }
@@ -99,7 +113,7 @@ export async function downloadFile(path: string, fallbackName: string): Promise<
   if (res.status === 404) return false;
   if (!res.ok) {
     const data = await res.json().catch(() => null);
-    throw new ApiError(res.status, data?.code ?? 'error', data?.detail ?? `Lỗi ${res.status}`);
+    throw apiError(res.status, data);
   }
   const cd = res.headers.get('content-disposition') ?? '';
   const m = /filename\*=UTF-8''([^;]+)/i.exec(cd);
@@ -118,7 +132,7 @@ async function upload<T>(path: string, form: FormData): Promise<T> {
     method: 'POST', credentials: 'include', headers: csrf ? { 'X-CSRF-Token': csrf } : {}, body: form,
   }));
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(res.status, data?.code ?? 'error', data?.detail ?? `Lỗi ${res.status}`);
+  if (!res.ok) throw apiError(res.status, data);
   return data as T;
 }
 
@@ -308,6 +322,7 @@ export const api = {
   changePassword: (oldPassword: string, newPassword: string) => req<void>('POST', '/me/password', { oldPassword, newPassword }),
   setup2fa: () => req<{ otpauthUrl: string; secret: string }>('POST', '/auth/2fa/setup'),
   reauth: (code: string) => send<{ validForS: number }>('POST', '/auth/reauth', { code }),
+  savePreferences: (p: { lang: Lang }) => req<User>('PATCH', '/me/preferences', p),
   enable2fa: (code: string) => req<{ user: User; recoveryCodes: string[] }>('POST', '/auth/2fa/enable', { code }),
   disable2fa: (password: string) => req<User>('POST', '/auth/2fa/disable', { password }),
   serverTime: () => req<{ now: string }>('GET', '/server-time'),

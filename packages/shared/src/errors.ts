@@ -7,6 +7,7 @@
 // derives faults from the fields above instead.
 
 import type { AlarmSeverity, AlarmType } from './domain';
+import type { Lang } from './i18n';
 
 export type ErrorCategory = 'Kết nối' | 'RS485' | 'PLC / LOGO' | 'Điện năng' | 'Cảm biến' | 'Tải đèn' | 'Lệnh' | 'Thiết bị';
 
@@ -173,6 +174,19 @@ export const ERROR_CATALOG: ErrorDef[] = [
   { code: 'E804', type: 'fw_unsafe', title: 'Firmware cũ không lọc LTID', category: 'Thiết bị', severity: 'major', source: 'fw_profile = v2-1307ebc', cause: 'Firmware cũ thực thi mọi lệnh trên topic chung — web chặn điều khiển tủ này.', checks: ['Nâng cấp firmware LTE lên bản có lọc LTID.'], supported: true },
   { code: 'E805', type: 'spoof_suspect', title: 'Nghi giả mạo tủ (IMEI không khớp)', category: 'Thiết bị', severity: 'major', source: 'Frame mang LTID của tủ nhưng IMEI (LIME) khác IMEI đã ghi nhận; frame bị bỏ qua', cause: 'Ai đó gửi dữ liệu giả lên broker bằng LTID của tủ, hoặc modem EC25 của tủ vừa được thay.', checks: ['Nếu vừa thay modem: Chấp nhận IMEI mới trong cảnh báo (hoặc Học lại IMEI).', 'Nếu không thay gì: dữ liệu giả, giữ nguyên IMEI; xem IP/thời điểm trong frame thô và báo người quản trị hệ thống.'], supported: true },
 ];
+
+export const ERROR_CATEGORY_LABELS: Record<Lang, Record<ErrorCategory, string>> = {
+  vi: { 'Kết nối': 'Kết nối', RS485: 'RS485', 'PLC / LOGO': 'PLC / LOGO', 'Điện năng': 'Điện năng', 'Cảm biến': 'Cảm biến', 'Tải đèn': 'Tải đèn', Lệnh: 'Lệnh', 'Thiết bị': 'Thiết bị' },
+  en: { 'Kết nối': 'Connection', RS485: 'RS485', 'PLC / LOGO': 'PLC / LOGO', 'Điện năng': 'Power', 'Cảm biến': 'Sensors', 'Tải đèn': 'Lamp load', Lệnh: 'Commands', 'Thiết bị': 'Device' },
+};
+
+/** English text of each catalog entry (S49), by code. */
+export const ERROR_CATALOG_EN: Partial<Record<string, Pick<ErrorDef, 'title' | 'source' | 'cause' | 'checks'>>> = {};
+
+/** The catalog in one language (codes, types, severities and categories are the same; category label: ERROR_CATEGORY_LABELS). */
+export function errorCatalog(lang: Lang): ErrorDef[] {
+  return lang === 'vi' ? ERROR_CATALOG : ERROR_CATALOG.map((e) => ({ ...e, ...ERROR_CATALOG_EN[e.code] }));
+}
 
 export const ERROR_BY_TYPE: Partial<Record<AlarmType, ErrorDef>> = Object.fromEntries(ERROR_CATALOG.map((e) => [e.type, e]));
 

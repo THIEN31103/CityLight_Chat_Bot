@@ -3,7 +3,7 @@
 // lights (AUTH_REQUIRE_2FA=false relaxes it for local tests), CSRF double-submit token bound to the session.
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  Body, CanActivate, Controller, ExecutionContext, Get, HttpCode, Inject, Injectable, Module, Post, Req, Res, SetMetadata,
+  Body, CanActivate, Controller, ExecutionContext, Get, HttpCode, Inject, Injectable, Module, Patch, Post, Req, Res, SetMetadata,
   type OnModuleDestroy, type OnModuleInit,
 } from '@nestjs/common';
 import { APP_GUARD, Reflector } from '@nestjs/core';
@@ -13,7 +13,8 @@ import { Redis } from 'ioredis';
 import { z } from 'zod';
 import { EVENTS_CHANNEL } from '@citylight/db/commands';
 import type { RoleKey, SecurityEvent, SecurityKind, User } from '@citylight/shared';
-import { hasPermission, roleRequires2fa, roleSeesAll, type Permission } from '@citylight/shared';
+import { DEFAULT_LANG, LANGS, hasPermission, isLang, roleRequires2fa, roleSeesAll, type Lang, type Permission } from '@citylight/shared';
+import { NOTIFY_CHANGED_CHANNEL } from '@citylight/db/notify';
 import { ApiError } from './errors';
 import { REDIS, SQL, type Sql } from './infra';
 import { loadScope, type Scope } from './scope';
@@ -74,6 +75,7 @@ interface UserRow {
   password_change_required: boolean;
   active: boolean;
   last_login_at: Date | null;
+  lang: string;
 }
 
 interface AuthRow extends UserRow {
@@ -363,6 +365,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       passwordChangeRequired: r.password_change_required,
       active: r.active,
       lastLoginAt: r.last_login_at ? r.last_login_at.toISOString() : null,
+      lang: isLang(r.lang) ? r.lang : DEFAULT_LANG,
       scope: await loadScope(this.sql, r.id, r.role, r.scope_all),
     };
   }
@@ -444,6 +447,12 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     await this.userChanged(userId);
   }
 
+  async setLang(userId: string, lang: Lang) {
+    await this.sql`UPDATE users SET lang = ${lang} WHERE id = ${userId}`;
+    await this.userChanged(userId);
+    await this.redis.publish(NOTIFY_CHANGED_CHANNEL, '1'); // the notify-worker reloads recipients: Telegram follows the language
+  }
+
   async changePassword(u: SessionUser, sid: string, oldPassword: string, newPassword: string, ip?: string) {
     const row = await this.authRow({ id: u.id });
     if (!row || !(await verify(row.password_hash, oldPassword))) throw new ApiError(422, 'invalid_password', 'Mật khẩu hiện tại không đúng');
@@ -497,6 +506,7 @@ const CodeBody = z.object({ code: z.string().regex(/^\d{6}$/, 'mã 6 số') });
 const PasswordBody = z.object({ password: z.string().min(1).max(200) });
 export const NewPassword = z.string().min(PASSWORD_MIN, `tối thiểu ${PASSWORD_MIN} ký tự`).max(200);
 const ChangePasswordBody = z.object({ oldPassword: z.string().min(1).max(200), newPassword: NewPassword });
+const PreferencesBody = z.object({ lang: z.enum(LANGS as [Lang, ...Lang[]]) });
 
 @Controller('auth')
 export class AuthController {
@@ -585,6 +595,15 @@ export class MeController {
   async changePassword(@Body() body: unknown, @Req() req: AuthedRequest) {
     const b = ChangePasswordBody.parse(body);
     await this.auth.changePassword(req.user!, req.sid!, b.oldPassword, b.newPassword, req.ip);
+  }
+
+  /** Per-user preferences (S49): UI / Telegram / export language. */
+  @AllowPending()
+  @Patch('preferences')
+  async preferences(@Body() body: unknown, @Req() req: AuthedRequest) {
+    const b = PreferencesBody.parse(body);
+    await this.auth.setLang(req.user!.id, b.lang);
+    return publicUser(await this.auth.userById(req.user!.id));
   }
 }
 
