@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronRight, Eye, EyeOff } from 'lucide-react';
 import type { Area, CabinetStatus, CabinetSummary, GeoPoint } from '@citylight/shared';
 import { api } from '@/lib/api';
 import { fill, useDict, useLabels } from '@/i18n';
 import { MAP } from '@/i18n/dict/map';
 import { cn } from '@/lib/utils';
-import { STATUS_ICON, STATUS_TONE, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
+import { Button, STATUS_ICON, STATUS_TONE, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 
 const TONE_TEXT: Record<string, string> = {
   red: 'text-st-offline',
@@ -26,40 +26,112 @@ function StatusDot({ status }: { status: CabinetStatus }) {
 export function LeftPanel({
   center,
   cabinets,
-  statusFilter,
+  statusView,
+  onCloseStatus,
   selectedId,
   onPick,
 }: {
   center: GeoPoint;
   cabinets: CabinetSummary[];
-  statusFilter: Set<CabinetStatus>;
+  /** status picked on a KPI card: the panel shows every cabinet in that status instead of the tabs */
+  statusView: CabinetStatus | null;
+  onCloseStatus: () => void;
   selectedId: string | null;
   onPick: (id: string) => void;
 }) {
   const t = useDict(MAP).left;
+  // Tabs stay mounted (hidden) under the status list so the chosen tab survives opening/closing it.
+  const [tab, setTab] = useState('near');
   return (
-    <Tabs defaultValue="near" className="flex min-h-0 flex-1 flex-col">
-      <TabsList>
-        <TabsTrigger value="near">{t.near}</TabsTrigger>
-        <TabsTrigger value="tree">{t.tree}</TabsTrigger>
-      </TabsList>
-      <TabsContent value="near" className="min-h-0 flex-1 overflow-auto">
-        <NearbyList center={center} statusFilter={statusFilter} selectedId={selectedId} onPick={onPick} />
-      </TabsContent>
-      <TabsContent value="tree" className="min-h-0 flex-1 overflow-auto">
-        <AreaTree cabinets={cabinets} selectedId={selectedId} onPick={onPick} />
-      </TabsContent>
-    </Tabs>
+    <>
+      {statusView && <StatusList status={statusView} cabinets={cabinets} selectedId={selectedId} onPick={onPick} onClose={onCloseStatus} />}
+      <Tabs value={tab} onValueChange={setTab} className={cn('flex min-h-0 flex-1 flex-col', statusView && 'hidden')}>
+        <TabsList>
+          <TabsTrigger value="near">{t.near}</TabsTrigger>
+          <TabsTrigger value="tree">{t.tree}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="near" className="min-h-0 flex-1 overflow-auto">
+          <NearbyList center={center} selectedId={selectedId} onPick={onPick} />
+        </TabsContent>
+        <TabsContent value="tree" className="min-h-0 flex-1 overflow-auto">
+          <AreaTree cabinets={cabinets} selectedId={selectedId} onPick={onPick} />
+        </TabsContent>
+      </Tabs>
+    </>
   );
 }
 
-function NearbyList({ center, statusFilter, selectedId, onPick }: { center: GeoPoint; statusFilter: Set<CabinetStatus>; selectedId: string | null; onPick: (id: string) => void }) {
+function StatusList({
+  status,
+  cabinets,
+  selectedId,
+  onPick,
+  onClose,
+}: {
+  status: CabinetStatus;
+  cabinets: CabinetSummary[];
+  selectedId: string | null;
+  onPick: (id: string) => void;
+  onClose: () => void;
+}) {
+  const t = useDict(MAP).statusList;
+  const L = useLabels();
+  // same cached query as the area tree: only used to turn ward/district ids into names
+  const { data: tree } = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
+  const areaName = useMemo(() => new Map((tree?.areas ?? []).map((a) => [a.id, a.name])), [tree]);
+  const list = useMemo(
+    () => cabinets.filter((c) => c.status === status).sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true })),
+    [cabinets, status],
+  );
+  const place = (c: CabinetSummary) => {
+    const parts = [c.wardId && areaName.get(c.wardId), c.districtId && areaName.get(c.districtId)].filter(Boolean);
+    if (parts.length) return parts.join(', ');
+    return c.wardId || c.districtId ? null : t.noArea;
+  };
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-1 border-b px-1 py-1">
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onClose} aria-label={t.back} title={t.back}>
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <StatusDot status={status} />
+        <span className="truncate text-sm font-semibold">{fill(t.title, { status: L.status[status], n: list.length })}</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
+        {!list.length ? (
+          <div className="p-6 text-center text-sm text-subtle">{t.empty}</div>
+        ) : (
+          <ul className="divide-y">
+            {list.map((c) => {
+              const where = place(c);
+              return (
+                <li key={c.id}>
+                  <button
+                    onClick={() => onPick(c.id)}
+                    className={cn('flex w-full min-w-0 flex-col px-3 py-2 text-left hover:bg-muted/60', selectedId === c.id && 'bg-primary/10')}
+                  >
+                    <span className="truncate text-sm">
+                      <b>{c.code}</b> · {c.name}
+                    </span>
+                    {where && <span className="truncate text-[11px] text-subtle">{where}</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NearbyList({ center, selectedId, onPick }: { center: GeoPoint; selectedId: string | null; onPick: (id: string) => void }) {
   const t = useDict(MAP).left;
   const key = [center.lat.toFixed(3), center.lng.toFixed(3)];
   const { data, isLoading } = useQuery({ queryKey: ['nearby', ...key], queryFn: () => api.nearby(center), placeholderData: (p) => p });
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
-  const list = (data ?? []).filter((c) => statusFilter.size === 0 || statusFilter.has(c.status));
+  const list = data ?? [];
   if (isLoading)
     return (
       <div className="flex justify-center p-6">

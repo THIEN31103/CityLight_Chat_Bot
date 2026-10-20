@@ -91,6 +91,15 @@ describe('parseTelemetry', () => {
     expect(t.gps?.sats).toBe(7);
   });
 
+  it('decodes PLGO (LOGO_DIAG firmware): 0..5, X or junk = null', () => {
+    expect(parseTelemetry("*#LTID'A&PCON'1&PLGO'3&PTIM'X$").logoLink).toBe(3);
+    expect(parseTelemetry("*#LTID'A&PCON'1&PLGO'0$").logoLink).toBe(0);
+    expect(parseTelemetry("*#LTID'A&PCON'0&PLGO'X$").logoLink).toBeNull();
+    expect(parseTelemetry("*#LTID'A&PLGO'9$").logoLink).toBeNull();
+    expect(parseTelemetry(TELE_OK).logoLink).toBeNull();
+    expect(parseTelemetry("*#LTID'A&PLGO'2$").unknownKeys).toEqual({});
+  });
+
   it('keeps unknown keys for future firmware', () => {
     const t = parseTelemetry("*#LTID'A&MKWH'1234.5&LCSQ'21$");
     expect(t.unknownKeys).toEqual({ MKWH: '1234.5', LCSQ: '21' });

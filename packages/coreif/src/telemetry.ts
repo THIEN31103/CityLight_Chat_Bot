@@ -6,6 +6,7 @@
 //   PTIM/LTIM:      ISO 8601 with ms and offset, or "X"
 //   CTTE:           1000 = DS18B20 read error
 //   LQ2/LQ3/PMAN:   "X" while PCON=0
+//   PLGO:           0..5 LOGO link diagnosis from PLC_KEY [46] (firmware LOGO_DIAG), "X" while PCON=0
 import type { GeoPoint } from '@citylight/shared';
 import { parseFrame, type ParsedFrame } from './frame';
 
@@ -45,6 +46,8 @@ export interface TelemetryPatch {
   deviceTime: string | null;
   doorOpen: boolean | null;
   contactorFault: boolean | null;
+  /** PLGO: 0 LOGO OK, 1 lost, 2 ETH silent, 3 TCP down, 4 no Modbus, 5 ETH settings; null = X / not sent. */
+  logoLink: number | null;
   /** All keys present in the frame (e.g. old firmware 1307ebc has no LQ2/LQ3/PMAN). */
   keys: string[];
   /** Keys present in the frame that this parser does not know (future firmware). */
@@ -55,7 +58,7 @@ export interface TelemetryPatch {
 const KNOWN = new Set([
   'LTID', 'LDOM', 'LPOR', 'LIME', 'LGPS', 'LTIM', 'LCLI', 'LBAT', 'LACI', 'LERR', 'CTVL', 'CTTE', 'MCON',
   'MPU1', 'MPU2', 'MPU3', 'MPI1', 'MPI2', 'MPI3', 'MCO1', 'MCO2', 'MCO3', 'MCOS', 'MPOW', 'PCON',
-  'PIN5', 'LINE1', 'LINE2', 'LQ2', 'LQ3', 'PMAN', 'PTIM', 'PDOR', 'PFLT',
+  'PIN5', 'LINE1', 'LINE2', 'LQ2', 'LQ3', 'PMAN', 'PTIM', 'PDOR', 'PFLT', 'PLGO',
 ]);
 
 const isX = (v: string | undefined) => v === undefined || v === '' || v.toUpperCase() === 'X';
@@ -95,6 +98,12 @@ export function parseIso(v: string | undefined): string | null {
   const offset = m[8] ?? '+07:00';
   const d = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}${m[7] ?? ''}${offset}`);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/** PLGO 0..5; anything else (X, garbage) = null. */
+function logoLink(v: string | undefined): number | null {
+  const n = num(v);
+  return n !== null && Number.isInteger(n) && n >= 0 && n <= 5 ? n : null;
 }
 
 export function telemetryFromFields(p: ParsedFrame): TelemetryPatch {
@@ -147,6 +156,7 @@ export function telemetryFromFields(p: ParsedFrame): TelemetryPatch {
     deviceTime: parseIso(f.PTIM),
     doorOpen: bool01(f.PDOR),
     contactorFault: bool01(f.PFLT),
+    logoLink: logoLink(f.PLGO),
     keys: [...p.order],
     unknownKeys,
     warnings,

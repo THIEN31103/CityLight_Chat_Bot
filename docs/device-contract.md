@@ -28,16 +28,17 @@ Tóm tắt phần server cần biết. Nguồn sự thật: `../../CLAUDE.md` (m
 ## Telemetry
 
 - Frame: `*#KEY'VAL&KEY'VAL$`. Chu kỳ 10 s; thay đổi → gom 2 s; `LQ2`/`LQ3`/`PMAN` đổi → 0.5 s (`FAST_FEEDBACK 1`); tối thiểu 1 s giữa 2 frame.
-- Keys: `LTID LDOM LPOR LIME LGPS LTIM LCLI LBAT LACI LERR CTVL CTTE MCON MPU1-3 MPI1-3 MCO1-3 MCOS MPOW PCON PIN5 LINE1 LINE2 LQ2 LQ3 PMAN PTIM`. `X` = không có dữ liệu.
+- Keys: `LTID LDOM LPOR LIME LGPS LTIM LCLI LBAT LACI LERR CTVL CTTE MCON MPU1-3 MPI1-3 MCO1-3 MCOS MPOW PCON PIN5 LINE1 LINE2 LQ2 LQ3 PMAN PTIM` (+ `PLGO` từ firmware `LOGO_DIAG`). `X` = không có dữ liệu.
 - Ý nghĩa quan trọng:
   - `LQ2`/`LQ3` = nhánh 1/2 đang sáng thật (LOGO Q2/Q3). `PMAN` = đang ở chế độ thủ công.
   - `LINE1`/`LINE2`/`PIN5` = **echo lệnh**, không phải trạng thái thật.
   - `PCON`/`MCON` = PLC/PM có trả lời; `LCLI` 0 = mọi slave OK, 1 PLC mất, 2 PM mất, 3 CT mất, 4 cả ba, X tổ hợp khác.
-  - `PTIM` = giờ LOGO (độ phân giải phút), `X` khi `PCON'0`. `LTIM` = echo giờ server gửi.
+  - `PTIM` = giờ LOGO (độ phân giải phút; LTE tự cộng giây/ms nên chỉ **phút** mới là dấu hiệu sống), `X` khi `PCON'0`; firmware `LOGO_DIAG` còn gửi `X` ngay khi PLC_KEY mất LOGO (~6 s). `LTIM` = echo giờ server gửi.
+  - `PLGO` (firmware `LOGO_DIAG`, nhánh `dev_plc_logo_diag_dgb`) = chẩn đoán đường PLC_KEY → LOGO, thanh ghi PLC `[46]`: 0 LOGO trả lời, 1 mất LOGO / chưa rõ nguyên nhân, 2 module ETH không trả lời AT (UART PLC_KEY ↔ ETH / module), 3 ETH sống nhưng mất TCP tới LOGO (cáp, nguồn LOGO, IP), 4 có TCP nhưng LOGO không trả Modbus, 5 ETH sai WAN/SOCK. `X` khi `PCON'0`. Server: `PLGO` 2..5 → E301 ngay; `PTIM'X` > 15 s hoặc phút PTIM đứng > 150 s → E301 (firmware cũ).
   - `LGPS'X` trước fix GNSS đầu tiên.
   - `CTVL` dòng rò mA, `CTTE` nhiệt độ °C (1000 = lỗi DS18B20). `MPU/MPI/MCO/MCOS/MPOW` từ đồng hồ DH (0 khi đồng hồ mất).
 - Chưa gửi: `PDOR` (cửa), `PFLT` (lỗi contactor) — `TELE_SEND_DOOR_FAULT 0`.
-- Chưa có: lịch đang chạy trong LOGO (T10..T22), tín hiệu "mất LOGO" riêng.
+- Chưa có: lịch đang chạy trong LOGO (T10..T22).
 
 ## Lệnh (downlink)
 

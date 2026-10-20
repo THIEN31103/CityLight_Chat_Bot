@@ -10,7 +10,7 @@ const base: MeasureInput = {
   branch1On: true, branch2On: true, manualMode: false, vL1: 222, vL2: 223, vL3: 221, iL1: 18, iL2: 17, iL3: 19,
   pfTotal: 0.95, leakMa: 12, tempC: 35, tempSensorFault: false, gpsDevice: { lat: 10.77, lng: 106.7 },
   declaredLocation: { lat: 10.77, lng: 106.7 }, batteryMv: 4000, deviceTime: '2026-10-17T12:00:00Z',
-  deviceTimeChangedAt: '2026-10-17T11:59:30Z', lastBootAt: '2026-10-17T08:00:00Z', bootsLastHour: 0, bootsLast24h: 1,
+  deviceTimeChangedAt: '2026-10-17T11:59:30Z', deviceTimeMissingSince: null, logoLink: null, lastBootAt: '2026-10-17T08:00:00Z', bootsLastHour: 0, bootsLast24h: 1,
   fwProfile: 'v2-current',
 };
 const T = defaultThresholds();
@@ -74,6 +74,10 @@ describe('measurementAlarms', () => {
     expect(types({ deviceTime: '2026-10-17T12:08:00Z' })).toEqual(['clock_drift']);
     expect(run({ deviceTime: '2026-10-17T11:50:00Z' }).get('clock_drift')).toContain('chậm 10 phút');
     expect(types({ deviceTime: '2026-10-17T12:08:00Z', deviceTimeChangedAt: '2026-10-17T11:40:00Z' })).toEqual([]);
+  });
+
+  it('no clock drift or schedule mismatch while PLGO says the LOGO is lost', () => {
+    expect(types({ deviceTime: '2026-10-17T12:08:00Z', logoLink: 3 })).toEqual([]);
   });
 
   it('GPS drift over 200 m', () => {

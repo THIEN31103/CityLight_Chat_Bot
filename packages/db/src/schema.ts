@@ -139,8 +139,13 @@ export const cabinetState = pgTable('cabinet_state', {
   gpsDevice: point('gps_device'),
   gpsSats: smallint('gps_sats'),
   deviceTime: tsz('device_time'),
-  /** Server time when PTIM last changed: PTIM frozen > 5 min while PCON=1 -> E301 (LOGO lost). */
+  /** Server time when the PTIM minute last changed: frozen > 150 s while PCON=1 -> E301 (LOGO lost). */
   deviceTimeChangedAt: tsz('device_time_changed_at'),
+  /** Server time PTIM turned X while PCON=1 (null = PTIM present): X for > 15 s -> E301. */
+  deviceTimeMissingSince: tsz('device_time_missing_since'),
+  /** PLGO, PLC_KEY's LOGO link diagnosis (LOGO_DIAG firmware): 0 OK, 1 lost, 2 ETH silent,
+   *  3 TCP to LOGO down, 4 LOGO no Modbus reply, 5 ETH settings wrong; null = not sent. */
+  logoLink: smallint('logo_link'),
   doorOpen: boolean('door_open'),
   contactorFault: boolean('contactor_fault'),
   extra: jsonb('extra').$type<Record<string, string>>().notNull().default({}),

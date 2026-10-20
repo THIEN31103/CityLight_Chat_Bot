@@ -3,7 +3,7 @@
 // `Debouncer` turns that into alarms that open / close only after the condition has held for a while.
 // Device-health rules (offline, RS485, LOGO…) stay in health.ts and are not debounced.
 import type { AlarmType, GeoPoint, Schedule, Thresholds } from './domain';
-import { dhMeterLost, phaseLoss, ptimStale, type HealthInput } from './health';
+import { dhMeterLost, logoLost, phaseLoss, type HealthInput } from './health';
 import { LOCALE, defineDict, type Lang } from './i18n';
 
 export interface MeasureInput extends HealthInput {
@@ -193,13 +193,13 @@ export function measurementAlarms(
     out.set('battery_low', T.battery(h.batteryMv, t.batteryLowMv.value));
 
   // ----- LOGO clock: only while PTIM is live (a frozen PTIM is logo_lost) -----
-  if (h.plcOnline === true && h.deviceTime && !ptimStale(h, now)) {
+  if (h.plcOnline === true && h.deviceTime && !logoLost(h, now)) {
     const drift = Date.parse(h.deviceTime) - now;
     if (Math.abs(drift) > CLOCK_DRIFT_MS) out.set('clock_drift', T.clock(drift > 0, Math.round(Math.abs(drift) / 60_000)));
   }
 
   // ----- schedule: branch state vs the schedule the server applied -----
-  if (opts.schedule && h.manualMode === false && h.plcOnline === true && h.branch1On !== null && h.branch2On !== null) {
+  if (opts.schedule && h.manualMode === false && h.plcOnline === true && !logoLost(h, now) && h.branch1On !== null && h.branch2On !== null) {
     const [e1, e2] = expectedBranches(opts.schedule, now);
     const diff: string[] = [];
     if (h.branch1On !== e1) diff.push(T.branch(1, h.branch1On));

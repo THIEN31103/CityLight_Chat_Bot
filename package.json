@@ -31,6 +31,7 @@
     "e2e:dimming": "node --env-file=.env --import tsx apps/api/test/e2e-dimming.ts",
     "e2e:relocate": "node --env-file=.env --import tsx apps/api/test/e2e-relocate.ts",
     "e2e:guards": "node --env-file=.env --import tsx apps/api/test/e2e-guards.ts",
+    "e2e:logo": "node --env-file=.env --import tsx apps/api/test/e2e-logo.ts",
     "e2e:security": "node --env-file=.env --import tsx apps/api/test/e2e-security.ts",
     "e2e:roles": "node --env-file=.env --import tsx apps/api/test/e2e-roles.ts",
     "e2e:mqtt-auth": "node --env-file=.env --env-file=infra/.env --import tsx apps/api/test/e2e-mqtt-auth.ts",

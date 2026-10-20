@@ -444,7 +444,7 @@ Test với tủ thật: tủ đi 4G nên không vào được laptop sau NAT →
 | P1 | Gửi bộ đếm năng lượng + S/Q/Hz từ đồng hồ DH | LTE (PM đã đọc 60 thanh ghi) | tab Năng lượng, Giám sát đầy đủ |
 | P1 | Gửi ICCID / CSQ / nhà mạng | LTE | tab Thông tin |
 | P1 | Đọc lại lịch đang chạy trong LOGO + gửi lên | PLC + LTE | shadow lịch, READ_ALL |
-| P2 | Tín hiệu mất LOGO riêng | PLC + LTE | trạng thái lỗi chính xác |
+| ~~P2~~ | ~~Tín hiệu mất LOGO riêng~~ — `PLGO` (`LOGO_DIAG`, 21/10, chờ nạp tủ) | PLC + LTE | trạng thái lỗi chính xác |
 | P2 | cosφ có dấu (bỏ u32) | LTE | |
 | P2 | Gửi `fw_version` trong frame | LTE | tự nhận capability |
 | P3 | TLS 8883 | LTE | mã hóa |

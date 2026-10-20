@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { ExpressionSpecification, GeoJSONSource, Map as MlMap, MapMouseEvent, PaddingOptions } from 'maplibre-gl';
-import type { CabinetStatus, CabinetSummary, GeoPoint, GpsDriftItem } from '@citylight/shared';
+import type { CabinetSummary, GeoPoint, GpsDriftItem } from '@citylight/shared';
 import { api, type MapAssets, type PoleAsset } from '@/lib/api';
 import { useUi } from '@/stores/session';
 import { dictNow, fill, useLang } from '@/i18n';
@@ -38,7 +38,6 @@ export interface CabinetMapHandle {
 
 interface Props {
   cabinets: CabinetSummary[];
-  statusFilter: Set<CabinetStatus>;
   layers: MapLayers;
   basemap: BasemapId;
   selectedId: string | null;
@@ -66,16 +65,14 @@ const HCMC: [number, number] = [106.7, 10.79];
 const EMPTY = { type: 'FeatureCollection' as const, features: [] };
 const coords = (g: unknown) => (g as { coordinates: [number, number] }).coordinates;
 
-function cabinetsGeoJson(list: CabinetSummary[], filter: Set<CabinetStatus>) {
+function cabinetsGeoJson(list: CabinetSummary[]) {
   return {
     type: 'FeatureCollection' as const,
-    features: list
-      .filter((c) => filter.size === 0 || filter.has(c.status))
-      .map((c) => ({
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: [c.location.lng, c.location.lat] },
-        properties: { id: c.id, name: c.name, code: c.code, status: c.status },
-      })),
+    features: list.map((c) => ({
+      type: 'Feature' as const,
+      geometry: { type: 'Point' as const, coordinates: [c.location.lng, c.location.lat] },
+      properties: { id: c.id, name: c.name, code: c.code, status: c.status },
+    })),
   };
 }
 
@@ -203,7 +200,7 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
       paint: { 'text-color': textColor, ...halo },
     });
 
-    m.addSource('cabinets', { type: 'geojson', data: cabinetsGeoJson(p.cabinets, p.statusFilter), cluster: true, clusterRadius: 50, clusterMaxZoom: 14 });
+    m.addSource('cabinets', { type: 'geojson', data: cabinetsGeoJson(p.cabinets), cluster: true, clusterRadius: 50, clusterMaxZoom: 14 });
     m.addLayer({
       id: 'cluster-halo',
       type: 'circle',
@@ -490,10 +487,10 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
   // ---- reactive updates ----
   useEffect(() => {
     const m = map.current;
-    (m?.getSource('cabinets') as GeoJSONSource | undefined)?.setData(cabinetsGeoJson(props.cabinets, props.statusFilter));
+    (m?.getSource('cabinets') as GeoJSONSource | undefined)?.setData(cabinetsGeoJson(props.cabinets));
     if (m) void loadPoles(m);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.cabinets, props.statusFilter]);
+  }, [props.cabinets]);
 
   useEffect(() => {
     const m = map.current;

@@ -23,8 +23,12 @@ export interface HealthInput {
   gpsDevice: GeoPoint | null;
   batteryMv: number | null;
   deviceTime: string | null;
-  /** Server time PTIM last changed (null = never seen). */
+  /** Server time the PTIM minute last changed (null = never seen). */
   deviceTimeChangedAt: string | null;
+  /** Server time PTIM turned X while PCON=1 (null = PTIM present or PLC_KEY down). */
+  deviceTimeMissingSince: string | null;
+  /** PLGO from PLC_KEY (LOGO_DIAG firmware), see LOGO_LINK; null = not sent. */
+  logoLink: number | null;
   lastBootAt: string | null;
   bootsLastHour: number;
   bootsLast24h: number;
@@ -32,15 +36,31 @@ export interface HealthInput {
 }
 
 export const OFFLINE_AFTER_MS = 60_000;
-export const PTIM_STALE_MS = 5 * 60_000;
+/** LOGO RTC has minute resolution and PLC_KEY reads it every 30 s: a new minute shows within ~95 s. */
+export const PTIM_STALE_MS = 150_000;
+/** PTIM'X with PCON=1 for this long = LOGO lost (one 10 s frame of X may be a PLC_KEY boot). */
+export const PTIM_MISSING_MS = 15_000;
 export const GPS_GRACE_MS = 10 * 60_000;
 export const FLAPPING_BOOTS_PER_HOUR = 3;
 
+/** PLGO values (PLC_KEY register [46], firmware LOGO_DIAG). 2..5 come from the ETH probe. */
+export const LOGO_LINK = { ok: 0, lost: 1, ethSilent: 2, tcpDown: 3, noModbus: 4, ethConfig: 5 } as const;
+
 const n = (v: number | null) => v ?? 0;
 
+/** The PTIM minute has not moved (old firmware keeps sending the frozen LOGO time). */
 export function ptimStale(h: HealthInput, now = Date.now()): boolean {
-  if (!h.online || h.plcOnline !== true || !h.deviceTimeChangedAt) return false;
+  if (!h.online || h.plcOnline !== true || !h.deviceTime || !h.deviceTimeChangedAt) return false;
   return now - Date.parse(h.deviceTimeChangedAt) > PTIM_STALE_MS;
+}
+
+/** E301: PLC_KEY answers but cannot reach the LOGO. PLGO 2..5 (already probed) count at once;
+ *  otherwise PTIM'X for PTIM_MISSING_MS, or a frozen PTIM minute. */
+export function logoLost(h: HealthInput, now = Date.now()): boolean {
+  if (!h.online || h.plcOnline !== true) return false;
+  if (h.logoLink !== null && h.logoLink >= LOGO_LINK.ethSilent) return true;
+  if (h.deviceTimeMissingSince) return now - Date.parse(h.deviceTimeMissingSince) > PTIM_MISSING_MS;
+  return ptimStale(h, now);
 }
 
 export function dhMeterLost(h: HealthInput): boolean {
@@ -66,6 +86,13 @@ export const HEALTH_ALARM_TEXT = defineDict(
     busDown: 'LCLI=4: PLC_KEY, PM_KEY, CT_KEY cùng không trả lời',
     multiSlave: (pcon: number, mcon: number) => `LCLI=X: PCON=${pcon}, MCON=${mcon} — hai slave không trả lời`,
     logoLost: (since: string) => `PCON=1 nhưng PTIM không đổi từ ${since}`,
+    logoMissing: 'PCON=1 nhưng PTIM=X: PLC_KEY không đọc được LOGO',
+    logoCause: {
+      2: 'PLGO=2: module ETH không trả lời AT — đường UART PLC_KEY ↔ ETH hoặc module ETH hỏng',
+      3: 'PLGO=3: module ETH sống nhưng chưa nối TCP tới LOGO — cáp mạng, nguồn LOGO hoặc IP',
+      4: 'PLGO=4: đã nối TCP nhưng LOGO không trả Modbus — chương trình / cài đặt Modbus của LOGO',
+      5: 'PLGO=5: module ETH sai cấu hình WAN/SOCK',
+    } as Record<number, string>,
     dhMeterLost: 'MCON=1 nhưng U/I/P đều = 0',
     phaseLoss: (v1: number, v2: number, v3: number) => `U pha: L1 ${v1} V · L2 ${v2} V · L3 ${v3} V`,
     tempSensor: 'CTTE=1000: CT_KEY không đọc được DS18B20',
@@ -81,6 +108,13 @@ export const HEALTH_ALARM_TEXT = defineDict(
     busDown: 'LCLI=4: PLC_KEY, PM_KEY and CT_KEY all not responding',
     multiSlave: (pcon: number, mcon: number) => `LCLI=X: PCON=${pcon}, MCON=${mcon} — two slaves not responding`,
     logoLost: (since: string) => `PCON=1 but PTIM unchanged since ${since}`,
+    logoMissing: 'PCON=1 but PTIM=X: PLC_KEY cannot read the LOGO',
+    logoCause: {
+      2: 'PLGO=2: ETH module does not answer AT — UART PLC_KEY ↔ ETH or the ETH module is broken',
+      3: 'PLGO=3: ETH module alive but no TCP connection to the LOGO — network cable, LOGO power or IP',
+      4: 'PLGO=4: TCP connected but the LOGO does not answer Modbus — LOGO program / Modbus settings',
+      5: 'PLGO=5: ETH module WAN/SOCK settings are wrong',
+    } as Record<number, string>,
     dhMeterLost: 'MCON=1 but U/I/P all = 0',
     phaseLoss: (v1: number, v2: number, v3: number) => `Phase U: L1 ${v1} V · L2 ${v2} V · L3 ${v3} V`,
     tempSensor: 'CTTE=1000: CT_KEY cannot read the DS18B20',
@@ -88,6 +122,15 @@ export const HEALTH_ALARM_TEXT = defineDict(
     fwUnsafe: 'Firmware 1307ebc (frames without LQ2/LQ3/PMAN): control blocked on the web',
   },
 );
+
+/** Why E301 is on: the ETH probe result when PLC_KEY sent one, else the PTIM evidence. */
+export function logoLostText(h: HealthInput, lang: Lang = 'vi'): string {
+  const T = HEALTH_ALARM_TEXT[lang];
+  const cause = h.logoLink !== null ? T.logoCause[h.logoLink] : undefined;
+  if (cause) return cause;
+  if (h.deviceTimeMissingSince || !h.deviceTimeChangedAt) return T.logoMissing;
+  return T.logoLost(new Date(h.deviceTimeChangedAt).toISOString());
+}
 
 /** Alarm types that must be active right now for this cabinet (offline handled by the sweep too). */
 export function activeHealthAlarms(h: HealthInput, now = Date.now(), lang: Lang = 'vi'): Map<AlarmType, string> {
@@ -115,7 +158,7 @@ export function activeHealthAlarms(h: HealthInput, now = Date.now(), lang: Lang 
       out.set('multi_slave_lost', T.multiSlave(h.plcOnline ? 1 : 0, h.pmOnline ? 1 : 0));
       break;
   }
-  if (ptimStale(h, now)) out.set('logo_lost', T.logoLost(new Date(h.deviceTimeChangedAt!).toISOString()));
+  if (logoLost(h, now)) out.set('logo_lost', logoLostText(h, lang));
   if (dhMeterLost(h)) out.set('dh_meter_lost', T.dhMeterLost);
   if (phaseLoss(h)) out.set('phase_loss', T.phaseLoss(n(h.vL1), n(h.vL2), n(h.vL3)));
   if (h.tempSensorFault && !ctLost(h.busStatus)) out.set('temp_sensor_fault', T.tempSensor);
@@ -295,8 +338,10 @@ export function buildDiagnostics(h: HealthInput, now = Date.now(), lang: Lang = 
   else add(S.plc, R.plc, 'ok', null, 'PCON=1', T.responding);
 
   if (stale || h.plcOnline !== true) add(S.logo, R.logo, 'unknown', null, 'PTIM=X', T.needPlc);
-  else if (ptimStale(h, now)) add(S.logo, R.logo, 'fault', 'E301', T.ptimStuck(fmt(h.deviceTime, lang)), T.logoFault);
-  else add(S.logo, R.logo, 'ok', null, `PTIM ${fmt(h.deviceTime, lang)}`, T.logoOk);
+  else if (logoLost(h, now)) {
+    const evidence = h.logoLink !== null && h.logoLink > 0 ? `PLGO=${h.logoLink}` : h.deviceTime ? T.ptimStuck(fmt(h.deviceTime, lang)) : 'PTIM=X';
+    add(S.logo, R.logo, 'fault', 'E301', evidence, `${logoLostText(h, lang)}. ${T.logoFault}`);
+  } else add(S.logo, R.logo, 'ok', null, `PTIM ${fmt(h.deviceTime, lang)}`, T.logoOk);
 
   if (stale) unknown(S.pm, R.pm);
   else if (h.pmOnline === false) add(S.pm, R.pm, 'fault', 'E202', 'MCON=0', T.pmFault);

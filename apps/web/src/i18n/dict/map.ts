@@ -7,8 +7,14 @@ export const MAP = defineDict(
       online: 'Tủ online',
       energyToday: 'kWh hôm nay',
       overdue: 'Sự cố quá hạn',
-      filtering: 'Đang lọc: {list}',
-      clearFilter: 'Bỏ lọc',
+      openList: 'Xem danh sách tủ: {status}',
+    },
+    /** list opened from a status KPI card (all cabinets in scope with that status) */
+    statusList: {
+      title: '{status} ({n})',
+      back: 'Quay lại',
+      empty: 'Không có tủ nào ở trạng thái này',
+      noArea: 'Chưa phân khu vực',
     },
     toolbar: {
       hideList: 'Ẩn danh sách',
@@ -169,8 +175,13 @@ export const MAP = defineDict(
       online: 'Cabinets online',
       energyToday: 'kWh today',
       overdue: 'Overdue incidents',
-      filtering: 'Filtered: {list}',
-      clearFilter: 'Clear filter',
+      openList: 'Show cabinets: {status}',
+    },
+    statusList: {
+      title: '{status} ({n})',
+      back: 'Back',
+      empty: 'No cabinets in this status',
+      noArea: 'No area assigned',
     },
     toolbar: {
       hideList: 'Hide list',

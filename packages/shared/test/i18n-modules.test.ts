@@ -38,7 +38,7 @@ const NOW = Date.parse('2026-10-17T12:00:00Z');
 const base: HealthInput = {
   online: true, lastSeenAt: '2026-10-17T11:59:55Z', busStatus: '0', plcOnline: true, pmOnline: true, branch1On: true, branch2On: false,
   vL1: 222, vL2: 223, vL3: 221, iL1: 18, iL2: 17, iL3: 19, leakMa: 12, tempC: 35, tempSensorFault: false, gpsDevice: { lat: 10.77, lng: 106.7 },
-  batteryMv: 4000, deviceTime: '2026-10-17T11:59:00Z', deviceTimeChangedAt: '2026-10-17T11:59:30Z', lastBootAt: '2026-10-17T08:00:00Z',
+  batteryMv: 4000, deviceTime: '2026-10-17T11:59:00Z', deviceTimeChangedAt: '2026-10-17T11:59:30Z', deviceTimeMissingSince: null, logoLink: null, lastBootAt: '2026-10-17T08:00:00Z',
   bootsLastHour: 0, bootsLast24h: 1, fwProfile: 'v2-current',
 };
 

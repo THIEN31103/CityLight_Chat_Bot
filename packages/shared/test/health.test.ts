@@ -23,6 +23,8 @@ const base: HealthInput = {
   batteryMv: 4000,
   deviceTime: '2026-10-17T11:59:00Z',
   deviceTimeChangedAt: '2026-10-17T11:59:30Z',
+  deviceTimeMissingSince: null,
+  logoLink: null,
   lastBootAt: '2026-10-17T08:00:00Z',
   bootsLastHour: 0,
   bootsLast24h: 1,
@@ -40,9 +42,23 @@ describe('activeHealthAlarms', () => {
     expect(types({ busStatus: '4', plcOnline: false, pmOnline: false })).toEqual(['bus_down']);
     expect(types({ busStatus: 'X' })).toEqual(['multi_slave_lost']);
   });
-  it('LOGO lost when PTIM frozen > 5 min while PCON=1', () => {
-    expect(types({ deviceTimeChangedAt: '2026-10-17T11:50:00Z' })).toEqual(['logo_lost']);
+  it('LOGO lost when the PTIM minute is frozen > 150 s while PCON=1', () => {
+    expect(types({ deviceTimeChangedAt: '2026-10-17T11:57:00Z' })).toEqual(['logo_lost']);
+    expect(types({ deviceTimeChangedAt: '2026-10-17T11:58:00Z' })).toEqual([]);
     expect(types({ deviceTimeChangedAt: '2026-10-17T11:50:00Z', plcOnline: false, busStatus: '1' })).toEqual(['plc_lost']);
+  });
+  it('LOGO lost on PTIM=X > 15 s while PCON=1', () => {
+    expect(types({ deviceTime: null, deviceTimeMissingSince: '2026-10-17T11:59:40Z' })).toEqual(['logo_lost']);
+    expect(types({ deviceTime: null, deviceTimeMissingSince: '2026-10-17T11:59:50Z' })).toEqual([]);
+  });
+  it('LOGO lost at once on PLGO 2..5, with the probed cause as message', () => {
+    expect(types({ logoLink: 3 })).toEqual(['logo_lost']);
+    expect(types({ logoLink: 0 })).toEqual([]);
+    // PLGO=1 (not probed yet) alone is not enough: it waits for the PTIM rule
+    expect(types({ logoLink: 1 })).toEqual([]);
+    expect(activeHealthAlarms({ ...base, logoLink: 2 }, NOW).get('logo_lost')).toMatch(/^PLGO=2/);
+    expect(activeHealthAlarms({ ...base, logoLink: 3 }, NOW, 'en').get('logo_lost')).toMatch(/TCP/);
+    expect(types({ logoLink: 4, plcOnline: false, busStatus: '1' })).toEqual(['plc_lost']);
   });
   it('DH meter lost vs phase loss', () => {
     expect(types({ vL1: 0, vL2: 0, vL3: 0, iL1: 0, iL2: 0, iL3: 0 })).toEqual(['dh_meter_lost']);

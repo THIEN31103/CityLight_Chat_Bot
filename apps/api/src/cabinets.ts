@@ -209,6 +209,7 @@ export class CabinetsService {
              s.status, s.online, s.last_seen_at, s.last_boot_at, s.bus_status, s.branch1_on, s.branch2_on, s.manual_mode, s.plc_online, s.pm_online,
              s.v_l1, s.v_l2, s.v_l3, s.i_l1, s.i_l2, s.i_l3, s.pf_total, s.p_total_kw, s.leak_ma, s.temp_c, s.temp_sensor_fault, s.battery_mv,
              ST_Y(s.gps_device) AS gps_lat, ST_X(s.gps_device) AS gps_lng, s.device_time, s.device_time_changed_at, s.door_open, s.contactor_fault,
+             s.device_time_missing_since, s.logo_link,
              s.active_alarm_count,
              (SELECT count(*)::int FROM device_events e WHERE e.cabinet_id = c.id AND e.kind = 'boot' AND e.ts > now() - interval '1 hour') AS boots_1h,
              (SELECT count(*)::int FROM device_events e WHERE e.cabinet_id = c.id AND e.kind = 'boot' AND e.ts > now() - interval '24 hours') AS boots_24h
@@ -226,6 +227,7 @@ export class CabinetsService {
       leakMa: num('leak_ma'), tempC: num('temp_c'), tempSensorFault: !!r.temp_sensor_fault,
       gpsDevice: r.gps_lat !== null && r.gps_lat !== undefined ? { lat: Number(r.gps_lat), lng: Number(r.gps_lng) } : null,
       batteryMv: num('battery_mv'), deviceTime: iso(r.device_time as Date), deviceTimeChangedAt: iso(r.device_time_changed_at as Date),
+      deviceTimeMissingSince: iso(r.device_time_missing_since as Date), logoLink: num('logo_link'),
       lastBootAt: iso(r.last_boot_at as Date), bootsLastHour: Number(r.boots_1h ?? 0), bootsLast24h: Number(r.boots_24h ?? 0),
       fwProfile: r.fw_profile as FwProfile,
     };

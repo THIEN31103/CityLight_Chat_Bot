@@ -102,9 +102,9 @@ export const ERROR_CATALOG: ErrorDef[] = [
   // ---------- PLC / LOGO ----------
   {
     code: 'E301', type: 'logo_lost', title: 'Mất kết nối LOGO (qua module ETH)', category: 'PLC / LOGO', severity: 'critical',
-    source: 'PCON=1 nhưng PTIM không đổi > 5 phút',
-    cause: 'PLC_KEY vẫn trả lời nhưng không đọc được LOGO: module Ethernet EBT3001 kẹt / mất cấu hình, cáp mạng, hoặc LOGO mất nguồn. Trạng thái nhánh (LQ2/LQ3) đang là giá trị cũ.',
-    checks: ['Xem LED PB5 trên PLC_KEY: tắt = chưa xác nhận được ETH / LOGO.', 'Kiểm tra cáp mạng ETH ↔ LOGO và nguồn LOGO.', 'Reset PLC_KEY để chạy lại cấu hình ETH (tự thử lại tối đa 5 lần).'],
+    source: 'PCON=1 và PLGO=2..5, hoặc PTIM=X > 15 s, hoặc phút PTIM không đổi > 150 s',
+    cause: 'PLC_KEY vẫn trả lời nhưng không đọc được LOGO. Firmware có LOGO_DIAG hỏi module ETH và báo chỗ hỏng qua PLGO: 2 = ETH im (UART PLC_KEY ↔ ETH / module), 3 = ETH sống nhưng mất TCP (cáp mạng, nguồn LOGO, IP), 4 = có TCP nhưng LOGO không trả Modbus, 5 = ETH sai cấu hình. Trạng thái nhánh (LQ2/LQ3) không còn tin được.',
+    checks: ['Xem LED PB5 trên PLC_KEY: sáng = LOGO trả lời, chớp 1 Hz = ETH sống nhưng LOGO không trả lời, tắt = ETH không trả lời.', 'PLGO=2: kiểm tra dây UART và nguồn module ETH. PLGO=3: cáp mạng ETH ↔ LOGO, nguồn LOGO. PLGO=4: chương trình / cài đặt Modbus của LOGO.', 'Reset PLC_KEY để chạy lại cấu hình ETH (tự thử lại tối đa 5 lần).'],
     supported: true,
   },
   {
@@ -251,9 +251,9 @@ export const ERROR_CATALOG_EN: Partial<Record<string, ErrorText>> = {
   // ---------- PLC / LOGO ----------
   E301: {
     title: 'LOGO not responding (via ETH module)',
-    source: 'PCON=1 but PTIM unchanged for > 5 min',
-    cause: 'PLC_KEY still responds but cannot read the LOGO: EBT3001 Ethernet module stuck or lost its settings, network cable, or LOGO without power. Branch states (LQ2/LQ3) are stale values.',
-    checks: ['Look at LED PB5 on PLC_KEY: off = ETH / LOGO not confirmed.', 'Check the ETH ↔ LOGO network cable and the LOGO power supply.', 'Reset PLC_KEY to rerun the ETH configuration (it retries up to 5 times on its own).'],
+    source: 'PCON=1 and PLGO=2..5, or PTIM=X for > 15 s, or the PTIM minute unchanged for > 150 s',
+    cause: 'PLC_KEY still responds but cannot read the LOGO. Firmware with LOGO_DIAG asks the ETH module and reports the broken side in PLGO: 2 = ETH silent (UART PLC_KEY ↔ ETH / module), 3 = ETH alive but no TCP (network cable, LOGO power, IP), 4 = TCP up but the LOGO does not answer Modbus, 5 = ETH settings wrong. Branch states (LQ2/LQ3) can no longer be trusted.',
+    checks: ['Look at LED PB5 on PLC_KEY: on = LOGO answers, 1 Hz blink = ETH alive but the LOGO does not answer, off = ETH does not answer.', 'PLGO=2: check the UART wires and the ETH module power. PLGO=3: ETH ↔ LOGO network cable, LOGO power. PLGO=4: LOGO program / Modbus settings.', 'Reset PLC_KEY to rerun the ETH configuration (it retries up to 5 times on its own).'],
   },
   E302: {
     title: 'LOGO clock wrong',

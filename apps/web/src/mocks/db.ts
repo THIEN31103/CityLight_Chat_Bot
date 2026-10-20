@@ -429,6 +429,8 @@ export function diagnosticsOf(id: string): CabinetDiagnostics {
     deviceTime: s.deviceTime,
     // LOGO lost: PTIM stopped changing 10 min ago
     deviceTimeChangedAt: sc === 'logo_lost' ? new Date(Date.now() - 600_000).toISOString() : new Date().toISOString(),
+    // LOGO_DIAG firmware: PLC_KEY probed the ETH module and found no TCP to the LOGO
+    deviceTimeMissingSince: null, logoLink: sc === 'logo_lost' ? 3 : 0,
     lastBootAt: boot.lastBootAt, bootsLastHour: boot.bootsLast24h >= 3 ? 3 : 0, bootsLast24h: boot.bootsLast24h, fwProfile: c.fwProfile,
   };
   return { items: buildDiagnostics(input, Date.now(), getLang()), lastBootAt: boot.lastBootAt, bootsLast24h: boot.bootsLast24h, selfTest: selfTests.get(id) ?? null };

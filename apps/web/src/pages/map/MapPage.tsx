@@ -62,7 +62,8 @@ export function MapPage() {
   const mapRef = useRef<CabinetMapHandle>(null);
 
   const [panelOpen, setPanelOpen] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<Set<CabinetStatus>>(new Set());
+  // KPI card clicked -> left panel lists every cabinet in that status (null = normal tabs)
+  const [statusView, setStatusView] = useState<CabinetStatus | null>(null);
   const [layers, setLayers] = useState<MapLayers>({ cabinets: true, routes: true, poles: true, labels: true, codes: false });
   const [basemap, setBasemapState] = useState<BasemapId>(() => readPref('cl.basemap', 'auto') as BasemapId);
   const setBasemap = (b: BasemapId) => {
@@ -173,14 +174,6 @@ export function MapPage() {
     select(id);
   };
 
-  const toggleStatus = (s: CabinetStatus) =>
-    setStatusFilter((prev) => {
-      const n = new Set(prev);
-      if (n.has(s)) n.delete(s);
-      else n.add(s);
-      return n;
-    });
-
   const measureTotal = measurePts.reduce((sum, p, i) => (i ? sum + haversine(measurePts[i - 1]!, p) : 0), 0);
 
   return (
@@ -190,12 +183,13 @@ export function MapPage() {
         <div className="grid grid-cols-3 gap-1.5 border-b p-2">
           {KPI_ORDER.map((s) => {
             const Icon = STATUS_ICON[s];
-            const active = statusFilter.has(s);
+            const active = statusView === s;
             return (
               <button
                 key={s}
-                onClick={() => toggleStatus(s)}
+                onClick={() => setStatusView(active ? null : s)}
                 aria-pressed={active}
+                title={fill(t.kpi.openList, { status: L.status[s] })}
                 className={cn('rounded-md border px-2 py-1.5 text-left transition hover:bg-muted', active && 'border-primary bg-primary/10')}
               >
                 <div className={cn('flex items-center gap-1 text-[11px]', KPI_COLOR[s])}>
@@ -221,15 +215,14 @@ export function MapPage() {
             {t.kpi.overdue}
           </div>
         </div>
-        {statusFilter.size > 0 && (
-          <div className="flex items-center justify-between border-b px-3 py-1.5 text-xs">
-            <span className="text-subtle">{fill(t.kpi.filtering, { list: [...statusFilter].map((s) => L.status[s]).join(', ') })}</span>
-            <button className="text-primary" onClick={() => setStatusFilter(new Set())}>
-              {t.kpi.clearFilter}
-            </button>
-          </div>
-        )}
-        <LeftPanel center={center} cabinets={cabinets} statusFilter={statusFilter} selectedId={selectedId} onPick={flyToCabinet} />
+        <LeftPanel
+          center={center}
+          cabinets={cabinets}
+          statusView={statusView}
+          onCloseStatus={() => setStatusView(null)}
+          selectedId={selectedId}
+          onPick={flyToCabinet}
+        />
       </aside>
 
       {/* Map */}
@@ -237,7 +230,6 @@ export function MapPage() {
         <CabinetMap
           ref={mapRef}
           cabinets={cabinets}
-          statusFilter={statusFilter}
           layers={layers}
           basemap={basemap}
           selectedId={editMode ? editCabinetId : selectedId}
