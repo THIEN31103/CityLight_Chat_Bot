@@ -502,11 +502,16 @@ async function onDemo(payload: string) {
 
 const geom = (p: { lat: number; lng: number } | null) => (p ? `SRID=4326;POINT(${p.lng} ${p.lat})` : null);
 
+/** true after a failed flush whose batch was put back: the next failure drops it. */
+let retriedBatch = false;
+
 async function flush() {
   const started = Date.now();
   const tele = telemetryRows.splice(0, telemetryRows.length);
   const raws = rawRows.splice(0, rawRows.length);
-  const ids = [...dirty];
+  // a cabinet decommissioned / deleted since its frame arrived has left the registry: drop its pending state
+  // (byId.get() would be undefined and fail every later flush)
+  const ids = [...dirty].filter((id) => byId.has(id));
   dirty.clear();
   const events = [...stateEvents.values()];
   stateEvents.clear();
@@ -561,11 +566,19 @@ async function flush() {
     if (events.length) await publish({ type: 'cabinet.state', items: events });
     stats.flushes++;
     stats.lastFlushMs = Date.now() - started;
+    retriedBatch = false;
   } catch (e) {
-    console.error('[ingest] flush failed:', (e as Error).message);
-    // put the telemetry back once so a transient DB error does not lose a batch
-    telemetryRows.unshift(...tele);
-    ids.forEach((id) => dirty.add(id));
+    // put the batch back ONCE so a transient DB error does not lose it; a batch that fails again is dropped,
+    // otherwise one bad row (e.g. a deleted cabinet) would block every later flush
+    if (!retriedBatch) {
+      console.error('[ingest] flush failed, retrying the batch once:', (e as Error).message);
+      telemetryRows.unshift(...tele.filter((t) => byId.has(t.cabinet_id as string)));
+      ids.forEach((id) => dirty.add(id));
+      retriedBatch = true;
+    } else {
+      console.error(`[ingest] flush failed again, dropped ${tele.length} telemetry rows / ${ids.length} states:`, (e as Error).message);
+      retriedBatch = false;
+    }
   }
 }
 
