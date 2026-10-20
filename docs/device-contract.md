@@ -1,13 +1,13 @@
 # Device contract (tủ ↔ server)
 
-Tóm tắt phần server cần biết. Nguồn sự thật: `../../CLAUDE.md` (mục CoreIF Protocol, MQTT details) và `BOARD_LTE_KEY/Mylib/core_if.c`, `BOARD_LTE_KEY/Core/Src/main.c`. Đọc code 2026-10-17, nhánh `dev_key_uid_dgb` @ `5af6d3c`.
+Tóm tắt phần server cần biết. Nguồn sự thật: `../../CLAUDE.md` (mục CoreIF Protocol, MQTT details) và `BOARD_LTE_KEY/Mylib/core_if.c`, `BOARD_LTE_KEY/Core/Src/main.c`. Đọc code 2026-10-17, nhánh `dev_key_uid_dgb` @ `5af6d3c`; mục Auth cập nhật 2026-10-20 theo `dev_lte_mqtt_auth_dgb` @ `7600fb0`.
 
 ## Kết nối MQTT (EC25)
 
 | Mục | Giá trị hiện tại | Ghi chú cho server |
 |---|---|---|
-| Giao thức | MQTT 3.1.1, TCP thường, cổng 1883 | `AT+QMTCFG="ssl",0,0,0` (TLS tắt; nhánh SSL + user/pass đang comment trong `main.c`) |
-| Auth | **Không user/pass** (`AT+QMTCONN=0,"<cid>"`) | Broker phải cho anonymous ở giai đoạn 1 |
+| Giao thức | MQTT 3.1.1, TCP thường, cổng 1883 | `AT+QMTCFG="ssl",0,0,0` (TLS tắt) |
+| Auth | **`7600fb0`+: tài khoản chung** `AT+QMTCONN=0,"<cid>","citylight-cab","<mk>"` (`MQTT_AUTH_ENABLE 1u`, mật khẩu trong `Mylib/mqtt_secret.h` ngoài git, nằm dạng rõ trong hex). Firmware cũ: không user/pass | VPS (S43) **bắt buộc** tài khoản trên 1883; ACL tài khoản tủ: chỉ publish `electrical_cabinets_default` / `stm32/ec25/{echo,demo,boot}`, subscribe `stm32/ec25/cmd` (nên MQTTBox với tài khoản này không xem được telemetry). Sau này: mỗi tủ 1 mật khẩu (`LUSR`/`LPAS` qua UART2, chưa làm) |
 | Client ID | `ec25_<HAL_GetTick ms>` | Không định danh tủ; có thể trùng. Định danh tủ bằng `LTID` trong payload |
 | Keepalive | 60 s | |
 | QoS | Publish QoS 0 (`AT+QMTPUBEX=0,0,0,0,...`), subscribe QoS 0 | Có thể mất frame |
