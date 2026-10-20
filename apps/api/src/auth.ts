@@ -13,7 +13,7 @@ import { Redis } from 'ioredis';
 import { z } from 'zod';
 import { EVENTS_CHANNEL } from '@citylight/db/commands';
 import type { RoleKey, SecurityEvent, SecurityKind, User } from '@citylight/shared';
-import { hasPermission, roleRequires2fa, type Permission } from '@citylight/shared';
+import { hasPermission, roleRequires2fa, roleSeesAll, type Permission } from '@citylight/shared';
 import { ApiError } from './errors';
 import { REDIS, SQL, type Sql } from './infra';
 import { loadScope, type Scope } from './scope';
@@ -356,7 +356,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       email: r.email,
       fullName: r.full_name,
       role: r.role,
-      scopeAll: r.role === 'admin' || r.scope_all,
+      scopeAll: roleSeesAll(r.role) || r.scope_all,
       scopeAreaIds: direct.map((s) => s.area_id),
       totpEnabled: r.totp_enabled,
       totpRequired: require2faEnforced() && roleRequires2fa(r.role),

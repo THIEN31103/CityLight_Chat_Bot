@@ -1,16 +1,27 @@
-// User administration (spec 8 S16, permission admin.users). No email service yet: new users and password
+// User administration (spec 8 S16, permission admin.users; hierarchy S47: see assertCanManage). No email service yet: new users and password
 // resets get a temporary password shown once to the admin; the user must change it at first sign-in.
 import { randomInt } from 'node:crypto';
 import { Body, Controller, Get, HttpCode, Inject, Injectable, Module, Param, Patch, Post, Req } from '@nestjs/common';
 import { hash } from '@node-rs/argon2';
 import { z } from 'zod';
 import type { RoleKey, User } from '@citylight/shared';
-import { roleRequires2fa } from '@citylight/shared';
+import { ROLE_LABELS, canManageRole, roleRequires2fa, roleSeesAll } from '@citylight/shared';
 import { AuthModule, AuthService, RequirePerm, RequireReauth, require2faEnforced, type AuthedRequest, type SessionUser } from './auth';
 import { ApiError } from './errors';
 import { SQL, type Sql } from './infra';
 
-const ROLES = ['admin', 'operator', 'viewer', 'maintenance'] as const;
+const ROLES = ['admin', 'manager', 'operator', 'viewer', 'maintenance'] as const;
+
+/**
+ * Hierarchy (S47): only the provider (admin) manages accounts of its own rank or above; everyone else only roles
+ * strictly below their own (a manager cannot create a manager or touch a provider account).
+ */
+function assertCanManage(actor: SessionUser, target: RoleKey, what: 'account' | 'role') {
+  if (canManageRole(actor.role, target)) return;
+  throw what === 'role'
+    ? new ApiError(403, 'role_forbidden', `Không được cấp vai trò "${ROLE_LABELS[target]}"`)
+    : new ApiError(403, 'user_forbidden', `Không được thay đổi tài khoản vai trò "${ROLE_LABELS[target]}"`);
+}
 const TEMP_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
 const tempPassword = () => Array.from({ length: 14 }, () => TEMP_ALPHABET[randomInt(TEMP_ALPHABET.length)]).join('');
 
@@ -38,25 +49,27 @@ interface ListRow {
 export class UsersService {
   constructor(@Inject(SQL) private readonly sql: Sql, @Inject(AuthService) private readonly auth: AuthService) {}
 
-  private toUser(r: ListRow): User & { lockedUntil: string | null } {
+  private toUser(r: ListRow, actor?: RoleKey): User & { lockedUntil: string | null; manageable: boolean } {
     return {
       id: r.id, email: r.email, fullName: r.full_name, role: r.role,
-      scopeAll: r.role === 'admin' || r.scope_all, scopeAreaIds: r.areas,
+      scopeAll: roleSeesAll(r.role) || r.scope_all, scopeAreaIds: r.areas,
       totpEnabled: r.totp_enabled, totpRequired: require2faEnforced() && roleRequires2fa(r.role),
       passwordChangeRequired: r.password_change_required, active: r.active,
       lastLoginAt: r.last_login_at ? r.last_login_at.toISOString() : null,
       lockedUntil: r.locked_until && r.locked_until.getTime() > Date.now() ? r.locked_until.toISOString() : null,
+      // provider accounts stay listed for a manager (who has access to their system), read-only
+      manageable: actor ? canManageRole(actor, r.role) : true,
     };
   }
 
-  async list(orgId: string, id?: string) {
+  async list(orgId: string, id?: string, actor?: RoleKey) {
     const rows = await this.sql<ListRow[]>`
       SELECT u.id, u.email, u.full_name, u.role, u.scope_all, u.totp_enabled, u.password_change_required, u.active, u.last_login_at, u.locked_until,
              coalesce(array_agg(s.area_id::text) FILTER (WHERE s.area_id IS NOT NULL), '{}') AS areas
       FROM users u LEFT JOIN user_scopes s ON s.user_id = u.id
       WHERE u.organization_id = ${orgId} AND (${id ?? null}::uuid IS NULL OR u.id = ${id ?? null})
       GROUP BY u.id ORDER BY u.full_name`;
-    return rows.map((r) => this.toUser(r));
+    return rows.map((r) => this.toUser(r, actor));
   }
 
   private async one(orgId: string, id: string) {
@@ -78,6 +91,7 @@ export class UsersService {
 
   async create(admin: SessionUser, body: unknown, ip?: string) {
     const b = CreateBody.parse(body);
+    assertCanManage(admin, b.role, 'role');
     await this.assertAreas(admin.organizationId, b.scopeAreaIds);
     const taken = await this.sql`SELECT 1 FROM users WHERE lower(email) = lower(${b.email})`;
     if (taken.length) throw new ApiError(409, 'email_taken', 'Email đã được dùng');
@@ -103,6 +117,8 @@ export class UsersService {
     const self = uid === admin.id;
     if (self && (b.role !== undefined || b.active !== undefined || b.scopeAll !== undefined || b.scopeAreaIds !== undefined))
       throw new ApiError(409, 'self_change', 'Không tự đổi vai trò, phạm vi hay trạng thái của chính mình');
+    if (!self) assertCanManage(admin, before.role, 'account');
+    if (b.role) assertCanManage(admin, b.role, 'role');
     const losesAdmin = before.role === 'admin' && before.active && ((b.role && b.role !== 'admin') || b.active === false);
     if (losesAdmin && (await this.activeAdmins(admin.organizationId)) <= 1) throw new ApiError(409, 'last_admin', 'Phải còn ít nhất một quản trị viên đang hoạt động');
     if (b.scopeAreaIds) await this.assertAreas(admin.organizationId, b.scopeAreaIds);
@@ -141,6 +157,7 @@ export class UsersService {
   async resetPassword(admin: SessionUser, id: string, ip?: string) {
     const u = await this.one(admin.organizationId, z.string().uuid().parse(id));
     if (u.id === admin.id) throw new ApiError(409, 'self_change', 'Dùng trang Tài khoản để đổi mật khẩu của chính mình');
+    assertCanManage(admin, u.role, 'account');
     const pw = tempPassword();
     await this.sql`UPDATE users SET password_hash = ${await hash(pw)}, password_change_required = true, failed_logins = 0, locked_until = NULL WHERE id = ${u.id}`;
     await this.auth.revokeUser(u.id);
@@ -151,6 +168,7 @@ export class UsersService {
 
   async unlock(admin: SessionUser, id: string, ip?: string) {
     const u = await this.one(admin.organizationId, z.string().uuid().parse(id));
+    assertCanManage(admin, u.role, 'account');
     await this.sql`UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ${u.id}`;
     await this.auth.log(admin, 'Mở khóa đăng nhập', ip, { type: 'user', id: u.id, name: u.email });
     return this.one(admin.organizationId, u.id);
@@ -159,6 +177,7 @@ export class UsersService {
   async reset2fa(admin: SessionUser, id: string, ip?: string) {
     const u = await this.one(admin.organizationId, z.string().uuid().parse(id));
     if (u.id === admin.id) throw new ApiError(409, 'self_change', 'Dùng trang Tài khoản để quản lý 2FA của chính mình');
+    assertCanManage(admin, u.role, 'account');
     await this.auth.clear2fa(u.id);
     await this.auth.revokeUser(u.id);
     await this.auth.log(admin, 'Đặt lại 2FA', ip, { type: 'user', id: u.id, name: u.email });
@@ -172,7 +191,7 @@ export class UsersController {
   constructor(@Inject(UsersService) private readonly svc: UsersService) {}
 
   @Get() @RequirePerm('admin.users')
-  list(@Req() r: AuthedRequest) { return this.svc.list(r.user!.organizationId); }
+  list(@Req() r: AuthedRequest) { return this.svc.list(r.user!.organizationId, undefined, r.user!.role); }
 
   @Post() @RequirePerm('admin.users') @RequireReauth()
   create(@Req() r: AuthedRequest, @Body() body: unknown) { return this.svc.create(r.user!, body, r.ip); }

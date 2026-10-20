@@ -377,10 +377,11 @@ export interface ActivityLog {
 
 // ---------- Users ----------
 
-export type RoleKey = 'admin' | 'operator' | 'viewer' | 'maintenance';
+export type RoleKey = 'admin' | 'manager' | 'operator' | 'viewer' | 'maintenance';
 
 export const ROLE_LABELS: Record<RoleKey, string> = {
-  admin: 'Quản trị',
+  admin: 'Nhà cung cấp',
+  manager: 'Quản lý',
   operator: 'Điều hành',
   viewer: 'Giám sát',
   maintenance: 'Đội duy tu',

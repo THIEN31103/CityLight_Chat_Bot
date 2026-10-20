@@ -92,7 +92,7 @@ export function ImeiDialog({ cabinetId, label, open, onOpenChange, onDone }: { c
 
 /** Button + dialog for users who may edit cabinets. */
 export function ImeiButton({ cabinetId, label, onDone, text = 'Xử lý IMEI' }: { cabinetId: string; label: string; onDone?: () => void; text?: string }) {
-  const can = useSession((x) => x.can('admin.devices'));
+  const can = useSession((x) => x.can('device.identity'));
   const [open, setOpen] = useState(false);
   if (!can) return null;
   return (

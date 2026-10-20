@@ -200,7 +200,7 @@ export class IncidentsService {
       ), c AS (SELECT organization_id, district_id, ward_id FROM cabinets WHERE id = ${cid})
       SELECT u.id, u.full_name AS "fullName", u.email, u.role FROM users u, c
       WHERE u.active AND u.organization_id = c.organization_id AND u.role::text = ANY(${RESOLVER_ROLES}::text[])
-        AND (u.role = 'admin' OR u.scope_all OR EXISTS (SELECT 1 FROM t WHERE t.user_id = u.id AND (t.id = c.district_id OR t.id = c.ward_id)))
+        AND (u.role IN ('admin', 'manager') OR u.scope_all OR EXISTS (SELECT 1 FROM t WHERE t.user_id = u.id AND (t.id = c.district_id OR t.id = c.ward_id)))
       ORDER BY u.full_name`;
   }
 

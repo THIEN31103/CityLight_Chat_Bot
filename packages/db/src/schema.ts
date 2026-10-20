@@ -30,7 +30,7 @@ const point = (name: string) => geometry(name, { type: 'point', mode: 'xy', srid
 const lineString = customType<{ data: string; driverData: string }>({ dataType: () => 'geometry(LineString, 4326)' });
 
 // ---------- enums ----------
-export const roleEnum = pgEnum('role', ['admin', 'operator', 'viewer', 'maintenance']);
+export const roleEnum = pgEnum('role', ['admin', 'manager', 'operator', 'viewer', 'maintenance']);
 export const fwProfileEnum = pgEnum('fw_profile', ['v2-1307ebc', 'v2-current', 'v3']);
 export const cabinetStatusEnum = pgEnum('cabinet_status', ['offline', 'fault', 'dimming', 'on', 'off', 'unknown']);
 export const commandStatusEnum = pgEnum('command_status', ['queued', 'sent', 'acked', 'confirmed', 'acked_unconfirmed', 'failed', 'timeout', 'cancelled']);

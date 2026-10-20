@@ -59,7 +59,8 @@ Mật khẩu chung: `demo`. Tài khoản có 2FA nhập mã `123456`.
 
 | Email | Vai trò | 2FA |
 |---|---|---|
-| `admin@citylight.local` | Quản trị | có |
+| `admin@citylight.local` | Nhà cung cấp (cao nhất) | có |
+| `quanly@citylight.local` | Quản lý (tài khoản cao nhất phía khách, S47) | có |
 | `dieuhanh@citylight.local` | Điều hành | có |
 | `giamsat@citylight.local` | Giám sát (chỉ xem) | không |
 | `duytu@citylight.local` | Đội duy tu | không |

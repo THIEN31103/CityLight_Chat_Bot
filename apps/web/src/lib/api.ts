@@ -214,7 +214,8 @@ export interface ImeiCandidates {
 }
 
 /** User row in the admin screen: adds the temporary lockout end. */
-export type AdminUser = User & { lockedUntil?: string | null };
+/** manageable: false = a role at or above the viewer's own (S47), shown read-only. */
+export type AdminUser = User & { lockedUntil?: string | null; manageable?: boolean };
 
 export interface Favorite {
   id: string;

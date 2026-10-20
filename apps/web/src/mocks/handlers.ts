@@ -1,7 +1,7 @@
 // MSW handlers implementing the /api/v1 contract of docs/spec.md section 11 against the in-browser mock DB.
 import { http, HttpResponse, delay, type PathParams } from 'msw';
 import type { Alarm, CommandType, DimmingProfile, GpsDriftItem, GpsSuggestion, Incident, LampGroup, Schedule, Thresholds, User } from '@citylight/shared';
-import { DEFAULT_FIELD_MAP, GPS_RELOCATE_WINDOW_MIN, categoryForAlarm, distanceM, estimateDimming, judgeGpsSuggestion, validateDimming } from '@citylight/shared';
+import { DEFAULT_FIELD_MAP, GPS_RELOCATE_WINDOW_MIN, canManageRole, categoryForAlarm, distanceM, estimateDimming, judgeGpsSuggestion, roleRequires2fa, validateDimming } from '@citylight/shared';
 import {
   MockApiError,
   batchItems,
@@ -651,7 +651,10 @@ export const handlers = [
   })),
 
   // ---------- Admin ----------
-  http.get(`${API}/users`, wrap(() => HttpResponse.json(users))),
+  http.get(`${API}/users`, wrap(() => {
+    const me = requireUser();
+    return HttpResponse.json(users.map((x) => ({ ...x, manageable: canManageRole(me.role, x.role) })));
+  })),
   http.post(`${API}/users`, wrap(async ({ request }: { request: Request }) => {
     requireReauth();
     const u = requireUser();
@@ -659,7 +662,7 @@ export const handlers = [
     const role = body.role ?? 'viewer';
     const nu: User = {
       id: `u${Date.now()}`, email: body.email ?? '', fullName: body.fullName ?? '', role, scopeAll: role === 'admin' || !!body.scopeAll, scopeAreaIds: body.scopeAreaIds ?? [],
-      totpEnabled: false, totpRequired: role === 'admin' || role === 'operator', passwordChangeRequired: true, active: true, lastLoginAt: null,
+      totpEnabled: false, totpRequired: roleRequires2fa(role), passwordChangeRequired: true, active: true, lastLoginAt: null,
     };
     users.push(nu);
     addLog(u.email, 'Tạo người dùng', 'user', nu.email, null, nu.role);
@@ -671,7 +674,7 @@ export const handlers = [
     const target = users.find((x) => x.id === params.id)!;
     const body = (await request.json()) as Partial<User>;
     Object.assign(target, body);
-    if (body.role) target.totpRequired = body.role === 'admin' || body.role === 'operator';
+    if (body.role) target.totpRequired = roleRequires2fa(body.role);
     addLog(u.email, 'Cập nhật người dùng', 'user', target.email, null, JSON.stringify(body));
     return HttpResponse.json(target);
   })),

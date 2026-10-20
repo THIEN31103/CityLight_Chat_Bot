@@ -396,19 +396,19 @@ export class AdminController {
   update(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.updateCabinet(r.user!, id, b, r.ip); }
   @Post('cabinets/:id/location-from-gps') @HttpCode(200) @RequirePerm('admin.devices')
   relocate(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.relocateFromGps(r.user!, id, b, r.ip); }
-  @Get('cabinets/:id/imei-candidates') @RequirePerm('admin.devices')
+  @Get('cabinets/:id/imei-candidates') @RequirePerm('device.identity')
   imeiCandidates(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.imeiCandidates(r.user!, id); }
-  @Put('cabinets/:id/imei') @RequirePerm('admin.devices') @RequireReauth()
+  @Put('cabinets/:id/imei') @RequirePerm('device.identity') @RequireReauth()
   setImei(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.setImei(r.user!, id, b, r.ip); }
   @Post('cabinets/:id/decommission') @HttpCode(204) @RequirePerm('admin.devices') @RequireReauth()
   decommission(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.setActive(r.user!, id, false, r.ip); }
   @Post('cabinets/:id/reactivate') @HttpCode(204) @RequirePerm('admin.devices')
   reactivate(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.setActive(r.user!, id, true, r.ip); }
 
-  @Get('field-map') @RequirePerm('admin.devices')
+  @Get('field-map') @RequirePerm('device.identity')
   fieldMap() { return this.svc.fieldMap(); }
 
-  @Get('settings') @RequirePerm('system.view')
+  @Get('settings') @RequirePerm('admin.catalog')
   settings() { return this.svc.settings(); }
   @Put('settings') @RequirePerm('admin.catalog')
   saveSettings(@Req() r: AuthedRequest, @Body() b: unknown) { return this.svc.saveSettings(r.user!, b, r.ip); }

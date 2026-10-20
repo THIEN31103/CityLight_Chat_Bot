@@ -2,8 +2,8 @@ import { Fragment, useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
-import type { RoleKey } from '@citylight/shared';
-import { ALARM_TYPE_LABELS, LAMP_GROUP_LABELS, ROLE_LABELS, ROLE_PERMISSIONS, SEVERITY_LABELS, roleRequires2fa } from '@citylight/shared';
+import type { Permission, RoleKey } from '@citylight/shared';
+import { ALARM_TYPE_LABELS, LAMP_GROUP_LABELS, ROLE_LABELS, ROLE_PERMISSIONS, SEVERITY_LABELS, assignableRoles, roleRequires2fa, roleSeesAll } from '@citylight/shared';
 import { api, ApiError, type AdminUser, type UnknownDevice } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { ScopePicker, scopeLabel, useAreaNames, type ScopeValue } from '@/components/security';
@@ -11,24 +11,26 @@ import { cn, fmtTime } from '@/lib/utils';
 import { Badge, Button, Card, CardHeader, Checkbox, Field, Input, Modal, PageHeader, Select, Spinner, Toggle, confirm, toast } from '@/components/ui';
 import { ErrorCatalogTable } from '@/components/ErrorHelp';
 
-const TABS = [
+const TABS: { id: string; label: string; perm?: Permission }[] = [
   { id: 'users', label: 'Người dùng' },
   { id: 'roles', label: 'Vai trò & quyền' },
   { id: 'areas', label: 'Khu vực' },
   { id: 'zones', label: 'Vùng & khu quản lý' },
   { id: 'devices', label: 'Đăng ký tủ' },
-  { id: 'field-map', label: 'Ánh xạ telemetry' },
+  { id: 'field-map', label: 'Ánh xạ telemetry', perm: 'device.identity' },
   { id: 'alarm-rules', label: 'Quy tắc cảnh báo' },
   { id: 'settings', label: 'Cấu hình hệ thống' },
 ];
 
 export function AdminPage() {
   const { tab = 'users' } = useParams();
+  const can = useSession((s) => s.can);
+  const tabs = TABS.filter((t) => !t.perm || can(t.perm));
   return (
     <div className="flex h-full">
       <aside className="w-56 shrink-0 border-r bg-panel p-2">
         <div className="mb-1 px-2 text-xs font-semibold uppercase text-subtle">Quản trị</div>
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <NavLink key={t.id} to={`/admin/${t.id}`} className={({ isActive }) => cn('block rounded px-2 py-1.5 text-sm hover:bg-muted', isActive && 'bg-primary/10 font-medium')}>
             {t.label}
           </NavLink>
@@ -40,7 +42,7 @@ export function AdminPage() {
         {tab === 'areas' && <AreasAdmin />}
         {tab === 'zones' && <ZonesAdmin />}
         {tab === 'devices' && <DevicesAdmin />}
-        {tab === 'field-map' && <FieldMapAdmin />}
+        {tab === 'field-map' && can('device.identity') && <FieldMapAdmin />}
         {tab === 'alarm-rules' && <AlarmRulesAdmin />}
         {tab === 'settings' && <SettingsAdmin />}
       </div>
@@ -53,6 +55,8 @@ function UsersAdmin() {
   const me = useSession((s) => s.user);
   const names = useAreaNames();
   const { data, isLoading } = useQuery({ queryKey: ['users'], queryFn: api.users });
+  // S47: only roles below one's own (the provider: all); accounts at or above are listed read-only
+  const roleChoices = me ? assignableRoles(me.role) : [];
   const [open, setOpen] = useState(false);
   const blank = { email: '', fullName: '', role: 'viewer' as RoleKey, scopeAll: false, scopeAreaIds: [] as string[] };
   const [form, setForm] = useState(blank);
@@ -112,6 +116,7 @@ function UsersAdmin() {
             <tbody>
               {data?.map((u) => {
                 const self = u.id === me?.id;
+                const locked = self || u.manageable === false;
                 return (
                   <tr key={u.id} className="border-t align-top">
                     <td className="px-3 py-2 font-medium">
@@ -121,13 +126,17 @@ function UsersAdmin() {
                     </td>
                     <td className="px-3 py-2">{u.email}</td>
                     <td className="px-3 py-2">
-                      <Select value={u.role} disabled={self} onChange={(e) => update.mutate({ id: u.id, patch: { role: e.target.value as RoleKey } })} className="h-8">
-                        {Object.entries(ROLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                      </Select>
+                      {locked ? (
+                        <Badge tone={u.role === 'admin' ? 'blue' : undefined}>{ROLE_LABELS[u.role]}</Badge>
+                      ) : (
+                        <Select value={u.role} onChange={(e) => update.mutate({ id: u.id, patch: { role: e.target.value as RoleKey } })} className="h-8">
+                          {roleChoices.map((k) => <option key={k} value={k}>{ROLE_LABELS[k]}</option>)}
+                        </Select>
+                      )}
                     </td>
                     <td className="max-w-[16rem] px-3 py-2 text-xs">
-                      <span className={cn(!u.scopeAll && !u.scopeAreaIds.length && 'text-st-fault')}>{u.role === 'admin' ? 'Toàn hệ thống (quản trị)' : scopeLabel(u, names)}</span>
-                      {!self && u.role !== 'admin' && (
+                      <span className={cn(!u.scopeAll && !u.scopeAreaIds.length && 'text-st-fault')}>{roleSeesAll(u.role) ? 'Toàn hệ thống (theo vai trò)' : scopeLabel(u, names)}</span>
+                      {!locked && !roleSeesAll(u.role) && (
                         <button className="ml-1 text-primary hover:underline" onClick={() => setScopeEdit({ user: u, value: { scopeAll: u.scopeAll, scopeAreaIds: u.scopeAreaIds } })}>Sửa</button>
                       )}
                     </td>
@@ -135,9 +144,10 @@ function UsersAdmin() {
                       {u.totpEnabled ? <Badge tone="green">Bật</Badge> : u.totpRequired ? <Badge tone="orange">Bắt buộc, chưa bật</Badge> : <Badge>Tắt</Badge>}
                     </td>
                     <td className="px-3 py-2 text-xs">{fmtTime(u.lastLoginAt)}</td>
-                    <td className="px-3 py-2"><Toggle checked={u.active} disabled={self} onChange={(v) => update.mutate({ id: u.id, patch: { active: v } })} label="Kích hoạt" /></td>
+                    <td className="px-3 py-2"><Toggle checked={u.active} disabled={locked} onChange={(v) => update.mutate({ id: u.id, patch: { active: v } })} label="Kích hoạt" /></td>
                     <td className="whitespace-nowrap px-3 py-2 text-xs">
-                      {!self && (
+                      {!self && u.manageable === false && <span className="text-subtle">Chỉ xem</span>}
+                      {!locked && (
                         <div className="flex flex-col items-start gap-1">
                           <button className="text-primary hover:underline" onClick={() => ask('Đặt lại mật khẩu?', `${u.email} sẽ bị đăng xuất và nhận mật khẩu tạm mới.`, () => resetPw.mutate(u))}>Đặt lại mật khẩu</button>
                           {u.totpEnabled && <button className="text-primary hover:underline" onClick={() => ask('Đặt lại 2FA?', `Xóa 2FA của ${u.email} (ví dụ khi mất điện thoại). Người đó sẽ bị đăng xuất và phải thiết lập lại.`, () => reset2fa.mutate(u))}>Đặt lại 2FA</button>}
@@ -159,11 +169,11 @@ function UsersAdmin() {
           <Field label="Email"><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
           <Field label="Vai trò" hint={roleRequires2fa(form.role) ? 'Vai trò này bắt buộc 2FA ở lần đăng nhập đầu' : undefined}>
             <Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as RoleKey })} className="w-full">
-              {Object.entries(ROLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              {roleChoices.map((k) => <option key={k} value={k}>{ROLE_LABELS[k]}</option>)}
             </Select>
           </Field>
-          {form.role === 'admin' ? (
-            <p className="text-xs text-subtle">Quản trị viên luôn thấy toàn hệ thống.</p>
+          {roleSeesAll(form.role) ? (
+            <p className="text-xs text-subtle">{ROLE_LABELS[form.role]} luôn thấy toàn hệ thống.</p>
           ) : (
             <Field label="Phạm vi khu vực"><ScopePicker value={form} onChange={(v) => setForm({ ...form, ...v })} /></Field>
           )}

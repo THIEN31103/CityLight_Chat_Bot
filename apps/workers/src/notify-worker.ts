@@ -12,7 +12,7 @@ import { Redis } from 'ioredis';
 import { createSql } from '@citylight/db';
 import { EVENTS_CHANNEL } from '@citylight/db/commands';
 import { NOTIFY_CHANGED_CHANNEL, TG_BOT_KEY, TG_LINK_PREFIX } from '@citylight/db/notify';
-import { SECURITY_SELF_KINDS, type AlarmSeverity, type GeoPoint, type SecurityEvent } from '@citylight/shared';
+import { SECURITY_SELF_KINDS, roleSeesAll, type AlarmSeverity, type GeoPoint, type RoleKey, type SecurityEvent } from '@citylight/shared';
 import { directionsLine, formatBatch, formatSecurity, vnDateTime, type AlarmEvent, type Item } from './notify-format';
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? '';
@@ -82,7 +82,7 @@ async function refresh() {
   for (const a of areas) (byUser.get(a.user_id) ?? byUser.set(a.user_id, new Set()).get(a.user_id)!).add(a.id);
   subs = rows.map((r) => ({
     userId: r.user_id, email: r.email, role: r.role, channel: r.channel, address: r.address, min: r.min_severity,
-    all: r.role === 'admin' || r.scope_all, areas: byUser.get(r.user_id) ?? new Set(),
+    all: roleSeesAll(r.role as RoleKey) || r.scope_all, areas: byUser.get(r.user_id) ?? new Set(),
   }));
   const cabs = await sql<{ id: string; district_id: string | null; ward_id: string | null; district: string | null; lat: number; lng: number }[]>`
     SELECT c.id, c.district_id, c.ward_id, d.name AS district, ST_Y(c.location) AS lat, ST_X(c.location) AS lng
@@ -175,7 +175,7 @@ async function notifyAssignee(kind: 'assigned' | 'overdue', i: IncidentEvent) {
   }
 }
 
-// ---------------- security alerts (A6): admins + the account owner for sign-in events, not batched, any severity ----------------
+// ---------------- security alerts (A6): provider + manager + the account owner for sign-in events, not batched, any severity ----------------
 
 async function notifySecurity(e: SecurityEvent) {
   const text = formatSecurity(e, WEB_URL);
@@ -183,7 +183,8 @@ async function notifySecurity(e: SecurityEvent) {
   const seen = new Set<string>();
   for (const s of subs) {
     const ch = channels[s.channel];
-    if (!ch || !(s.role === 'admin' || (self && s.userId === e.userId))) continue;
+    // provider + the customer's manager (S47), and the account owner for sign-in events
+    if (!ch || !(roleSeesAll(s.role as RoleKey) || (self && s.userId === e.userId))) continue;
     const key = `${s.userId}:${s.channel}`;
     if (seen.has(key)) continue;
     seen.add(key);

@@ -1,6 +1,7 @@
-// Area scope (spec 13): which cabinets a user may see. Admins and scope_all users see every cabinet;
+// Area scope (spec 13): which cabinets a user may see. Provider, manager (roleSeesAll) and scope_all users see every cabinet;
 // others see cabinets whose district or ward is one of their areas or a descendant of one.
 // Cabinets without a district ("Chưa phân khu vực") are visible to scope_all users only.
+import { roleSeesAll, type RoleKey } from '@citylight/shared';
 import type { Sql } from './infra';
 
 export interface Scope {
@@ -9,8 +10,8 @@ export interface Scope {
   areaIds: string[];
 }
 
-export async function loadScope(sql: Sql, userId: string, role: string, scopeAll: boolean): Promise<Scope> {
-  if (role === 'admin' || scopeAll) return { all: true, areaIds: [] };
+export async function loadScope(sql: Sql, userId: string, role: RoleKey, scopeAll: boolean): Promise<Scope> {
+  if (roleSeesAll(role) || scopeAll) return { all: true, areaIds: [] };
   const rows = await sql<{ id: string }[]>`
     WITH RECURSIVE t AS (
       SELECT a.id FROM areas a JOIN user_scopes s ON s.area_id = a.id WHERE s.user_id = ${userId}
