@@ -1,15 +1,15 @@
-// Device port with user/pass (S43): 1884 refuses no / wrong credentials and the backend's secret username,
-// accepts the shared device account, whose rights stay those of a cabinet (ACL); 1883 stays anonymous.
-// Needs EMQX (infra:up, device-users.csv rendered) + ingest. LTID E2EAUTH1 (unknown device, removed after).
-// Run: npm run e2e:mqtt-auth
+// Cabinet port with user/pass (S43): 1883 refuses no / wrong credentials and the backend's secret username,
+// accepts the shared device account, whose rights stay those of a cabinet (ACL). The backend listener 1885 has
+// no authn (Docker network only; on 127.0.0.1 locally). Needs EMQX (infra:up) + ingest.
+// LTID E2EAUTH1 (unknown device, removed after). Run: npm run e2e:mqtt-auth
 import mqtt, { type IClientOptions, type MqttClient } from 'mqtt';
 import { TOPICS } from '@citylight/coreif';
 import { createSql } from '@citylight/db';
 import { SimCabinet } from '../../simulator/src/cabinet';
 
 const HOST = process.env.E2E_MQTT_HOST ?? 'localhost';
-const DEV = `mqtt://${HOST}:1884`;
-const ANON = `mqtt://${HOST}:1883`;
+const CAB = `mqtt://${HOST}:1883`;
+const BACKEND = `mqtt://${HOST}:1885`;
 const USER = process.env.MQTT_DEVICE_USERNAME ?? '';
 const PASS = process.env.MQTT_DEVICE_PASSWORD ?? '';
 const LTID = 'E2EAUTH1';
@@ -28,33 +28,32 @@ function tryConnect(url: string, o: IClientOptions = {}): Promise<{ c: MqttClien
     c.once('connect', () => resolve({ c, err: null }));
     c.once('error', (e) => {
       c.end(true);
-      resolve({ c: null, err: (e as Error & { code?: number }).code !== undefined ? `code ${(e as Error & { code?: number }).code}` : e.message });
+      const code = (e as Error & { code?: number }).code;
+      resolve({ c: null, err: code !== undefined ? `code ${code}` : e.message });
     });
   });
 }
 
 async function main() {
-  if (!USER || !PASS) throw new Error('set MQTT_DEVICE_USERNAME / MQTT_DEVICE_PASSWORD (npm script loads infra/.env)');
+  if (!USER || !PASS) throw new Error('set MQTT_DEVICE_USERNAME / MQTT_DEVICE_PASSWORD (the npm script loads infra/.env)');
   await sql`DELETE FROM unknown_devices WHERE ltid = ${LTID}`;
-  const none = await tryConnect(DEV);
-  check('1884 không user/pass → từ chối', !none.c, none.err ?? '');
-  const wrong = await tryConnect(DEV, { username: USER, password: `${PASS}x` });
-  check('1884 sai mật khẩu → từ chối', !wrong.c, wrong.err ?? '');
-  const backend = await tryConnect(DEV, { username: process.env.MQTT_USERNAME });
-  check('1884 dùng username bí mật của backend (không mật khẩu) → từ chối', !backend.c, backend.err ?? '');
-  const good = await tryConnect(DEV, { username: USER, password: PASS });
-  check('1884 đúng user/pass → vào được', !!good.c);
-  const anon = await tryConnect(ANON);
-  check('1883 ẩn danh vẫn vào được (tủ firmware cũ)', !!anon.c);
+  const none = await tryConnect(CAB);
+  check('1883 không user/pass (firmware cũ) → từ chối', !none.c, none.err ?? '');
+  const wrong = await tryConnect(CAB, { username: USER, password: `${PASS}x` });
+  check('1883 sai mật khẩu → từ chối', !wrong.c, wrong.err ?? '');
+  const backendOnCab = await tryConnect(CAB, { username: process.env.MQTT_USERNAME });
+  check('1883 dùng username bí mật của backend (không mật khẩu) → từ chối', !backendOnCab.c, backendOnCab.err ?? '');
+  const good = await tryConnect(CAB, { username: USER, password: PASS });
+  check('1883 đúng tài khoản tủ → vào được', !!good.c);
+  const be = await tryConnect(BACKEND, { username: process.env.MQTT_USERNAME });
+  check('1885 (cổng backend, chỉ trong mạng nội bộ) → backend vào được', !!be.c);
 
   // rights of the device account = those of a cabinet: uplinks + subscribe to commands, nothing else
-  const be = await tryConnect(ANON, { username: process.env.MQTT_USERNAME });
   const seenCmd: string[] = [];
   be.c!.on('message', (t, p) => t === TOPICS.command && seenCmd.push(p.toString()));
   await be.c!.subscribeAsync(TOPICS.command);
   // suback per topic (mqtt.js rejects the whole call when one topic is refused)
-  const grant = (topic: string) =>
-    new Promise<number>((r) => good.c!.subscribe(topic, (err, g) => r(err ? 128 : (g?.[0]?.qos ?? 128))));
+  const grant = (topic: string) => new Promise<number>((r) => good.c!.subscribe(topic, (err, g) => r(err ? 128 : (g?.[0]?.qos ?? 128))));
   const gCmd = await grant(TOPICS.command);
   const gTele = await grant(TOPICS.telemetry);
   check('Tài khoản tủ: subscribe topic lệnh được, đọc telemetry tủ khác thì không', gCmd === 0 && gTele === 128, `cmd ${gCmd}, telemetry ${gTele}`);
@@ -62,17 +61,17 @@ async function main() {
   await sleep(1500);
   check('Tài khoản tủ: gửi lệnh lên topic lệnh bị chặn', seenCmd.length === 0);
 
-  const sim = new SimCabinet({ ltid: LTID, brokerUrl: `mqtt://${encodeURIComponent(USER)}:${encodeURIComponent(PASS)}@${HOST}:1884`, fault: 'none', location: { lat: 10.8, lng: 106.7 }, telemetryMs: 2000 });
+  const sim = new SimCabinet({ ltid: LTID, brokerUrl: CAB, fault: 'none', location: { lat: 10.8, lng: 106.7 }, telemetryMs: 2000 });
   sim.start();
   let seen = false;
   for (let i = 0; i < 20 && !seen; i++) {
     await sleep(1000);
     seen = (await sql`SELECT 1 FROM unknown_devices WHERE ltid = ${LTID}`).length === 1;
   }
-  check('Simulator qua 1884 (user/pass trong URL) → server nhận frame', seen);
+  check('Simulator qua 1883 với tài khoản tủ → server nhận frame', seen);
 
   await sim.stop();
-  for (const c of [good.c, anon.c, be.c]) c?.end(true);
+  for (const c of [good.c, be.c]) c?.end(true);
   await sql`DELETE FROM unknown_devices WHERE ltid = ${LTID}`;
   await sql.end();
   const failed = checks.filter((c) => !c.ok).length;

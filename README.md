@@ -70,7 +70,7 @@ Dữ liệu mock tạo lại mỗi lần tải lại trang (phiên đăng nhập
 
 Yêu cầu thêm: **Docker Desktop** (WSL2). Trên máy này Docker cài theo user tại `%LOCALAPPDATA%\Programs\DockerDesktop` — mở Docker Desktop trước khi chạy.
 
-**Bảo mật broker giai đoạn 1:** tủ kết nối anonymous (firmware chưa có user/pass). EMQX 5 không cho anonymous khi bật authenticator và không phân quyền theo listener, nên backend được nhận diện bằng **username bí mật** trong ACL sinh từ `infra/.env` (`infra/emqx/acl.conf.tmpl`). Không dùng xác thực HTTP của EMQX (mỗi publish phụ thuộc API → API restart là mất telemetry); giai đoạn 2 dùng built-in database của EMQX, API chỉ đồng bộ tài khoản tủ sang.
+**Bảo mật broker (S43, 2026-10-20):** tủ đăng nhập cổng **1883** bằng một tài khoản dùng chung (EMQX built-in database, `MQTT_DEVICE_USERNAME/PASSWORD` trong `infra/.env`); backend dùng listener nội bộ **1885** không authn, nhận diện bằng **username bí mật** trong ACL (`infra/emqx/acl.conf.tmpl`). Thêm lớp chống giả mạo S42 (khóa IMEI, lọc giá trị, giới hạn tần suất). Bước sau: mỗi tủ một tài khoản.
 
 ```bash
 cp infra/.env.example infra/.env        # đặt mật khẩu thật + MQTT_BACKEND_USER ngẫu nhiên
@@ -128,7 +128,7 @@ Chạy API + các worker (ingest, command, notify, scheduler) bằng Docker: `do
 - `npm run e2e:dimming` (cần api, ~10 s): hồ sơ 3 tầng + kế thừa, kiểm 422, quyền / phạm vi, ước tính khớp đèn nhập, giá điện, đồng bộ → 409, nhật ký. Dùng nhóm đèn 3; hồ sơ hệ thống nhóm 3 và các dòng cấu hình có sẵn được trả lại.
 - `npm run e2e:relocate` (cần api + ingest, ~1 phút): GPS thiết bị lạ, đề xuất vị trí theo GPS (ít điểm / GPS nhảy / đạt / đã khớp), quyền + phạm vi, hộp thoại cũ → 409, dời tủ + nhật ký, lớp lệch GPS trên bản đồ (S41).
 - `npm run e2e:guards` (cần api + ingest, ~1,5 phút): khóa IMEI (ghi nhận, frame IMEI lạ bị bỏ + E805, danh sách IMEI, chấp nhận / học lại, quyền), 2 IMEI cùng LTID khi đăng ký, giá trị vô lý, giới hạn 5 + 1 frame/s (S42). `E2E_CSP=1 npm run e2e:browser`: luồng web trên bản build + đúng CSP của Caddyfile, qua mọi bản đồ nền.
-- `npm run e2e:mqtt-auth` (cần EMQX + ingest, ~15 s): cổng 1884 từ chối không / sai mật khẩu và username backend, nhận tài khoản tủ chung với quyền của tủ, 1883 vẫn ẩn danh (S43).
+- `npm run e2e:mqtt-auth` (cần EMQX + ingest, ~15 s): cổng tủ 1883 từ chối không / sai mật khẩu và username backend, nhận tài khoản tủ chung với quyền của tủ; cổng backend 1885 (S43). Các e2e khác cho simulator chạy qua `MQTT_URL` = 1885.
 - Ảnh sự cố nằm trong volume Docker `uploads` (`/data/uploads` trong container api): **sao lưu cùng với DB**.
 - Không chạy các e2e có simulator liền nhau quá sát: tủ giả của bài trước mất kết nối sau 60 s và sinh cảnh báo / thông báo trong bài sau.
 - Các e2e đều đăng nhập: chạy cách bài rate limit của `e2e:api` ít nhất 1 phút (cùng IP, 20 lần/phút), nếu không sẽ bị 429.

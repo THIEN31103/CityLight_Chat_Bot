@@ -82,7 +82,10 @@ export class SimCabinet {
 
   start() {
     if (this.o.fault === 'offline') return; // never connects: server must flag E101
+    // S43: cabinets log in on 1883 with the shared device account; credentials in the URL win, else env
+    const urlHasAuth = /^mqtts?:\/\/[^/@]+@/.test(this.o.brokerUrl);
     this.client = mqtt.connect(this.o.brokerUrl, {
+      ...(urlHasAuth || !process.env.MQTT_DEVICE_USERNAME ? {} : { username: process.env.MQTT_DEVICE_USERNAME, password: process.env.MQTT_DEVICE_PASSWORD }),
       clientId: `ec25_${Math.floor(Math.random() * 2 ** 31)}`,
       keepalive: 60,
       reconnectPeriod: 30_000,

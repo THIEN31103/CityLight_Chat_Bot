@@ -13,7 +13,8 @@ import { base32Decode, totpStep } from '../src/totp';
 import { BASE, login, nextCode } from './client';
 
 const DOMAIN = 'e2e-sched.citylight.test';
-const MQTT_URL = process.env.E2E_MQTT_URL ?? 'mqtt://localhost:1883';
+// simulated cabinets on the backend listener (no authn); e2e-mqtt-auth covers the cabinet port 1883 + login
+const MQTT_URL = process.env.E2E_MQTT_URL ?? process.env.MQTT_URL ?? 'mqtt://localhost:1885';
 const LOAD = (() => {
   const i = process.argv.indexOf('--load');
   return i > 0 ? Number(process.argv[i + 1]) : 0;

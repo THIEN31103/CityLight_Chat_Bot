@@ -1,9 +1,8 @@
 // Renders from infra/.env (both outputs gitignored):
 //  - infra/emqx/acl.conf from acl.conf.tmpl (MQTT_BACKEND_USER: the backend's secret username)
-//  - infra/emqx/device-users.csv: EMQX built-in database bootstrap for the device port 1884
+//  - infra/emqx/device-users.csv: EMQX built-in database bootstrap for the cabinet port 1883
 //    (MQTT_DEVICE_USERNAME / MQTT_DEVICE_PASSWORD: one account shared by every cabinet for now, S43).
-//    EMQX imports it at start for users that do not exist yet; changing the password later = delete the
-//    user in EMQX first (docs/runbook.md).
+//    EMQX imports it at start for users that do not exist yet; a later password change: emqx-device-account.sh.
 // No node on the VPS host: docker run --rm -v /opt/citylight/infra:/app/infra citylight-server:dev node /app/infra/scripts/gen-emqx-acl.mjs
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -34,4 +33,4 @@ if (devUser || devPass) {
 }
 // readable by the EMQX container user (it is mounted read-only); the account itself is hashed inside EMQX
 writeFileSync(`${dir}/emqx/device-users.csv`, csv, { mode: 0o644 });
-console.log(`[infra] emqx/device-users.csv rendered (${devUser ? `account ${devUser}` : 'no device account: port 1884 refuses everyone'})`);
+console.log(`[infra] emqx/device-users.csv rendered (${devUser ? `account ${devUser}` : 'no device account: port 1883 refuses every cabinet'})`);

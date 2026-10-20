@@ -6,10 +6,9 @@
 #   docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml --env-file infra/.env --profile app up -d
 services:
   emqx:
+    # only the cabinet port (user/pass, S43); the backend listener 1885 stays inside the Docker network
     ports: !override
       - "1883:1883"
-      # S43 device port with user/pass (also open TCP 1884 in the Lightsail firewall)
-      - "1884:1884"
 
   db:
     ports: !override

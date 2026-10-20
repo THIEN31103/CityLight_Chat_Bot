@@ -16,7 +16,8 @@ import { base32Decode } from '../src/totp';
 import { BASE, Client, login, nextCode } from './client';
 
 const DOMAIN = 'e2e-cmd.citylight.test';
-const MQTT_URL = process.env.E2E_MQTT_URL ?? 'mqtt://localhost:1883';
+// simulated cabinets on the backend listener (no authn); e2e-mqtt-auth covers the cabinet port 1883 + login
+const MQTT_URL = process.env.E2E_MQTT_URL ?? process.env.MQTT_URL ?? 'mqtt://localhost:1885';
 const sql = createSql(process.env.DATABASE_URL, 2);
 
 const checks: { name: string; ok: boolean }[] = [];
