@@ -7,6 +7,7 @@ import { subscribe } from '@/lib/realtime';
 import { fmtTime } from '@/lib/utils';
 import { Badge, Skeleton, StatusBadge, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 import { cn } from '@/lib/utils';
+import { DirectionsLink } from '@/components/Directions';
 import { ControlTab } from './ControlTab';
 import { DiagnosticsTab } from './DiagnosticsTab';
 import { MonitorTab, ChartTab, EnergyTab, LeakTempTab } from './MonitorTabs';
@@ -92,6 +93,7 @@ export function CabinetDrawer({
           </div>
         )}
         <div className="flex shrink-0 items-center gap-1">
+          {data && <DirectionsLink point={data.cabinet.location} icon />}
           <button
             onClick={onToggleMode}
             className="rounded-md p-1.5 hover:bg-muted"

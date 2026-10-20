@@ -17,6 +17,13 @@ describe('formatBatch', () => {
     expect(t).toContain('https://cl.example/alarms');
   });
 
+  it('adds a Google Maps directions line to raised alarms only', () => {
+    const loc = (id: string) => (id === 'c1' ? { lat: 10.7769, lng: 106.7009 } : { lat: 0, lng: 0 });
+    const t = formatBatch([{ kind: 'raised', a: alarm(1) }, { kind: 'raised', a: alarm(2) }, { kind: 'cleared', a: alarm(1, { endedAt: '2026-10-18T12:05:00Z' }) }], area, 5, '', loc);
+    expect(t.match(/Chỉ đường: /g)).toHaveLength(1); // c2 has no location, the cleared alarm gets none
+    expect(t).toContain('Chỉ đường: https://www.google.com/maps/dir/?api=1&destination=10.776900,106.700900');
+  });
+
   it('summarises a burst by type and area', () => {
     const items: Item[] = Array.from({ length: 37 }, (_, i) => ({ kind: 'raised', a: alarm(i) }));
     items.push({ kind: 'raised', a: alarm(99, { code: 'E501', type: 'leak_current', cabinetId: 'c1' }) });

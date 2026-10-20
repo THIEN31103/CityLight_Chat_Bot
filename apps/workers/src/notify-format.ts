@@ -1,5 +1,5 @@
 // Text of one notification message (Telegram plain text): a few alarms one by one, a burst as a summary.
-import { ALARM_TYPE_LABELS, type AlarmSeverity, type AlarmType } from '@citylight/shared';
+import { ALARM_TYPE_LABELS, directionsUrl, type AlarmSeverity, type AlarmType, type GeoPoint } from '@citylight/shared';
 
 export interface AlarmEvent {
   id: string; code: string; type: AlarmType; severity: AlarmSeverity; cabinetId: string; cabinetCode: string; cabinetName: string;
@@ -10,13 +10,22 @@ export interface Item { kind: 'raised' | 'cleared'; a: AlarmEvent }
 const ICON: Record<AlarmSeverity, string> = { critical: '🔴', major: '🟠', minor: '🟡' };
 const hhmm = (iso: string) => new Date(iso).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Ho_Chi_Minh' });
 
-export function formatBatch(items: Item[], area: (cabinetId: string) => string | null, summaryOver = 5, webUrl = ''): string {
+/** "Chỉ đường" line for a message to a technician; empty when the point is unset. */
+export const directionsLine = (p: GeoPoint | null | undefined) => {
+  const url = directionsUrl(p);
+  return url ? `\n   Chỉ đường: ${url}` : '';
+};
+
+export function formatBatch(
+  items: Item[], area: (cabinetId: string) => string | null, summaryOver = 5, webUrl = '',
+  loc: (cabinetId: string) => GeoPoint | null = () => null,
+): string {
   const link = webUrl ? `\nXem: ${webUrl.replace(/\/$/, '')}/alarms` : '';
   if (items.length <= summaryOver) {
     const lines = items.map(({ kind, a }) => {
       const where = area(a.cabinetId);
       const head = kind === 'raised' ? `${ICON[a.severity]} ${a.code} ${ALARM_TYPE_LABELS[a.type] ?? a.type}` : `✅ Hết: ${a.code} ${ALARM_TYPE_LABELS[a.type] ?? a.type}`;
-      const body = kind === 'raised' && a.message ? `\n   ${a.message}` : '';
+      const body = kind === 'raised' ? `${a.message ? `\n   ${a.message}` : ''}${directionsLine(loc(a.cabinetId))}` : '';
       return `${head}\n   ${a.cabinetCode} - ${a.cabinetName}${where ? ` (${where})` : ''} · ${hhmm(kind === 'raised' ? a.startedAt : a.endedAt ?? a.startedAt)}${body}`;
     });
     return `CityLight\n${lines.join('\n')}${link}`;

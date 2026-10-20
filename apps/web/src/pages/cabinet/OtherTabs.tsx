@@ -13,6 +13,7 @@ import { DIMMING_SOURCE } from '@/pages/DimmingPage';
 import { ErrorCodeBadge } from '@/components/ErrorHelp';
 import { RelocateGpsButton } from './RelocateGps';
 import { ImeiButton } from './ImeiDecision';
+import { DirectionsLink } from '@/components/Directions';
 
 type Detail = CabinetDetail & { cabinet: { districtName: string; wardName: string } };
 
@@ -240,7 +241,7 @@ export function InfoTab({ detail, onLocate }: { detail: Detail; onLocate: (p: Ge
         </div>
       </Card>
       <Card>
-        <CardHeader title="Vị trí" actions={<Button size="sm" variant="outline" onClick={() => onLocate(s.gpsDevice ?? c.location)}><MapPin className="h-4 w-4" /> Định vị theo GPS</Button>} />
+        <CardHeader title="Vị trí" actions={<div className="flex gap-2"><DirectionsLink point={c.location} /><Button size="sm" variant="outline" onClick={() => onLocate(s.gpsDevice ?? c.location)}><MapPin className="h-4 w-4" /> Định vị theo GPS</Button></div>} />
         <div className="px-4 py-2">
           <KV label="Tọa độ khai báo" value={`${c.location.lat.toFixed(6)}, ${c.location.lng.toFixed(6)}`} />
           <KV label="GPS thiết bị" value={s.gpsDevice ? `${s.gpsDevice.lat.toFixed(6)}, ${s.gpsDevice.lng.toFixed(6)}` : 'Chưa có fix GNSS'} />

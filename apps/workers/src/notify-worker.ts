@@ -12,8 +12,8 @@ import { Redis } from 'ioredis';
 import { createSql } from '@citylight/db';
 import { EVENTS_CHANNEL } from '@citylight/db/commands';
 import { NOTIFY_CHANGED_CHANNEL, TG_BOT_KEY, TG_LINK_PREFIX } from '@citylight/db/notify';
-import type { AlarmSeverity } from '@citylight/shared';
-import { formatBatch, type AlarmEvent, type Item } from './notify-format';
+import type { AlarmSeverity, GeoPoint } from '@citylight/shared';
+import { directionsLine, formatBatch, type AlarmEvent, type Item } from './notify-format';
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? '';
 const TG_API = (process.env.TELEGRAM_API_URL ?? 'https://api.telegram.org').replace(/\/$/, '');
@@ -67,7 +67,7 @@ const channels: Partial<Record<string, NotificationChannel>> = telegram ? { tele
 
 interface Sub { userId: string; email: string; channel: string; address: string; min: AlarmSeverity; all: boolean; areas: Set<string> }
 let subs: Sub[] = [];
-let cabinetAreas = new Map<string, { district: string | null; ward: string | null; districtName: string | null }>();
+let cabinetAreas = new Map<string, { district: string | null; ward: string | null; districtName: string | null; location: GeoPoint }>();
 
 async function refresh() {
   const rows = await sql<{ user_id: string; email: string; channel: string; address: string; min_severity: AlarmSeverity; scope_all: boolean; role: string }[]>`
@@ -84,9 +84,10 @@ async function refresh() {
     userId: r.user_id, email: r.email, channel: r.channel, address: r.address, min: r.min_severity,
     all: r.role === 'admin' || r.scope_all, areas: byUser.get(r.user_id) ?? new Set(),
   }));
-  const cabs = await sql<{ id: string; district_id: string | null; ward_id: string | null; district: string | null }[]>`
-    SELECT c.id, c.district_id, c.ward_id, d.name AS district FROM cabinets c LEFT JOIN areas d ON d.id = c.district_id WHERE c.active`;
-  cabinetAreas = new Map(cabs.map((c) => [c.id, { district: c.district_id, ward: c.ward_id, districtName: c.district }]));
+  const cabs = await sql<{ id: string; district_id: string | null; ward_id: string | null; district: string | null; lat: number; lng: number }[]>`
+    SELECT c.id, c.district_id, c.ward_id, d.name AS district, ST_Y(c.location) AS lat, ST_X(c.location) AS lng
+    FROM cabinets c LEFT JOIN areas d ON d.id = c.district_id WHERE c.active`;
+  cabinetAreas = new Map(cabs.map((c) => [c.id, { district: c.district_id, ward: c.ward_id, districtName: c.district, location: { lat: c.lat, lng: c.lng } }]));
 }
 
 function recipients(a: AlarmEvent): Sub[] {
@@ -124,7 +125,7 @@ async function flush(key: string) {
   if (!items.length) return;
   const ch = channels[box.sub.channel];
   if (!ch) return;
-  const text = formatBatch(items, (id) => cabinetAreas.get(id)?.districtName ?? null, SUMMARY_OVER, WEB_URL);
+  const text = formatBatch(items, (id) => cabinetAreas.get(id)?.districtName ?? null, SUMMARY_OVER, WEB_URL, (id) => cabinetAreas.get(id)?.location ?? null);
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       await ch.send(box.sub.address, text);
@@ -158,7 +159,9 @@ const vnTimeText = (iso: string) => new Date(iso).toLocaleString('vi-VN', { time
 async function notifyAssignee(kind: 'assigned' | 'overdue', i: IncidentEvent) {
   const link = WEB_URL ? `\nXem: ${WEB_URL.replace(/\/$/, '')}/incidents/${i.id}` : '';
   const head = kind === 'assigned' ? `📋 Sự cố ${i.code} giao cho bạn${i.by ? ` (bởi ${i.by})` : ''}` : `⏰ Sự cố ${i.code} đã quá hạn xử lý`;
-  const text = `CityLight\n${head}\n   ${i.cabinetName} (${i.districtName})\n   ${i.category}: ${i.content}\n   Hạn: ${vnTimeText(i.deadline)}${link}`;
+  // the incident's own point (where the fault is), for the technician's route
+  const at = await sql<{ lat: number; lng: number }[]>`SELECT ST_Y(location) AS lat, ST_X(location) AS lng FROM incidents WHERE id = ${i.id}`.catch(() => []);
+  const text = `CityLight\n${head}\n   ${i.cabinetName} (${i.districtName})\n   ${i.category}: ${i.content}\n   Hạn: ${vnTimeText(i.deadline)}${directionsLine(at[0])}${link}`;
   for (const s of subs.filter((x) => x.userId === i.assigneeId)) {
     const ch = channels[s.channel];
     if (!ch) continue;

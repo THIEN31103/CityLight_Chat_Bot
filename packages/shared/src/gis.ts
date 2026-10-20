@@ -118,3 +118,13 @@ export function parseImportRows(rows: Record<string, unknown>[]): { poles: Impor
   });
   return { poles, errors };
 }
+
+/**
+ * Google Maps directions to a point (opens the app on phones). Coordinates only, no cabinet name or id.
+ * null when the point is unset (0,0 placeholder) or out of range.
+ */
+export function directionsUrl(p: GeoPoint | null | undefined): string | null {
+  if (!p || !Number.isFinite(p.lat) || !Number.isFinite(p.lng)) return null;
+  if (Math.abs(p.lat) > 90 || Math.abs(p.lng) > 180 || (p.lat === 0 && p.lng === 0)) return null;
+  return `https://www.google.com/maps/dir/?api=1&destination=${p.lat.toFixed(6)},${p.lng.toFixed(6)}`;
+}

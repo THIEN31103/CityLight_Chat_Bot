@@ -9,6 +9,7 @@ import { useSession } from '@/stores/session';
 import { fmtTime } from '@/lib/utils';
 import { Badge, Button, Card, CardHeader, Field, Input, KV, Modal, Select, Spinner, Textarea, toast } from '@/components/ui';
 import { INCIDENT_TONE } from './IncidentsPage';
+import { DirectionsLink } from '@/components/Directions';
 
 const err = (e: unknown) => toast(e instanceof ApiError ? e.message : 'Lỗi', 'error');
 
@@ -105,6 +106,7 @@ export function IncidentDetailPage() {
               <Link to={`/?cabinet=${inc.cabinetId}`}>
                 <Button size="sm" variant="outline" className="mt-2 w-full">Xem trên bản đồ</Button>
               </Link>
+              <DirectionsLink point={inc.location} className="mt-2 w-full" />
             </div>
           </Card>
           <Card>

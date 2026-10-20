@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { distanceM, lineLengthM, normHeader, parseImportRows, poleCode, pointsAlong, routeCode, type LngLat } from '../src';
+import { directionsUrl, distanceM, lineLengthM, normHeader, parseImportRows, poleCode, pointsAlong, routeCode, type LngLat } from '../src';
 
 // ~111 m per 0.001° of latitude
 const north = (m: number): LngLat => [106.7, 10.77 + m / 111_195];
@@ -61,5 +61,17 @@ describe('parseImportRows', () => {
     expect(errors.map((e) => e.row)).toEqual([2, 3, 4, 6, 7]);
     expect(errors[1]!.message).toContain('ngoài Việt Nam');
     expect(errors[3]!.message).toContain('Trùng');
+  });
+});
+
+describe('directionsUrl', () => {
+  it('builds a Google Maps directions link from coordinates only', () => {
+    expect(directionsUrl({ lat: 10.7769, lng: 106.7009 })).toBe('https://www.google.com/maps/dir/?api=1&destination=10.776900,106.700900');
+  });
+  it('rejects unset or invalid points', () => {
+    expect(directionsUrl({ lat: 0, lng: 0 })).toBeNull();
+    expect(directionsUrl({ lat: 95, lng: 106 })).toBeNull();
+    expect(directionsUrl({ lat: Number.NaN, lng: 106 })).toBeNull();
+    expect(directionsUrl(null)).toBeNull();
   });
 });
