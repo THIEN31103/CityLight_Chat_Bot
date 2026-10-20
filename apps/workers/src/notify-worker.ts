@@ -12,8 +12,10 @@ import { Redis } from 'ioredis';
 import { createSql } from '@citylight/db';
 import { EVENTS_CHANNEL } from '@citylight/db/commands';
 import { NOTIFY_CHANGED_CHANNEL, TG_BOT_KEY, TG_LINK_PREFIX } from '@citylight/db/notify';
-import { SECURITY_SELF_KINDS, roleSeesAll, type AlarmSeverity, type GeoPoint, type RoleKey, type SecurityEvent } from '@citylight/shared';
-import { directionsLine, formatBatch, formatSecurity, vnDateTime, type AlarmEvent, type Item } from './notify-format';
+import { DEFAULT_LANG, SECURITY_SELF_KINDS, isLang, roleSeesAll, type AlarmSeverity, type GeoPoint, type Lang, type RoleKey, type SecurityEvent } from '@citylight/shared';
+import {
+  botText, botTextBoth, formatBatch, formatIncident, formatLinked, formatSecurity, type AlarmEvent, type IncidentEvent, type Item,
+} from './notify-format';
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? '';
 const TG_API = (process.env.TELEGRAM_API_URL ?? 'https://api.telegram.org').replace(/\/$/, '');
@@ -65,13 +67,13 @@ const channels: Partial<Record<string, NotificationChannel>> = telegram ? { tele
 
 // ---------------- recipients ----------------
 
-interface Sub { userId: string; email: string; role: string; channel: string; address: string; min: AlarmSeverity; all: boolean; areas: Set<string> }
+interface Sub { userId: string; email: string; role: string; lang: Lang; channel: string; address: string; min: AlarmSeverity; all: boolean; areas: Set<string> }
 let subs: Sub[] = [];
 let cabinetAreas = new Map<string, { district: string | null; ward: string | null; districtName: string | null; location: GeoPoint }>();
 
 async function refresh() {
-  const rows = await sql<{ user_id: string; email: string; channel: string; address: string; min_severity: AlarmSeverity; scope_all: boolean; role: string }[]>`
-    SELECT s.user_id, u.email, s.channel, s.address, s.min_severity, u.scope_all, u.role
+  const rows = await sql<{ user_id: string; email: string; channel: string; address: string; min_severity: AlarmSeverity; scope_all: boolean; role: string; lang: string }[]>`
+    SELECT s.user_id, u.email, s.channel, s.address, s.min_severity, u.scope_all, u.role, u.lang
     FROM notification_subscriptions s JOIN users u ON u.id = s.user_id WHERE s.enabled AND u.active`;
   const areas = await sql<{ user_id: string; id: string }[]>`
     WITH RECURSIVE t AS (
@@ -81,7 +83,7 @@ async function refresh() {
   const byUser = new Map<string, Set<string>>();
   for (const a of areas) (byUser.get(a.user_id) ?? byUser.set(a.user_id, new Set()).get(a.user_id)!).add(a.id);
   subs = rows.map((r) => ({
-    userId: r.user_id, email: r.email, role: r.role, channel: r.channel, address: r.address, min: r.min_severity,
+    userId: r.user_id, email: r.email, role: r.role, lang: isLang(r.lang) ? r.lang : DEFAULT_LANG, channel: r.channel, address: r.address, min: r.min_severity,
     all: roleSeesAll(r.role as RoleKey) || r.scope_all, areas: byUser.get(r.user_id) ?? new Set(),
   }));
   const cabs = await sql<{ id: string; district_id: string | null; ward_id: string | null; district: string | null; lat: number; lng: number }[]>`
@@ -125,7 +127,9 @@ async function flush(key: string) {
   if (!items.length) return;
   const ch = channels[box.sub.channel];
   if (!ch) return;
-  const text = formatBatch(items, (id) => cabinetAreas.get(id)?.districtName ?? null, SUMMARY_OVER, WEB_URL, (id) => cabinetAreas.get(id)?.location ?? null);
+  const text = formatBatch(
+    items, (id) => cabinetAreas.get(id)?.districtName ?? null, SUMMARY_OVER, WEB_URL, (id) => cabinetAreas.get(id)?.location ?? null, box.sub.lang,
+  );
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       await ch.send(box.sub.address, text);
@@ -150,23 +154,14 @@ async function flush(key: string) {
 
 // ---------------- incidents (M7): straight to the assignee, not batched, any severity ----------------
 
-interface IncidentEvent {
-  id: string; code: string; cabinetName: string; districtName: string; category: string; content: string; deadline: string; assigneeId: string; by?: string;
-}
-
-const vnTimeText = vnDateTime;
-
 async function notifyAssignee(kind: 'assigned' | 'overdue', i: IncidentEvent) {
-  const link = WEB_URL ? `\nXem: ${WEB_URL.replace(/\/$/, '')}/incidents/${i.id}` : '';
-  const head = kind === 'assigned' ? `📋 Sự cố ${i.code} giao cho bạn${i.by ? ` (bởi ${i.by})` : ''}` : `⏰ Sự cố ${i.code} đã quá hạn xử lý`;
   // the incident's own point (where the fault is), for the technician's route
   const at = await sql<{ lat: number; lng: number }[]>`SELECT ST_Y(location) AS lat, ST_X(location) AS lng FROM incidents WHERE id = ${i.id}`.catch(() => []);
-  const text = `CityLight\n${head}\n   ${i.cabinetName} (${i.districtName})\n   ${i.category}: ${i.content}\n   Hạn: ${vnTimeText(i.deadline)}${directionsLine(at[0])}${link}`;
   for (const s of subs.filter((x) => x.userId === i.assigneeId)) {
     const ch = channels[s.channel];
     if (!ch) continue;
     try {
-      await ch.send(s.address, text);
+      await ch.send(s.address, formatIncident(kind, i, at[0], WEB_URL, s.lang));
       stats.messages++;
     } catch (e) {
       stats.failed++;
@@ -178,7 +173,6 @@ async function notifyAssignee(kind: 'assigned' | 'overdue', i: IncidentEvent) {
 // ---------------- security alerts (A6): provider + manager + the account owner for sign-in events, not batched, any severity ----------------
 
 async function notifySecurity(e: SecurityEvent) {
-  const text = formatSecurity(e, WEB_URL);
   const self = SECURITY_SELF_KINDS.includes(e.kind);
   const seen = new Set<string>();
   for (const s of subs) {
@@ -189,7 +183,7 @@ async function notifySecurity(e: SecurityEvent) {
     if (seen.has(key)) continue;
     seen.add(key);
     try {
-      await ch.send(s.address, text);
+      await ch.send(s.address, formatSecurity(e, WEB_URL, s.lang));
       stats.messages++;
     } catch (err) {
       stats.failed++;
@@ -241,24 +235,30 @@ async function pollTelegram(tg: TelegramChannel) {
         if (start) {
           const userId = await redis.getdel(`${TG_LINK_PREFIX}${start[1]}`);
           if (!userId) {
-            await tg.send(String(chat), 'Mã liên kết không đúng hoặc đã hết hạn. Tạo mã mới ở trang Tài khoản → Thông báo.');
+            await tg.send(String(chat), botTextBoth('badLink')); // the chat's user is not known
             continue;
           }
-          const u2 = await sql<{ email: string }[]>`
+          const u2 = await sql<{ email: string; lang: string }[]>`
             WITH s AS (
               INSERT INTO notification_subscriptions (user_id, channel, address, min_severity, enabled)
               VALUES (${userId}, 'telegram', ${String(chat)}, 'major', true)
               ON CONFLICT (user_id, channel) DO UPDATE SET address = excluded.address, enabled = true RETURNING user_id
-            ) SELECT u.email FROM users u JOIN s ON s.user_id = u.id`;
+            ) SELECT u.email, u.lang FROM users u JOIN s ON s.user_id = u.id`;
           stats.linked++;
           await refresh();
-          await tg.send(String(chat), `Đã liên kết CityLight với tài khoản ${u2[0]?.email ?? ''}. Bạn sẽ nhận cảnh báo mức "Cao" và "Nghiêm trọng" trong khu vực được phân quyền; đổi mức ở trang Tài khoản.`);
+          const lang = u2[0]?.lang;
+          await tg.send(String(chat), formatLinked(u2[0]?.email ?? '', isLang(lang) ? lang : DEFAULT_LANG));
         } else if (/^\/stop/.test(text)) {
-          await sql`UPDATE notification_subscriptions SET enabled = false WHERE channel = 'telegram' AND address = ${String(chat)}`;
+          const off = await sql<{ lang: string }[]>`
+            WITH s AS (UPDATE notification_subscriptions SET enabled = false WHERE channel = 'telegram' AND address = ${String(chat)} RETURNING user_id)
+            SELECT u.lang FROM users u JOIN s ON s.user_id = u.id`;
           await refresh();
-          await tg.send(String(chat), 'Đã tắt thông báo CityLight. Bật lại ở trang Tài khoản.');
+          // one user on this chat: their language; none or several: both
+          const langs = [...new Set(off.map((r) => r.lang))];
+          const lang = langs.length === 1 ? langs[0] : undefined;
+          await tg.send(String(chat), isLang(lang) ? botText('stopped', lang) : botTextBoth('stopped'));
         } else if (text.startsWith('/start')) {
-          await tg.send(String(chat), 'Để nhận cảnh báo CityLight: vào trang Tài khoản → Thông báo → "Liên kết Telegram".');
+          await tg.send(String(chat), botTextBoth('howTo'));
         }
       }
     } catch (e) {

@@ -2,6 +2,7 @@
 // cabinet: a drift can mean the cabinet moved (update) or the board was fitted to another cabinet (do not).
 // So the server only proposes the median of the recent fixes and a person confirms; nothing moves on its own.
 import type { GeoPoint } from './domain';
+import { defineDict, plural, type Lang } from './i18n';
 
 /** Fixes looked at: the median of this window is the proposed position. */
 export const GPS_RELOCATE_WINDOW_MIN = 30;
@@ -25,7 +26,7 @@ export interface GpsSuggestion {
   distanceM: number | null;
   windowMin: number;
   ok: boolean;
-  /** why it cannot be applied (Vietnamese, shown as is); null when ok */
+  /** why it cannot be applied (in the requested language, shown as is); null when ok */
   reason: string | null;
 }
 
@@ -39,12 +40,27 @@ export interface GpsDriftItem {
   distanceM: number;
 }
 
-export function judgeGpsSuggestion(s: { samples: number; spreadM: number | null; distanceM: number | null }): { ok: boolean; reason: string | null } {
-  if (s.samples === 0) return { ok: false, reason: `Không có điểm GPS nào trong ${GPS_RELOCATE_WINDOW_MIN} phút gần nhất (LGPS=X hoặc tủ offline)` };
-  if (s.samples < GPS_RELOCATE_MIN_SAMPLES)
-    return { ok: false, reason: `Mới có ${s.samples} điểm GPS trong ${GPS_RELOCATE_WINDOW_MIN} phút, cần ít nhất ${GPS_RELOCATE_MIN_SAMPLES}` };
-  if ((s.spreadM ?? Infinity) > GPS_RELOCATE_MAX_SPREAD_M)
-    return { ok: false, reason: `GPS chưa ổn định: các điểm lệch nhau khoảng ${Math.round(s.spreadM ?? 0)} m (cho phép ≤ ${GPS_RELOCATE_MAX_SPREAD_M} m). Thử lại sau` };
-  if ((s.distanceM ?? 0) < GPS_RELOCATE_MIN_MOVE_M) return { ok: false, reason: 'Vị trí khai báo đã khớp GPS, không cần cập nhật' };
+/** Reasons of judgeGpsSuggestion. */
+export const GPS_RELOCATE_TEXT = defineDict(
+  {
+    none: (win: number) => `Không có điểm GPS nào trong ${win} phút gần nhất (LGPS=X hoặc tủ offline)`,
+    few: (n: number, win: number, min: number) => `Mới có ${n} điểm GPS trong ${win} phút, cần ít nhất ${min}`,
+    spread: (m: number, max: number) => `GPS chưa ổn định: các điểm lệch nhau khoảng ${m} m (cho phép ≤ ${max} m). Thử lại sau`,
+    matches: 'Vị trí khai báo đã khớp GPS, không cần cập nhật',
+  },
+  {
+    none: (win: number) => `No GPS fix in the last ${win} min (LGPS=X or cabinet offline)`,
+    few: (n: number, win: number, min: number) => `Only ${plural(n, 'GPS fix', 'GPS fixes')} in ${win} min, at least ${min} needed`,
+    spread: (m: number, max: number) => `GPS not stable yet: the fixes are about ${m} m apart (≤ ${max} m allowed). Try again later`,
+    matches: 'The registered position already matches GPS, no update needed',
+  },
+);
+
+export function judgeGpsSuggestion(s: { samples: number; spreadM: number | null; distanceM: number | null }, lang: Lang = 'vi'): { ok: boolean; reason: string | null } {
+  const T = GPS_RELOCATE_TEXT[lang];
+  if (s.samples === 0) return { ok: false, reason: T.none(GPS_RELOCATE_WINDOW_MIN) };
+  if (s.samples < GPS_RELOCATE_MIN_SAMPLES) return { ok: false, reason: T.few(s.samples, GPS_RELOCATE_WINDOW_MIN, GPS_RELOCATE_MIN_SAMPLES) };
+  if ((s.spreadM ?? Infinity) > GPS_RELOCATE_MAX_SPREAD_M) return { ok: false, reason: T.spread(Math.round(s.spreadM ?? 0), GPS_RELOCATE_MAX_SPREAD_M) };
+  if ((s.distanceM ?? 0) < GPS_RELOCATE_MIN_MOVE_M) return { ok: false, reason: T.matches };
   return { ok: true, reason: null };
 }

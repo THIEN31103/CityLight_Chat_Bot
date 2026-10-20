@@ -6,11 +6,14 @@ import QRCode from 'qrcode';
 import { ChevronDown, ChevronRight, Copy, ShieldCheck } from 'lucide-react';
 import type { Area, User } from '@citylight/shared';
 import { api, ApiError, setReauthPrompt } from '@/lib/api';
+import { dictNow, fill, useDict } from '@/i18n';
+import { COMMON } from '@/i18n/dict/common';
+import { SECURITY } from '@/i18n/dict/account';
 import { Button, Checkbox, Field, Input, Modal, Spinner, toast } from '@/components/ui';
 
 export const PASSWORD_MIN = 10;
 
-const errText = (e: unknown) => (e instanceof ApiError ? e.message : 'Không kết nối được máy chủ');
+const errText = (e: unknown) => (e instanceof ApiError ? e.message : dictNow(COMMON).networkError);
 
 /** Area id -> name, for showing a user's scope. */
 export function useAreaNames() {
@@ -18,14 +21,17 @@ export function useAreaNames() {
   return useMemo(() => new Map((data?.areas ?? []).map((a) => [a.id, a.name])), [data]);
 }
 
+/** Current language; callers re-render on a language change through their own useDict. */
 export function scopeLabel(u: Pick<User, 'scopeAll' | 'scopeAreaIds'>, names: Map<string, string>) {
-  if (u.scopeAll) return 'Toàn hệ thống';
-  if (!u.scopeAreaIds.length) return 'Chưa gán khu vực (không thấy tủ nào)';
+  const t = dictNow(SECURITY);
+  if (u.scopeAll) return t.scopeAll;
+  if (!u.scopeAreaIds.length) return t.scopeNone;
   return u.scopeAreaIds.map((id) => names.get(id) ?? id).join(', ');
 }
 
 /** Scan QR -> type a code -> show recovery codes once. */
 export function TotpEnroll({ onDone }: { onDone: (u: User) => void }) {
+  const t = useDict(SECURITY).totp;
   const [setup, setSetup] = useState<{ otpauthUrl: string; secret: string } | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [code, setCode] = useState('');
@@ -43,54 +49,55 @@ export function TotpEnroll({ onDone }: { onDone: (u: User) => void }) {
   if (result)
     return (
       <div className="space-y-3 text-sm">
-        <p className="font-medium text-st-on">Đã bật xác thực 2 lớp.</p>
-        <p>Lưu 8 mã khôi phục dưới đây ở nơi an toàn. Mỗi mã dùng được <b>một lần</b> khi mất điện thoại. Mã chỉ hiện lần này.</p>
+        <p className="font-medium text-st-on">{t.enabled}</p>
+        <p>{t.saveCodesBefore}<b>{t.saveCodesOnce}</b>{t.saveCodesAfter}</p>
         <div className="grid grid-cols-2 gap-1 rounded-md border bg-muted/40 p-3 font-mono text-sm">
           {result.recoveryCodes.map((c) => <span key={c}>{c}</span>)}
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <Button variant="outline" size="sm" onClick={() => navigator.clipboard?.writeText(result.recoveryCodes.join('\n')).then(() => toast('Đã chép mã khôi phục', 'success'))}>
-            <Copy className="h-4 w-4" /> Chép
+          <Button variant="outline" size="sm" onClick={() => navigator.clipboard?.writeText(result.recoveryCodes.join('\n')).then(() => toast(dictNow(SECURITY).totp.codesCopied, 'success'))}>
+            <Copy className="h-4 w-4" /> {t.copy}
           </Button>
-          <Checkbox label="Tôi đã lưu các mã này" checked={saved} onChange={setSaved} />
+          <Checkbox label={t.savedThem} checked={saved} onChange={setSaved} />
         </div>
-        <Button disabled={!saved} onClick={() => onDone(result.user)}>Xong</Button>
+        <Button disabled={!saved} onClick={() => onDone(result.user)}>{t.done}</Button>
       </div>
     );
 
   if (!setup)
     return (
       <div className="space-y-3 text-sm">
-        <p>Cần một ứng dụng xác thực trên điện thoại: Google Authenticator, Microsoft Authenticator hoặc Authy.</p>
-        <Button onClick={() => start.mutate()} loading={start.isPending}>Thiết lập 2FA</Button>
+        <p>{t.needApp}</p>
+        <Button onClick={() => start.mutate()} loading={start.isPending}>{t.setup}</Button>
       </div>
     );
 
   return (
     <div className="space-y-3 text-sm">
-      <p>1. Mở ứng dụng xác thực, quét mã QR:</p>
+      <p>{t.scan}</p>
       <div className="flex h-44 w-44 items-center justify-center rounded-md border bg-white p-1">
-        {qr ? <img src={qr} alt="Mã QR thiết lập 2FA" className="h-full w-full" /> : <Spinner />}
+        {qr ? <img src={qr} alt={t.qrAlt} className="h-full w-full" /> : <Spinner />}
       </div>
       <p className="text-xs text-subtle">
-        Không quét được? Nhập khóa thủ công: <code className="break-all rounded bg-muted px-1 py-0.5 font-mono">{setup.secret.replace(/(.{4})/g, '$1 ').trim()}</code>
+        {t.manualKey} <code className="break-all rounded bg-muted px-1 py-0.5 font-mono">{setup.secret.replace(/(.{4})/g, '$1 ').trim()}</code>
       </p>
-      <Field label="2. Nhập mã 6 số đang hiện trong ứng dụng">
+      <Field label={t.enterCode}>
         <Input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} className="w-40 font-mono tracking-widest" />
       </Field>
-      <Button disabled={code.length !== 6} loading={enable.isPending} onClick={() => enable.mutate()}>Xác nhận & bật 2FA</Button>
+      <Button disabled={code.length !== 6} loading={enable.isPending} onClick={() => enable.mutate()}>{t.confirmEnable}</Button>
     </div>
   );
 }
 
 export function ChangePasswordForm({ forced, onDone }: { forced?: boolean; onDone?: () => void }) {
+  const t = useDict(SECURITY).password;
   const [oldPw, setOldPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [newPw2, setNewPw2] = useState('');
   const change = useMutation({
     mutationFn: () => api.changePassword(oldPw, newPw),
     onSuccess: () => {
-      toast('Đã đổi mật khẩu. Các thiết bị khác đã bị đăng xuất.', 'success');
+      toast(dictNow(SECURITY).password.changed, 'success');
       setOldPw('');
       setNewPw('');
       setNewPw2('');
@@ -108,16 +115,16 @@ export function ChangePasswordForm({ forced, onDone }: { forced?: boolean; onDon
         if (oldPw && ok) change.mutate();
       }}
     >
-      <Field label={forced ? 'Mật khẩu tạm (quản trị viên gửi)' : 'Mật khẩu hiện tại'}>
+      <Field label={forced ? t.temp : t.current}>
         <Input type="password" autoComplete="current-password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} />
       </Field>
-      <Field label="Mật khẩu mới" hint={`Tối thiểu ${PASSWORD_MIN} ký tự`}>
+      <Field label={t.new} hint={fill(t.minLength, { n: PASSWORD_MIN })}>
         <Input type="password" autoComplete="new-password" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
       </Field>
-      <Field label="Nhập lại mật khẩu mới" hint={mismatch ? <span className="text-st-offline">Không khớp</span> : undefined}>
+      <Field label={t.repeat} hint={mismatch ? <span className="text-st-offline">{t.mismatch}</span> : undefined}>
         <Input type="password" autoComplete="new-password" value={newPw2} onChange={(e) => setNewPw2(e.target.value)} />
       </Field>
-      <Button type="submit" disabled={!oldPw || !ok} loading={change.isPending}>Đổi mật khẩu</Button>
+      <Button type="submit" disabled={!oldPw || !ok} loading={change.isPending}>{t.change}</Button>
     </form>
   );
 }
@@ -129,6 +136,7 @@ export interface ScopeValue {
 
 /** "Toàn hệ thống" or a set of districts / wards. A ticked district covers all its wards. */
 export function ScopePicker({ value, onChange, disabled }: { value: ScopeValue; onChange: (v: ScopeValue) => void; disabled?: boolean }) {
+  const t = useDict(SECURITY).scope;
   const { data, isLoading } = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree, staleTime: 60_000 });
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const districts = useMemo(() => (data?.areas ?? []).filter((a) => a.kind === 'district'), [data]);
@@ -144,7 +152,7 @@ export function ScopePicker({ value, onChange, disabled }: { value: ScopeValue; 
 
   return (
     <div className="space-y-2">
-      <Checkbox label={<span className="font-medium">Toàn hệ thống (mọi tủ, kể cả tủ chưa phân khu vực)</span>} checked={value.scopeAll} disabled={disabled} onChange={(v) => onChange({ ...value, scopeAll: v })} />
+      <Checkbox label={<span className="font-medium">{t.all}</span>} checked={value.scopeAll} disabled={disabled} onChange={(v) => onChange({ ...value, scopeAll: v })} />
       {!value.scopeAll && (
         <div className="max-h-64 overflow-auto rounded-md border p-2">
           {isLoading && <Spinner />}
@@ -155,11 +163,11 @@ export function ScopePicker({ value, onChange, disabled }: { value: ScopeValue; 
             return (
               <div key={d.id}>
                 <div className="flex items-center gap-1">
-                  <button type="button" className="rounded p-0.5 hover:bg-muted" onClick={() => setOpen({ ...open, [d.id]: !open[d.id] })} aria-label={`Mở ${d.name}`}>
+                  <button type="button" className="rounded p-0.5 hover:bg-muted" onClick={() => setOpen({ ...open, [d.id]: !open[d.id] })} aria-label={fill(t.expand, { name: d.name })}>
                     {open[d.id] ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                   </button>
                   <Checkbox
-                    label={<span>{d.name} <span className="text-xs text-subtle">({d.cabinetCount} tủ{!dOn && picked ? `, ${picked} phường` : ''})</span></span>}
+                    label={<span>{d.name} <span className="text-xs text-subtle">({t.cabinets(d.cabinetCount)}{!dOn && picked ? `, ${t.wards(picked)}` : ''})</span></span>}
                     checked={dOn}
                     disabled={disabled}
                     // ticking a district replaces its individual wards
@@ -178,7 +186,7 @@ export function ScopePicker({ value, onChange, disabled }: { value: ScopeValue; 
           })}
         </div>
       )}
-      {!value.scopeAll && !value.scopeAreaIds.length && <p className="text-xs text-st-fault">Chưa chọn khu vực: người dùng sẽ không thấy tủ nào.</p>}
+      {!value.scopeAll && !value.scopeAreaIds.length && <p className="text-xs text-st-fault">{t.noneWarning}</p>}
     </div>
   );
 }
@@ -188,6 +196,8 @@ export function ScopePicker({ value, onChange, disabled }: { value: ScopeValue; 
  * then is sent again; one code covers 5 minutes of such actions on this session. Mounted once in AppShell.
  */
 export function ReauthHost() {
+  const t = useDict(SECURITY).reauth;
+  const c = useDict(COMMON);
   const [pending, setPending] = useState<((ok: boolean) => void) | null>(null);
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -210,7 +220,7 @@ export function ReauthHost() {
     setPending(null);
   };
   const submit = async () => {
-    if (!/^\d{6}$/.test(code)) return setError('Nhập đủ 6 số');
+    if (!/^\d{6}$/.test(code)) return setError(t.need6);
     setBusy(true);
     try {
       await api.reauth(code);
@@ -232,17 +242,17 @@ export function ReauthHost() {
     <Modal
       open={!!pending}
       onOpenChange={(v) => !v && close(false)}
-      title={<span className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> Xác thực lại</span>}
+      title={<span className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> {t.title}</span>}
       footer={
         <>
-          <Button variant="outline" onClick={() => close(false)}>Hủy</Button>
-          <Button loading={busy} onClick={() => void submit()}>Xác nhận</Button>
+          <Button variant="outline" onClick={() => close(false)}>{c.cancel}</Button>
+          <Button loading={busy} onClick={() => void submit()}>{c.confirm}</Button>
         </>
       }
     >
       <form onSubmit={(e) => { e.preventDefault(); void submit(); }} className="space-y-3">
-        <p className="text-sm text-subtle">Thao tác này cần mã xác thực 2 lớp hiện tại trên điện thoại. Mã có hiệu lực cho các thao tác tương tự trong 5 phút.</p>
-        <Field label="Mã 6 số">
+        <p className="text-sm text-subtle">{t.body}</p>
+        <Field label={t.code}>
           <Input
             autoFocus
             inputMode="numeric"

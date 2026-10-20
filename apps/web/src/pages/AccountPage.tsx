@@ -2,15 +2,21 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, ShieldCheck, Bell } from 'lucide-react';
 import type { AlarmSeverity } from '@citylight/shared';
-import { ROLE_LABELS, SEVERITY_LABELS } from '@citylight/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { fmtTime } from '@/lib/utils';
+import { dictNow, fill, useDict, useLabels } from '@/i18n';
+import { COMMON } from '@/i18n/dict/common';
+import { ACCOUNT } from '@/i18n/dict/account';
 import { ChangePasswordForm, TotpEnroll, scopeLabel, useAreaNames } from '@/components/security';
+import { LangSwitch } from '@/components/LangSwitch';
 import { Badge, Button, Card, CardHeader, Checkbox, Field, Input, KV, PageHeader, Select, Spinner, toast } from '@/components/ui';
 
 export function AccountPage() {
   const { user, setUser } = useSession();
+  const t = useDict(ACCOUNT);
+  const c = useDict(COMMON);
+  const L = useLabels();
   const names = useAreaNames();
   const [disablePw, setDisablePw] = useState('');
   const disable2fa = useMutation({
@@ -18,47 +24,48 @@ export function AccountPage() {
     onSuccess: (u) => {
       setUser(u);
       setDisablePw('');
-      toast('Đã tắt xác thực 2 lớp');
+      toast(dictNow(ACCOUNT).totpDisabled);
     },
-    onError: (e) => toast(e instanceof ApiError ? e.message : 'Lỗi', 'error'),
+    onError: (e) => toast(e instanceof ApiError ? e.message : dictNow(COMMON).error, 'error'),
   });
 
   if (!user) return null;
 
   return (
     <div className="mx-auto max-w-4xl p-4">
-      <PageHeader title="Tài khoản cá nhân" />
+      <PageHeader title={t.title} />
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
-          <CardHeader title="Thông tin" />
+          <CardHeader title={t.info} />
           <div className="px-4 py-2">
-            <KV label="Họ tên" value={user.fullName} />
-            <KV label="Email" value={user.email} />
-            <KV label="Vai trò" value={<Badge tone="blue">{ROLE_LABELS[user.role]}</Badge>} />
-            <KV label="Phạm vi" value={scopeLabel(user, names)} />
-            <KV label="Đăng nhập gần nhất" value={fmtTime(user.lastLoginAt)} />
+            <KV label={t.fullName} value={user.fullName} />
+            <KV label={t.email} value={user.email} />
+            <KV label={t.role} value={<Badge tone="blue">{L.role[user.role]}</Badge>} />
+            <KV label={t.scope} value={scopeLabel(user, names)} />
+            <KV label={t.lastLogin} value={fmtTime(user.lastLoginAt)} />
+            <KV label={c.language} value={<LangSwitch />} />
           </div>
         </Card>
         <Card>
-          <CardHeader title={<span className="flex items-center gap-2"><KeyRound className="h-4 w-4" /> Đổi mật khẩu</span>} />
+          <CardHeader title={<span className="flex items-center gap-2"><KeyRound className="h-4 w-4" /> {t.changePassword}</span>} />
           <div className="p-4">
             <ChangePasswordForm />
           </div>
         </Card>
         <Card>
-          <CardHeader title={<span className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> Xác thực 2 lớp (TOTP)</span>} actions={user.totpEnabled ? <Badge tone="green">Đang bật</Badge> : <Badge>Đang tắt</Badge>} />
+          <CardHeader title={<span className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> {t.totpTitle}</span>} actions={user.totpEnabled ? <Badge tone="green">{t.on}</Badge> : <Badge>{t.off}</Badge>} />
           <div className="space-y-3 p-4 text-sm">
             {!user.totpEnabled ? (
               <TotpEnroll onDone={setUser} />
             ) : user.totpRequired ? (
-              <p className="text-subtle">Vai trò {ROLE_LABELS[user.role]} bắt buộc 2FA nên không tắt được. Mất điện thoại: dùng mã khôi phục, hoặc nhờ quản trị viên đặt lại 2FA.</p>
+              <p className="text-subtle">{fill(t.totpRequired, { role: L.role[user.role] })}</p>
             ) : (
               <>
-                <p className="text-subtle">Tắt 2FA cần nhập lại mật khẩu.</p>
-                <Field label="Mật khẩu">
+                <p className="text-subtle">{t.disableNeedsPassword}</p>
+                <Field label={t.password}>
                   <Input type="password" autoComplete="current-password" value={disablePw} onChange={(e) => setDisablePw(e.target.value)} />
                 </Field>
-                <Button variant="outline" disabled={!disablePw} onClick={() => disable2fa.mutate()} loading={disable2fa.isPending}>Tắt 2FA</Button>
+                <Button variant="outline" disabled={!disablePw} onClick={() => disable2fa.mutate()} loading={disable2fa.isPending}>{t.disable2fa}</Button>
               </>
             )}
           </div>
@@ -69,14 +76,16 @@ export function AccountPage() {
   );
 }
 
-const SEVERITY_OPTIONS: { value: AlarmSeverity; label: string }[] = [
-  { value: 'critical', label: `Chỉ ${SEVERITY_LABELS.critical}` },
-  { value: 'major', label: `${SEVERITY_LABELS.major} và ${SEVERITY_LABELS.critical}` },
-  { value: 'minor', label: 'Tất cả mức' },
-];
-
 /** Telegram now; Zalo OA / e-mail appear once the server has an OA / SMTP (NotificationChannel classes). */
 function NotificationsCard() {
+  const t = useDict(ACCOUNT).notify;
+  const c = useDict(COMMON);
+  const L = useLabels();
+  const severityOptions: { value: AlarmSeverity; label: string }[] = [
+    { value: 'critical', label: fill(t.onlyCritical, { critical: L.severity.critical }) },
+    { value: 'major', label: fill(t.majorAndCritical, { major: L.severity.major, critical: L.severity.critical }) },
+    { value: 'minor', label: t.allLevels },
+  ];
   const qc = useQueryClient();
   const [link, setLink] = useState<{ url: string; code: string; botUsername: string } | null>(null);
   const { data, isLoading } = useQuery({
@@ -88,13 +97,13 @@ function NotificationsCard() {
   const [draft, setDraft] = useState<{ minSeverity: AlarmSeverity; telegram: boolean } | null>(null);
   const cur = draft ?? (data ? { minSeverity: data.minSeverity, telegram: data.telegram.enabled } : null);
   if (link && data?.telegram.linked) setLink(null);
-  const err = (e: unknown) => toast(e instanceof ApiError ? e.message : 'Lỗi', 'error');
+  const err = (e: unknown) => toast(e instanceof ApiError ? e.message : dictNow(COMMON).error, 'error');
   const save = useMutation({
     mutationFn: () => api.saveNotifications(cur!),
     onSuccess: (d) => {
       qc.setQueryData(['my-notifications'], d);
       setDraft(null);
-      toast('Đã lưu đăng ký thông báo', 'success');
+      toast(dictNow(ACCOUNT).notify.saved, 'success');
     },
     onError: err,
   });
@@ -104,21 +113,21 @@ function NotificationsCard() {
     onSuccess: () => {
       setDraft(null);
       void qc.invalidateQueries({ queryKey: ['my-notifications'] });
-      toast('Đã hủy liên kết Telegram');
+      toast(dictNow(ACCOUNT).notify.unlinked);
     },
     onError: err,
   });
 
   return (
     <Card>
-      <CardHeader title={<span className="flex items-center gap-2"><Bell className="h-4 w-4" /> Nhận thông báo cảnh báo</span>} />
+      <CardHeader title={<span className="flex items-center gap-2"><Bell className="h-4 w-4" /> {t.title}</span>} />
       {isLoading || !data || !cur ? (
         <Spinner />
       ) : (
         <div className="space-y-3 p-4 text-sm">
-          <Field label="Mức cảnh báo nhận">
+          <Field label={t.minSeverity}>
             <Select value={cur.minSeverity} onChange={(e) => setDraft({ ...cur, minSeverity: e.target.value as AlarmSeverity })}>
-              {SEVERITY_OPTIONS.map((o) => (
+              {severityOptions.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </Select>
@@ -127,25 +136,25 @@ function NotificationsCard() {
             <div className="flex items-center justify-between gap-2">
               <Checkbox label="Telegram" checked={cur.telegram} disabled={!data.telegram.linked} onChange={(v) => setDraft({ ...cur, telegram: v })} />
               {data.telegram.linked ? (
-                <Button size="sm" variant="ghost" loading={unlink.isPending} onClick={() => unlink.mutate()}>Hủy liên kết</Button>
+                <Button size="sm" variant="ghost" loading={unlink.isPending} onClick={() => unlink.mutate()}>{t.unlink}</Button>
               ) : data.telegram.available ? (
-                <Button size="sm" variant="outline" loading={start.isPending} onClick={() => start.mutate()}>Liên kết Telegram</Button>
+                <Button size="sm" variant="outline" loading={start.isPending} onClick={() => start.mutate()}>{t.link}</Button>
               ) : null}
             </div>
-            {!data.telegram.available && !data.telegram.linked && <p className="text-xs text-subtle">Máy chủ chưa cấu hình bot Telegram.</p>}
-            {data.telegram.linked && <p className="text-xs text-subtle">Đã liên kết với bot @{data.telegram.botUsername ?? '—'}.</p>}
+            {!data.telegram.available && !data.telegram.linked && <p className="text-xs text-subtle">{t.noBot}</p>}
+            {data.telegram.linked && <p className="text-xs text-subtle">{fill(t.linkedTo, { bot: data.telegram.botUsername ?? '—' })}</p>}
             {link && (
               <div className="rounded-md border bg-muted/40 p-2 text-xs">
-                Mở{' '}
-                <a className="text-primary underline" href={link.url} target="_blank" rel="noreferrer">t.me/{link.botUsername}</a> và bấm <b>Start</b> (hoặc gửi{' '}
-                <code>/start {link.code}</code> cho bot). Mã có hiệu lực 10 phút; trang tự cập nhật khi liên kết xong.
+                {t.open}{' '}
+                <a className="text-primary underline" href={link.url} target="_blank" rel="noreferrer">t.me/{link.botUsername}</a> {t.andPress} <b>Start</b> {t.orSend}{' '}
+                <code>/start {link.code}</code> {t.toBot}
               </div>
             )}
           </div>
-          <Checkbox label="Zalo OA (chưa hỗ trợ: cần OA doanh nghiệp)" checked={false} disabled onChange={() => undefined} />
-          <Checkbox label="Email (chưa hỗ trợ: cần máy chủ SMTP)" checked={false} disabled onChange={() => undefined} />
-          <p className="text-xs text-subtle">Chỉ nhận cảnh báo của tủ trong khu vực bạn được phân quyền. Nhiều cảnh báo cùng lúc được gom thành một tin tóm tắt.</p>
-          <Button size="sm" disabled={!draft} loading={save.isPending} onClick={() => save.mutate()}>Lưu</Button>
+          <Checkbox label={t.zalo} checked={false} disabled onChange={() => undefined} />
+          <Checkbox label={t.email} checked={false} disabled onChange={() => undefined} />
+          <p className="text-xs text-subtle">{t.scopeNote}</p>
+          <Button size="sm" disabled={!draft} loading={save.isPending} onClick={() => save.mutate()}>{c.save}</Button>
         </div>
       )}
     </Card>

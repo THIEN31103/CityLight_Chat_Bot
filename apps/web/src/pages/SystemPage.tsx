@@ -1,24 +1,27 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useDict } from '@/i18n';
+import { SYSTEM } from '@/i18n/dict/system';
 import { Card, PageHeader, Spinner } from '@/components/ui';
 
 export function SystemPage() {
+  const t = useDict(SYSTEM);
   const { data } = useQuery({ queryKey: ['system-stats'], queryFn: api.systemStats, refetchInterval: 5000 });
   const items = data
     ? [
-        { label: 'Tủ online', value: `${data.cabinetsOnline} / ${data.cabinetsTotal}` },
-        { label: 'Kết nối broker', value: data.brokerConnections },
-        { label: 'Telemetry', value: `${data.msgPerSec} msg/s` },
-        { label: 'Độ trễ ingest', value: `${data.ingestLagMs} ms` },
-        { label: 'Hàng đợi lệnh', value: data.commandQueue },
-        { label: 'Lệnh lỗi / timeout', value: data.ackErrors24h },
-        { label: 'Dung lượng DB', value: `${data.dbSizeGb} GB` },
-        { label: 'Uptime', value: `${data.uptimeHours} giờ` },
+        { label: t.cabinetsOnline, value: `${data.cabinetsOnline} / ${data.cabinetsTotal}` },
+        { label: t.brokerConnections, value: data.brokerConnections },
+        { label: t.telemetry, value: `${data.msgPerSec} msg/s` },
+        { label: t.ingestLag, value: `${data.ingestLagMs} ms` },
+        { label: t.commandQueue, value: data.commandQueue },
+        { label: t.commandErrors, value: data.ackErrors24h },
+        { label: t.dbSize, value: `${data.dbSizeGb} GB` },
+        { label: t.uptime, value: t.hours(data.uptimeHours) },
       ]
     : [];
   return (
     <div className="p-4">
-      <PageHeader title="Giám sát hệ thống" subtitle="Số liệu vận hành của server (mock ở M1-UI; thật từ /metrics ở M1)" />
+      <PageHeader title={t.title} subtitle={t.subtitle} />
       {!data ? (
         <Spinner />
       ) : (

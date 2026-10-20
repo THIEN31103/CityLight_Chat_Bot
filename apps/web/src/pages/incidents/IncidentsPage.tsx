@@ -5,7 +5,10 @@ import type { ColumnDef } from '@tanstack/react-table';
 import dayjs from 'dayjs';
 import { Download, Plus } from 'lucide-react';
 import type { Incident } from '@citylight/shared';
-import { INCIDENT_STATUS_LABELS, INCIDENT_CATEGORIES, incidentOverdue } from '@citylight/shared';
+import { INCIDENT_CATEGORIES, incidentCategoryLabel, incidentOverdue } from '@citylight/shared';
+import { fill, useDict, useLabels, useLang } from '@/i18n';
+import { COMMON } from '@/i18n/dict/common';
+import { INCIDENTS } from '@/i18n/dict/incidents';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { downloadCsv } from '@/lib/exportFile';
@@ -13,16 +16,19 @@ import { fmtTime } from '@/lib/utils';
 import { DataTable } from '@/components/DataTable';
 import { Badge, Button, Checkbox, Field, Input, Modal, PageHeader, Select, Textarea, toast } from '@/components/ui';
 
-const FILTERS = [
-  { q: 'all', label: 'Tất cả' },
-  { q: 'mine', label: 'Việc của tôi' },
-  { q: 'overdue', label: 'Quá hạn' },
-  { q: 'new', label: 'Chưa xử lý' },
-  { q: 'assigned', label: 'Yêu cầu xử lý' },
-  { q: 'deferred', label: 'Chưa cần xử lý' },
-  { q: 'resolved_closed', label: 'Đã xử lý' },
-  { q: 'deferred_resolved', label: 'Chưa cần & đã xử lý' },
-];
+const FILTERS = ['all', 'mine', 'overdue', 'new', 'assigned', 'deferred', 'resolved_closed', 'deferred_resolved'] as const;
+
+/** Stored incident category / district name -> label in the current language (the data stays Vietnamese). */
+export function useIncidentText() {
+  const lang = useLang((s) => s.lang);
+  return useMemo(
+    () => ({
+      category: (c: string) => incidentCategoryLabel(c, lang),
+      area: (n: string) => (n === INCIDENTS.vi.unassigned ? INCIDENTS[lang].unassigned : n),
+    }),
+    [lang],
+  );
+}
 
 export const INCIDENT_TONE: Record<Incident['status'], 'red' | 'orange' | 'muted' | 'green' | 'blue'> = {
   new: 'red',
@@ -34,6 +40,9 @@ export const INCIDENT_TONE: Record<Incident['status'], 'red' | 'orange' | 'muted
 
 export function IncidentsPage() {
   const nav = useNavigate();
+  const t = useDict(INCIDENTS).list;
+  const L = useLabels();
+  const tx = useIncidentText();
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? 'all';
   const district = params.get('district') ?? '';
@@ -61,31 +70,31 @@ export function IncidentsPage() {
 
   const columns = useMemo<ColumnDef<Incident, unknown>[]>(
     () => [
-      { id: 'code', header: 'Mã', accessorKey: 'code' },
-      { id: 'cabinet', header: 'Tủ điều khiển', accessorKey: 'cabinetName' },
-      { id: 'district', header: 'Quận/huyện', accessorKey: 'districtName' },
-      { id: 'ward', header: 'Phường/xã', accessorKey: 'wardName' },
-      { id: 'reportedAt', header: 'Thời điểm ghi nhận', cell: ({ row: r }) => <span className="whitespace-nowrap text-xs">{fmtTime(r.original.reportedAt)}</span> },
-      { id: 'reporter', header: 'Người báo', accessorKey: 'reportedBy' },
-      { id: 'source', header: 'Nguồn', cell: ({ row: r }) => (r.original.source === 'alarm' ? 'Cảnh báo' : 'Thủ công') },
-      { id: 'category', header: 'Phân loại', accessorKey: 'category' },
-      { id: 'content', header: 'Nội dung', cell: ({ row: r }) => <span className="line-clamp-2 max-w-xs">{r.original.content}</span> },
-      { id: 'status', header: 'Trạng thái', cell: ({ row: r }) => <Badge tone={INCIDENT_TONE[r.original.status]}>{INCIDENT_STATUS_LABELS[r.original.status]}</Badge> },
-      { id: 'assignee', header: 'Người xử lý', cell: ({ row: r }) => r.original.assignee ?? '—' },
-      { id: 'deadline', header: 'Hạn xử lý', cell: ({ row: r }) => <span className={incidentOverdue(r.original) ? 'text-st-offline' : ''}>{fmtTime(r.original.deadline, 'DD/MM/YYYY HH:mm')}</span> },
-      { id: 'resolvedAt', header: 'Thời điểm xử lý', cell: ({ row: r }) => <span className="text-xs">{fmtTime(r.original.resolvedAt)}</span> },
-      { id: 'resolution', header: 'Nội dung xử lý', cell: ({ row: r }) => r.original.resolution ?? '—' },
+      { id: 'code', header: t.col.code, accessorKey: 'code' },
+      { id: 'cabinet', header: t.col.cabinet, accessorKey: 'cabinetName' },
+      { id: 'district', header: t.col.district, cell: ({ row: r }) => tx.area(r.original.districtName) },
+      { id: 'ward', header: t.col.ward, accessorKey: 'wardName' },
+      { id: 'reportedAt', header: t.col.reportedAt, cell: ({ row: r }) => <span className="whitespace-nowrap text-xs">{fmtTime(r.original.reportedAt)}</span> },
+      { id: 'reporter', header: t.col.reporter, accessorKey: 'reportedBy' },
+      { id: 'source', header: t.col.source, cell: ({ row: r }) => (r.original.source === 'alarm' ? t.sourceAlarm : t.sourceManual) },
+      { id: 'category', header: t.col.category, cell: ({ row: r }) => tx.category(r.original.category) },
+      { id: 'content', header: t.col.content, cell: ({ row: r }) => <span className="line-clamp-2 max-w-xs">{r.original.content}</span> },
+      { id: 'status', header: t.col.status, cell: ({ row: r }) => <Badge tone={INCIDENT_TONE[r.original.status]}>{L.incidentStatus[r.original.status]}</Badge> },
+      { id: 'assignee', header: t.col.assignee, cell: ({ row: r }) => r.original.assignee ?? '—' },
+      { id: 'deadline', header: t.col.deadline, cell: ({ row: r }) => <span className={incidentOverdue(r.original) ? 'text-st-offline' : ''}>{fmtTime(r.original.deadline, 'DD/MM/YYYY HH:mm')}</span> },
+      { id: 'resolvedAt', header: t.col.resolvedAt, cell: ({ row: r }) => <span className="text-xs">{fmtTime(r.original.resolvedAt)}</span> },
+      { id: 'resolution', header: t.col.resolution, cell: ({ row: r }) => r.original.resolution ?? '—' },
     ],
-    [],
+    [t, L, tx],
   );
 
   return (
     <div className="flex h-full">
       {showTree && (
         <aside className="w-60 shrink-0 overflow-auto border-r bg-panel p-2">
-          <div className="mb-1 px-2 text-xs font-semibold uppercase text-subtle">Khu vực</div>
+          <div className="mb-1 px-2 text-xs font-semibold uppercase text-subtle">{t.areas}</div>
           <button className={`block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted ${!district ? 'bg-primary/10 font-medium' : ''}`} onClick={() => setParam('district', '')}>
-            Tất cả
+            {t.allAreas}
           </button>
           {districts.map((d) => (
             <button key={d.id} className={`block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted ${district === d.name ? 'bg-primary/10 font-medium' : ''}`} onClick={() => setParam('district', d.name)}>
@@ -96,10 +105,10 @@ export function IncidentsPage() {
       )}
       <div className="min-w-0 flex-1 overflow-auto p-4">
         <PageHeader
-          title="Quản lý sự cố"
+          title={t.title}
           actions={
             <>
-              <Checkbox label="Hiện cây phân cấp" checked={showTree} onChange={setShowTree} />
+              <Checkbox label={t.showTree} checked={showTree} onChange={setShowTree} />
               <Button
                 variant="outline"
                 onClick={async () => {
@@ -107,14 +116,14 @@ export function IncidentsPage() {
                   const { page: _p, size: _s, ...filters } = query;
                   const ok = await api.exportIncidents(filters).catch(() => false);
                   if (!ok)
-                    downloadCsv('su-co.csv', ['Mã', 'Tủ', 'Quận', 'Phường', 'Ghi nhận', 'Người báo', 'Phân loại', 'Nội dung', 'Trạng thái', 'Người xử lý', 'Hạn'], (data?.items ?? []).map((i) => [i.code, i.cabinetName, i.districtName, i.wardName, fmtTime(i.reportedAt), i.reportedBy, i.category, i.content, INCIDENT_STATUS_LABELS[i.status], i.assignee, fmtTime(i.deadline)]));
+                    downloadCsv(t.csvFile, [t.csv.code, t.csv.cabinet, t.csv.district, t.csv.ward, t.csv.reported, t.csv.reporter, t.csv.category, t.csv.content, t.csv.status, t.csv.assignee, t.csv.deadline], (data?.items ?? []).map((i) => [i.code, i.cabinetName, tx.area(i.districtName), i.wardName, fmtTime(i.reportedAt), i.reportedBy, tx.category(i.category), i.content, L.incidentStatus[i.status], i.assignee, fmtTime(i.deadline)]));
                 }}
               >
-                <Download className="h-4 w-4" /> Xuất Excel
+                <Download className="h-4 w-4" /> {t.export}
               </Button>
               {canManage && (
                 <Button onClick={() => setCreateOpen(true)}>
-                  <Plus className="h-4 w-4" /> Tạo sự cố
+                  <Plus className="h-4 w-4" /> {t.create}
                 </Button>
               )}
             </>
@@ -122,8 +131,8 @@ export function IncidentsPage() {
         />
         <div className="mb-3 flex flex-wrap items-center gap-3">
           {FILTERS.map((f) => (
-            <label key={f.q} className="flex items-center gap-1.5 text-sm">
-              <input type="radio" checked={q === f.q} onChange={() => setParam('q', f.q)} /> {f.label}
+            <label key={f} className="flex items-center gap-1.5 text-sm">
+              <input type="radio" checked={q === f} onChange={() => setParam('q', f)} /> {t.filter[f]}
             </label>
           ))}
         </div>
@@ -140,9 +149,9 @@ export function IncidentsPage() {
           initialHidden={{ resolvedAt: false, resolution: false, source: false }}
           toolbar={
             <>
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" aria-label="Từ ngày" />
+              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" aria-label={t.from} />
               <span className="text-subtle">→</span>
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" aria-label="Đến ngày" />
+              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" aria-label={t.to} />
             </>
           }
         />
@@ -155,16 +164,19 @@ export function IncidentsPage() {
 function CreateIncidentModal({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const qc = useQueryClient();
   const nav = useNavigate();
+  const t = useDict(INCIDENTS).create;
+  const c = useDict(COMMON);
+  const tx = useIncidentText();
   const [search, setSearch] = useState('');
   const [cabinetId, setCabinetId] = useState('');
-  const [category, setCategory] = useState('Đèn tắt');
+  const [category, setCategory] = useState<string>(INCIDENT_CATEGORIES[0]); // stored value (Vietnamese)
   const [content, setContent] = useState('');
   const found = useQuery({ queryKey: ['search', search], queryFn: () => api.search(search), enabled: search.length >= 2 });
   const create = useMutation({
     mutationFn: () => api.createIncident({ cabinetId, category, content }),
-    onError: (e) => toast(e instanceof ApiError ? e.message : 'Không tạo được sự cố', 'error'),
+    onError: (e) => toast(e instanceof ApiError ? e.message : t.failed, 'error'),
     onSuccess: (inc) => {
-      toast(`Đã tạo sự cố ${inc.code}`, 'success');
+      toast(fill(t.created, { code: inc.code }), 'success');
       qc.invalidateQueries({ queryKey: ['incidents'] });
       onOpenChange(false);
       nav(`/incidents/${inc.id}`);
@@ -174,30 +186,30 @@ function CreateIncidentModal({ open, onOpenChange }: { open: boolean; onOpenChan
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title="Tạo sự cố"
+      title={t.title}
       footer={
         <>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Hủy</Button>
-          <Button disabled={!cabinetId || !content} loading={create.isPending} onClick={() => create.mutate()}>Tạo</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{c.cancel}</Button>
+          <Button disabled={!cabinetId || !content} loading={create.isPending} onClick={() => create.mutate()}>{c.create}</Button>
         </>
       }
     >
       <div className="space-y-3">
-        <Field label="Tủ liên quan">
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Gõ mã hoặc tên tủ…" />
+        <Field label={t.cabinet}>
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t.cabinetPlaceholder} />
         </Field>
         {found.data && (
           <Select value={cabinetId} onChange={(e) => setCabinetId(e.target.value)} className="w-full">
-            <option value="">— chọn tủ —</option>
-            {found.data.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}
+            <option value="">{t.pickCabinet}</option>
+            {found.data.map((x) => <option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}
           </Select>
         )}
-        <Field label="Phân loại">
+        <Field label={t.category}>
           <Select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full">
-            {INCIDENT_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+            {INCIDENT_CATEGORIES.map((x) => <option key={x} value={x}>{tx.category(x)}</option>)}
           </Select>
         </Field>
-        <Field label="Nội dung">
+        <Field label={t.content}>
           <Textarea value={content} onChange={(e) => setContent(e.target.value)} />
         </Field>
       </div>

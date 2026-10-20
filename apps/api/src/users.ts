@@ -5,7 +5,7 @@ import { Body, Controller, Get, HttpCode, Inject, Injectable, Module, Param, Pat
 import { hash } from '@node-rs/argon2';
 import { z } from 'zod';
 import type { RoleKey, User } from '@citylight/shared';
-import { ROLE_LABELS, canManageRole, isLang, roleRequires2fa, roleSeesAll } from '@citylight/shared';
+import { LABELS, ROLE_LABELS, canManageRole, isLang, roleRequires2fa, roleSeesAll } from '@citylight/shared';
 import { AuthModule, AuthService, RequirePerm, RequireReauth, require2faEnforced, type AuthedRequest, type SessionUser } from './auth';
 import { ApiError } from './errors';
 import { SQL, type Sql } from './infra';
@@ -19,8 +19,11 @@ const ROLES = ['admin', 'manager', 'operator', 'viewer', 'maintenance'] as const
 function assertCanManage(actor: SessionUser, target: RoleKey, what: 'account' | 'role') {
   if (canManageRole(actor.role, target)) return;
   throw what === 'role'
-    ? new ApiError(403, 'role_forbidden', `Không được cấp vai trò "${ROLE_LABELS[target]}"`)
-    : new ApiError(403, 'user_forbidden', `Không được thay đổi tài khoản vai trò "${ROLE_LABELS[target]}"`);
+    ? new ApiError(403, 'role_forbidden', `Không được cấp vai trò "${ROLE_LABELS[target]}"`, { role: ROLE_LABELS[target], roleEn: LABELS.en.role[target] })
+    : new ApiError(403, 'user_forbidden', `Không được thay đổi tài khoản vai trò "${ROLE_LABELS[target]}"`, {
+        role: ROLE_LABELS[target],
+        roleEn: LABELS.en.role[target],
+      });
 }
 const TEMP_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
 const tempPassword = () => Array.from({ length: 14 }, () => TEMP_ALPHABET[randomInt(TEMP_ALPHABET.length)]).join('');
@@ -107,7 +110,8 @@ export class UsersService {
     });
     const summary = `${b.role}${b.scopeAll ? ', toàn hệ thống' : `, ${b.scopeAreaIds.length} khu vực`}`;
     await this.auth.log(admin, 'Tạo người dùng', ip, { type: 'user', id, name: b.email }, summary);
-    await this.auth.securityAlert('user_created', { id, email: b.email }, { ip, by: admin.email, detail: summary });
+    // detail = the role key (language-neutral; Telegram readers may use English), the area scope is in the log
+    await this.auth.securityAlert('user_created', { id, email: b.email }, { ip, by: admin.email, detail: b.role });
     return { user: await this.one(admin.organizationId, id), tempPassword: pw };
   }
 
@@ -157,7 +161,7 @@ export class UsersService {
 
   async resetPassword(admin: SessionUser, id: string, ip?: string) {
     const u = await this.one(admin.organizationId, z.string().uuid().parse(id));
-    if (u.id === admin.id) throw new ApiError(409, 'self_change', 'Dùng trang Tài khoản để đổi mật khẩu của chính mình');
+    if (u.id === admin.id) throw new ApiError(409, 'self_password_reset', 'Dùng trang Tài khoản để đổi mật khẩu của chính mình');
     assertCanManage(admin, u.role, 'account');
     const pw = tempPassword();
     await this.sql`UPDATE users SET password_hash = ${await hash(pw)}, password_change_required = true, failed_logins = 0, locked_until = NULL WHERE id = ${u.id}`;
@@ -177,7 +181,7 @@ export class UsersService {
 
   async reset2fa(admin: SessionUser, id: string, ip?: string) {
     const u = await this.one(admin.organizationId, z.string().uuid().parse(id));
-    if (u.id === admin.id) throw new ApiError(409, 'self_change', 'Dùng trang Tài khoản để quản lý 2FA của chính mình');
+    if (u.id === admin.id) throw new ApiError(409, 'self_2fa_reset', 'Dùng trang Tài khoản để quản lý 2FA của chính mình');
     assertCanManage(admin, u.role, 'account');
     await this.auth.clear2fa(u.id);
     await this.auth.revokeUser(u.id);

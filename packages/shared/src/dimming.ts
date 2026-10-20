@@ -1,6 +1,7 @@
 // Dimming profiles (spec S11, M9): validation and savings estimate, shared by the API and the web
 // editor. Profiles are stored and edited now; sending them waits for firmware / hardware ("dimming").
 import type { DimmingSegment, LampGroup } from './domain';
+import { defineDict, type Lang } from './i18n';
 
 export const MAX_SEGMENTS = 5;
 /** minutes from 00:00 of the switch-on day; the night runs past midnight, up to 48 h */
@@ -16,18 +17,41 @@ export function defaultDimmingSegments(): DimmingSegment[] {
   ];
 }
 
+/** Messages of validateDimming. */
+export const DIMMING_ERROR_TEXT = defineDict(
+  {
+    count: (max: number) => `Cần từ 1 đến ${max} thời đoạn`,
+    segment: (k: number) => `Thời đoạn ${k}`,
+    integer: 'giá trị phải là số nguyên',
+    range: 'ngoài khoảng 00:00 hôm nay – 24:00 hôm sau',
+    order: 'giờ kết thúc phải sau giờ bắt đầu',
+    level: 'mức phải từ 0 đến 100 %',
+    gap: (prev: number) => `phải bắt đầu đúng lúc thời đoạn ${prev} kết thúc`,
+  },
+  {
+    count: (max: number) => `A profile needs 1 to ${max} periods`,
+    segment: (k: number) => `Period ${k}`,
+    integer: 'values must be whole numbers',
+    range: 'outside 00:00 today – 24:00 the next day',
+    order: 'end time must be after the start time',
+    level: 'level must be between 0 and 100 %',
+    gap: (prev: number) => `must start exactly when period ${prev} ends`,
+  },
+);
+
 /** Problems of a profile, one message per segment (empty = valid). */
-export function validateDimming(segments: DimmingSegment[]): string[] {
+export function validateDimming(segments: DimmingSegment[], lang: Lang = 'vi'): string[] {
+  const T = DIMMING_ERROR_TEXT[lang];
   const out: string[] = [];
-  if (!segments.length || segments.length > MAX_SEGMENTS) out.push(`Cần từ 1 đến ${MAX_SEGMENTS} thời đoạn`);
+  if (!segments.length || segments.length > MAX_SEGMENTS) out.push(T.count(MAX_SEGMENTS));
   segments.forEach((s, i) => {
-    const n = `Thời đoạn ${i + 1}`;
-    if (![s.startMin, s.endMin, s.levelPct].every((v) => Number.isInteger(v))) out.push(`${n}: giá trị phải là số nguyên`);
-    if (s.startMin < 0 || s.endMin > MAX_MINUTE) out.push(`${n}: ngoài khoảng 00:00 hôm nay – 24:00 hôm sau`);
-    if (s.endMin <= s.startMin) out.push(`${n}: giờ kết thúc phải sau giờ bắt đầu`);
-    if (s.levelPct < 0 || s.levelPct > 100) out.push(`${n}: mức phải từ 0 đến 100 %`);
+    const n = T.segment(i + 1);
+    if (![s.startMin, s.endMin, s.levelPct].every((v) => Number.isInteger(v))) out.push(`${n}: ${T.integer}`);
+    if (s.startMin < 0 || s.endMin > MAX_MINUTE) out.push(`${n}: ${T.range}`);
+    if (s.endMin <= s.startMin) out.push(`${n}: ${T.order}`);
+    if (s.levelPct < 0 || s.levelPct > 100) out.push(`${n}: ${T.level}`);
     const prev = segments[i - 1];
-    if (prev && prev.endMin !== s.startMin) out.push(`${n}: phải bắt đầu đúng lúc thời đoạn ${i} kết thúc`);
+    if (prev && prev.endMin !== s.startMin) out.push(`${n}: ${T.gap(i)}`);
   });
   return out;
 }

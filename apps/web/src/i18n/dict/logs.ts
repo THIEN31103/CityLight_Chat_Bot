@@ -1,0 +1,273 @@
+// Activity log and sync log pages.
+import { defineDict, plural, type CommandBatch, type Lang } from '@citylight/shared';
+
+export const ACTIVITY = defineDict(
+  {
+    title: 'Nhật ký thao tác',
+    subtitle: 'Ghi tự động mọi API ghi và mọi lệnh thiết bị',
+    col: {
+      id: 'Mã',
+      ts: 'Thời điểm',
+      user: 'Người thực hiện',
+      action: 'Hành động',
+      target: 'Đối tượng',
+      oldValue: 'Giá trị cũ',
+      newValue: 'Giá trị mới',
+      ip: 'IP',
+    },
+    csv: {
+      file: 'nhat-ky-thao-tac.csv',
+      id: 'Mã',
+      ts: 'Thời điểm',
+      user: 'Người',
+      action: 'Hành động',
+      target: 'Đối tượng',
+      oldValue: 'Cũ',
+      newValue: 'Mới',
+      ip: 'IP',
+    },
+    export: 'Xuất Excel',
+    allUsers: 'Mọi người dùng',
+    search: 'Tìm tủ / hành động…',
+    from: 'Từ ngày',
+    to: 'Đến ngày',
+  },
+  {
+    title: 'Activity log',
+    subtitle: 'Every write API call and every device command is recorded automatically',
+    col: {
+      id: 'ID',
+      ts: 'Time',
+      user: 'User',
+      action: 'Action',
+      target: 'Target',
+      oldValue: 'Old value',
+      newValue: 'New value',
+      ip: 'IP',
+    },
+    csv: {
+      file: 'activity-log.csv',
+      id: 'ID',
+      ts: 'Time',
+      user: 'User',
+      action: 'Action',
+      target: 'Target',
+      oldValue: 'Old',
+      newValue: 'New',
+      ip: 'IP',
+    },
+    export: 'Export to Excel',
+    allUsers: 'All users',
+    search: 'Search cabinet / action…',
+    from: 'From date',
+    to: 'To date',
+  },
+);
+
+export const SYNC_LOG = defineDict(
+  {
+    title: 'Nhật ký đồng bộ theo vùng',
+    allZones: 'Tất cả vùng',
+    emptyBefore: 'Chưa có lần đồng bộ nào trong phiên này. Tạo ở',
+    schedules: 'Lịch chiếu sáng',
+    or: 'hoặc',
+    batches: 'Đồng bộ hàng loạt',
+    cabinets: (n: number) => `${n} tủ`,
+    result: { ok: 'Thành công', pending: 'Đang chờ', offline: 'Mất kết nối', failed: 'Lỗi' },
+    // same words as KIND_LABEL in pages/BatchesPage.tsx
+    kind: { schedule: 'Lịch chiếu sáng', dimming: 'Tiết giảm', time: 'Đồng bộ giờ' } as Record<CommandBatch['kind'], string>,
+  },
+  {
+    title: 'Sync log by zone',
+    allZones: 'All zones',
+    emptyBefore: 'No sync has run in this session yet. Start one from',
+    schedules: 'Lighting schedules',
+    or: 'or',
+    batches: 'Bulk sync',
+    cabinets: (n: number) => plural(n, 'cabinet', 'cabinets'),
+    result: { ok: 'Succeeded', pending: 'Pending', offline: 'Offline', failed: 'Failed' },
+    kind: { schedule: 'Lighting schedule', dimming: 'Dimming', time: 'Time sync' },
+  },
+);
+
+/*
+ * activity_logs.action is Vietnamese text written by the server (apps/api/src/*.ts: auth.log / this.log / INSERT INTO
+ * activity_logs; apps/workers/src: command-worker, ingest) and by the mock (apps/web/src/mocks: addLog). Keyed by
+ * that exact text; an action missing here is shown as stored. A new action on the server goes into both maps
+ * (logs.test.ts checks they have the same keys).
+ */
+const ACTIONS_VI: Record<string, string> = {
+  // auth.ts
+  'Đăng nhập': 'Đăng nhập',
+  'Đăng nhập bằng mã khôi phục 2FA': 'Đăng nhập bằng mã khôi phục 2FA',
+  'Xác thực lại 2FA': 'Xác thực lại 2FA',
+  'Bật xác thực 2 lớp': 'Bật xác thực 2 lớp',
+  'Tắt xác thực 2 lớp': 'Tắt xác thực 2 lớp',
+  'Đổi mật khẩu': 'Đổi mật khẩu',
+  // users.ts
+  'Tạo người dùng': 'Tạo người dùng',
+  'Sửa người dùng': 'Sửa người dùng',
+  'Đặt lại mật khẩu': 'Đặt lại mật khẩu',
+  'Mở khóa đăng nhập': 'Mở khóa đăng nhập',
+  'Đặt lại 2FA': 'Đặt lại 2FA',
+  // admin.ts
+  'Thêm khu vực': 'Thêm khu vực',
+  'Đổi tên khu vực': 'Đổi tên khu vực',
+  'Xóa khu vực': 'Xóa khu vực',
+  'Thêm khu quản lý': 'Thêm khu quản lý',
+  'Đổi tên khu quản lý': 'Đổi tên khu quản lý',
+  'Xóa khu quản lý': 'Xóa khu quản lý',
+  'Thêm vùng': 'Thêm vùng',
+  'Sửa vùng': 'Sửa vùng',
+  'Xóa vùng': 'Xóa vùng',
+  'Gán tủ vào vùng': 'Gán tủ vào vùng',
+  'Đăng ký tủ': 'Đăng ký tủ',
+  'Sửa thông tin tủ': 'Sửa thông tin tủ',
+  'Cập nhật vị trí tủ theo GPS': 'Cập nhật vị trí tủ theo GPS',
+  'Đổi IMEI tủ': 'Đổi IMEI tủ',
+  'Học lại IMEI tủ': 'Học lại IMEI tủ',
+  'Dùng lại tủ': 'Dùng lại tủ',
+  'Ngừng sử dụng tủ': 'Ngừng sử dụng tủ',
+  'Cấu hình hệ thống': 'Cấu hình hệ thống',
+  // alarm-config.ts, alarms.ts
+  'Cài đặt ngưỡng': 'Cài đặt ngưỡng',
+  'Xác nhận cảnh báo': 'Xác nhận cảnh báo',
+  // commands.ts, workers/command-worker.ts, workers/ingest.ts
+  'Gửi lệnh': 'Gửi lệnh',
+  'Hủy lệnh': 'Hủy lệnh',
+  'Kết quả lệnh': 'Kết quả lệnh',
+  'Ghi nhận IMEI tủ (frame đầu tiên)': 'Ghi nhận IMEI tủ (frame đầu tiên)',
+  // dimming.ts
+  'Lưu hồ sơ tiết giảm': 'Lưu hồ sơ tiết giảm',
+  'Bỏ hồ sơ tiết giảm riêng': 'Bỏ hồ sơ tiết giảm riêng',
+  // gis.ts
+  'Chỉnh sửa bản đồ': 'Chỉnh sửa bản đồ',
+  'Sinh trụ hàng loạt': 'Sinh trụ hàng loạt',
+  'Nhập dữ liệu trụ': 'Nhập dữ liệu trụ',
+  // incidents.ts (+ INCIDENT_TRANSITIONS labels in packages/shared/src/incidents.ts)
+  'Tạo sự cố': 'Tạo sự cố',
+  'Thêm ảnh sự cố': 'Thêm ảnh sự cố',
+  'Xóa ảnh sự cố': 'Xóa ảnh sự cố',
+  'Giao xử lý': 'Giao xử lý',
+  'Chưa cần xử lý': 'Chưa cần xử lý',
+  'Báo đã xử lý': 'Báo đã xử lý',
+  'Đóng sự cố': 'Đóng sự cố',
+  'Yêu cầu xử lý lại': 'Yêu cầu xử lý lại',
+  'Mở lại': 'Mở lại',
+  // schedules.ts
+  'Lưu lịch vùng': 'Lưu lịch vùng',
+  'Bỏ lịch riêng của tủ': 'Bỏ lịch riêng của tủ',
+  'Đồng bộ lịch hàng loạt': 'Đồng bộ lịch hàng loạt',
+  'Đồng bộ giờ hàng loạt': 'Đồng bộ giờ hàng loạt',
+  'Gửi lại tủ lỗi (hàng loạt)': 'Gửi lại tủ lỗi (hàng loạt)',
+  // mock only (apps/web/src/mocks)
+  'Cập nhật vị trí tủ': 'Cập nhật vị trí tủ',
+  'Cập nhật thông tin tủ': 'Cập nhật thông tin tủ',
+  'Cập nhật người dùng': 'Cập nhật người dùng',
+  'Sửa ngưỡng cảnh báo': 'Sửa ngưỡng cảnh báo',
+  'Sửa ngưỡng': 'Sửa ngưỡng',
+  'Đã xử lý': 'Đã xử lý',
+  'Đồng bộ hàng loạt (schedule)': 'Đồng bộ hàng loạt (schedule)',
+  'Đồng bộ hàng loạt (dimming)': 'Đồng bộ hàng loạt (dimming)',
+  'Đồng bộ hàng loạt (time)': 'Đồng bộ hàng loạt (time)',
+  'Bật nhánh 1': 'Bật nhánh 1',
+  'Tắt nhánh 2': 'Tắt nhánh 2',
+  'Đặt lịch': 'Đặt lịch',
+  'Đồng bộ giờ': 'Đồng bộ giờ',
+  // incident timeline (incident_events: apps/api/src/incidents.ts, apps/workers/src/scheduler.ts)
+  'Tạo từ cảnh báo': 'Tạo từ cảnh báo',
+  'Thêm ảnh hiện trường': 'Thêm ảnh hiện trường',
+  'Thêm ảnh sau xử lý': 'Thêm ảnh sau xử lý',
+  'Quá hạn xử lý': 'Quá hạn xử lý',
+  'Hệ thống': 'Hệ thống',
+  'Đã nhắc người xử lý': 'Đã nhắc người xử lý',
+};
+
+const ACTIONS_EN: Record<string, string> = {
+  // auth.ts
+  'Đăng nhập': 'Sign in',
+  'Đăng nhập bằng mã khôi phục 2FA': 'Sign in with a 2FA recovery code',
+  'Xác thực lại 2FA': 'Re-authenticate with 2FA',
+  'Bật xác thực 2 lớp': 'Turn on two-factor authentication',
+  'Tắt xác thực 2 lớp': 'Turn off two-factor authentication',
+  'Đổi mật khẩu': 'Change password',
+  // users.ts
+  'Tạo người dùng': 'Create user',
+  'Sửa người dùng': 'Edit user',
+  'Đặt lại mật khẩu': 'Reset password',
+  'Mở khóa đăng nhập': 'Unlock sign-in',
+  'Đặt lại 2FA': 'Reset 2FA',
+  // admin.ts
+  'Thêm khu vực': 'Add area',
+  'Đổi tên khu vực': 'Rename area',
+  'Xóa khu vực': 'Delete area',
+  'Thêm khu quản lý': 'Add management unit',
+  'Đổi tên khu quản lý': 'Rename management unit',
+  'Xóa khu quản lý': 'Delete management unit',
+  'Thêm vùng': 'Add zone',
+  'Sửa vùng': 'Edit zone',
+  'Xóa vùng': 'Delete zone',
+  'Gán tủ vào vùng': 'Assign cabinets to zone',
+  'Đăng ký tủ': 'Register cabinet',
+  'Sửa thông tin tủ': 'Edit cabinet details',
+  'Cập nhật vị trí tủ theo GPS': 'Update cabinet position from GPS',
+  'Đổi IMEI tủ': 'Change cabinet IMEI',
+  'Học lại IMEI tủ': 'Relearn cabinet IMEI',
+  'Dùng lại tủ': 'Put cabinet back in service',
+  'Ngừng sử dụng tủ': 'Decommission cabinet',
+  'Cấu hình hệ thống': 'System settings',
+  // alarm-config.ts, alarms.ts
+  'Cài đặt ngưỡng': 'Set thresholds',
+  'Xác nhận cảnh báo': 'Acknowledge alarm',
+  // commands.ts, workers/command-worker.ts, workers/ingest.ts
+  'Gửi lệnh': 'Send command',
+  'Hủy lệnh': 'Cancel command',
+  'Kết quả lệnh': 'Command result',
+  'Ghi nhận IMEI tủ (frame đầu tiên)': 'Record cabinet IMEI (first frame)',
+  // dimming.ts
+  'Lưu hồ sơ tiết giảm': 'Save dimming profile',
+  'Bỏ hồ sơ tiết giảm riêng': 'Remove own dimming profile',
+  // gis.ts
+  'Chỉnh sửa bản đồ': 'Edit map',
+  'Sinh trụ hàng loạt': 'Generate poles in bulk',
+  'Nhập dữ liệu trụ': 'Import pole data',
+  // incidents.ts (+ INCIDENT_TRANSITIONS labels in packages/shared/src/incidents.ts)
+  'Tạo sự cố': 'Create incident',
+  'Thêm ảnh sự cố': 'Add incident photo',
+  'Xóa ảnh sự cố': 'Delete incident photo',
+  'Giao xử lý': 'Assign',
+  'Chưa cần xử lý': 'Defer',
+  'Báo đã xử lý': 'Report resolved',
+  'Đóng sự cố': 'Close incident',
+  'Yêu cầu xử lý lại': 'Reassign',
+  'Mở lại': 'Reopen',
+  // schedules.ts
+  'Lưu lịch vùng': 'Save zone schedule',
+  'Bỏ lịch riêng của tủ': 'Remove cabinet-specific schedule',
+  'Đồng bộ lịch hàng loạt': 'Bulk schedule sync',
+  'Đồng bộ giờ hàng loạt': 'Bulk time sync',
+  'Gửi lại tủ lỗi (hàng loạt)': 'Resend to failed cabinets (bulk)',
+  // mock only (apps/web/src/mocks)
+  'Cập nhật vị trí tủ': 'Update cabinet position',
+  'Cập nhật thông tin tủ': 'Update cabinet details',
+  'Cập nhật người dùng': 'Update user',
+  'Sửa ngưỡng cảnh báo': 'Edit alarm thresholds',
+  'Sửa ngưỡng': 'Edit thresholds',
+  'Đã xử lý': 'Resolved',
+  'Đồng bộ hàng loạt (schedule)': 'Bulk sync (schedule)',
+  'Đồng bộ hàng loạt (dimming)': 'Bulk sync (dimming)',
+  'Đồng bộ hàng loạt (time)': 'Bulk sync (time)',
+  'Bật nhánh 1': 'Branch 1 on',
+  'Tắt nhánh 2': 'Branch 2 off',
+  'Đặt lịch': 'Set schedule',
+  'Đồng bộ giờ': 'Time sync',
+  'Tạo từ cảnh báo': 'Created from an alarm',
+  'Thêm ảnh hiện trường': 'Added site photos',
+  'Thêm ảnh sau xử lý': 'Added after-repair photos',
+  'Quá hạn xử lý': 'Past the deadline',
+  'Hệ thống': 'System',
+  'Đã nhắc người xử lý': 'Assignee reminded',
+};
+
+/** Stored action text -> display text, per language (read with useDict / dictNow like any dictionary). */
+export const LOG_ACTIONS: Record<Lang, Record<string, string>> = { vi: ACTIONS_VI, en: ACTIONS_EN };

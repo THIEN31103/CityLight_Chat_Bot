@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
 import type { AlarmSeverity, Thresholds } from '@citylight/shared';
-import { ERROR_CATALOG, RAISED_ALARM_TYPES, defaultThresholds } from '@citylight/shared';
+import { RAISED_ALARM_TYPES, defaultThresholds, errorCatalog } from '@citylight/shared';
 import { CONFIG_CHANNEL, NOTIFY_CHANGED_CHANNEL, TG_BOT_KEY, TG_LINK_PREFIX, TG_LINK_TTL_S } from '@citylight/db/notify';
 import { RequirePerm, type AuthedRequest } from './auth';
 import { CabinetsModule, CabinetsService } from './cabinets';
@@ -56,9 +56,9 @@ export class AlarmConfigController {
   /** Read-only rule list (admin page); "enabled" = the server raises this type today. */
   @Get('alarm-rules')
   @RequirePerm('alarm.view')
-  rules() {
+  rules(@Req() r: AuthedRequest) {
     const d = defaultThresholds();
-    return ERROR_CATALOG.map((e) => ({
+    return errorCatalog(r.user!.lang).map((e) => ({
       type: e.type, code: e.code, title: e.title, severity: e.severity, condition: e.source,
       enabled: RAISED_ALARM_TYPES.includes(e.type),
       thresholdDefault:

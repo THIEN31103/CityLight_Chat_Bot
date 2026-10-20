@@ -1,17 +1,21 @@
 import type { StyleSpecification } from 'maplibre-gl';
 import type { CabinetStatus } from '@citylight/shared';
+import { dictNow } from '@/i18n';
+import { MAP } from '@/i18n/dict/map';
 
 // Basemap registry (spec: street / satellite / city tile server). All entries work without an API key in dev.
 // Production: self-host VersaTiles/OpenFreeMap tiles, or buy a plan (CARTO / Stadia / MapTiler) — see README.
 export type BasemapId = 'auto' | 'voyager' | 'colorful' | 'liberty' | 'positron' | 'darkmatter' | 'eclipse' | 'satellite' | 'hybrid' | 'custom';
 
+/** Name: MAP.basemap[id]; group / note labels: MAP.basemapGroup / MAP.basemapNote. */
 export interface BasemapDef {
   id: Exclude<BasemapId, 'auto'>;
-  label: string;
-  group: 'Sáng' | 'Tối' | 'Ảnh vệ tinh' | 'Khác';
+  group: 'light' | 'dark' | 'satellite' | 'other';
   style: () => string | StyleSpecification;
-  note?: string;
+  note?: 'carto' | 'open';
 }
+
+export const BASEMAP_GROUPS: readonly BasemapDef['group'][] = ['light', 'dark', 'satellite', 'other'];
 
 const GLYPHS = 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf';
 export const FONT_REGULAR = ['Noto Sans Regular'];
@@ -33,17 +37,16 @@ function rasterStyle(layers: { url: string; attribution?: string }[]): StyleSpec
 }
 
 export const BASEMAPS: BasemapDef[] = [
-  { id: 'voyager', label: 'Voyager (CARTO)', group: 'Sáng', style: () => 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json', note: 'Dùng thương mại cần gói CARTO' },
-  { id: 'colorful', label: 'Colorful (VersaTiles)', group: 'Sáng', style: () => 'https://tiles.versatiles.org/assets/styles/colorful/style.json', note: 'Mở, tự host được' },
-  { id: 'liberty', label: 'Liberty (OpenFreeMap)', group: 'Sáng', style: () => 'https://tiles.openfreemap.org/styles/liberty', note: 'Mở, tự host được' },
-  { id: 'positron', label: 'Positron nhạt (OpenFreeMap)', group: 'Sáng', style: () => 'https://tiles.openfreemap.org/styles/positron' },
-  { id: 'darkmatter', label: 'Dark Matter (CARTO)', group: 'Tối', style: () => 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json', note: 'Dùng thương mại cần gói CARTO' },
-  { id: 'eclipse', label: 'Eclipse (VersaTiles)', group: 'Tối', style: () => 'https://tiles.versatiles.org/assets/styles/eclipse/style.json', note: 'Mở, tự host được' },
-  { id: 'satellite', label: 'Vệ tinh', group: 'Ảnh vệ tinh', style: () => rasterStyle([{ url: `${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`, attribution: 'Imagery © Esri' }]) },
+  { id: 'voyager', group: 'light', style: () => 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json', note: 'carto' },
+  { id: 'colorful', group: 'light', style: () => 'https://tiles.versatiles.org/assets/styles/colorful/style.json', note: 'open' },
+  { id: 'liberty', group: 'light', style: () => 'https://tiles.openfreemap.org/styles/liberty', note: 'open' },
+  { id: 'positron', group: 'light', style: () => 'https://tiles.openfreemap.org/styles/positron' },
+  { id: 'darkmatter', group: 'dark', style: () => 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json', note: 'carto' },
+  { id: 'eclipse', group: 'dark', style: () => 'https://tiles.versatiles.org/assets/styles/eclipse/style.json', note: 'open' },
+  { id: 'satellite', group: 'satellite', style: () => rasterStyle([{ url: `${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`, attribution: 'Imagery © Esri' }]) },
   {
     id: 'hybrid',
-    label: 'Vệ tinh + tên đường',
-    group: 'Ảnh vệ tinh',
+    group: 'satellite',
     style: () =>
       rasterStyle([
         { url: `${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`, attribution: 'Imagery © Esri' },
@@ -53,9 +56,9 @@ export const BASEMAPS: BasemapDef[] = [
   },
   {
     id: 'custom',
-    label: 'Bản đồ nền tùy chỉnh',
-    group: 'Khác',
-    style: () => rasterStyle([{ url: import.meta.env.VITE_CUSTOM_TILES || `${ESRI}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`, attribution: 'Bản đồ nền tùy chỉnh' }]),
+    group: 'other',
+    // attribution in the language active when the style is (re)loaded
+    style: () => rasterStyle([{ url: import.meta.env.VITE_CUSTOM_TILES || `${ESRI}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`, attribution: dictNow(MAP).overlay.customAttribution }]),
   },
 ];
 

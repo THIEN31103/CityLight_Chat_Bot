@@ -1,5 +1,7 @@
 import type { CabinetState } from '@citylight/shared';
 import { cn } from '@/lib/utils';
+import { fill, useDict } from '@/i18n';
+import { CABINET } from '@/i18n/dict/cabinet';
 
 /**
  * Pictorial view of the cabinet: the cabinet front (door, handle, indicator window) and its two
@@ -45,11 +47,13 @@ function StreetLight({ x, ground, on }: { x: number; ground: number; on: Tri }) 
   );
 }
 
-function stateText(on: Tri) {
-  return on === null ? 'Không rõ' : on ? 'Đang sáng' : 'Tắt';
+function stateText(on: Tri, t: { unknown: string; on: string; off: string }) {
+  return on === null ? t.unknown : on ? t.on : t.off;
 }
 
 export function CabinetDiagram({ state: s, code }: { state: CabinetState; code: string }) {
+  const dict = useDict(CABINET);
+  const t = dict.diagram;
   const online = s.online;
   const supply: Tri = !online ? null : s.pmOnline === false ? null : (s.vL1 ?? 0) > 50 || (s.vL2 ?? 0) > 50 || (s.vL3 ?? 0) > 50;
   const branches: Tri[] = [s.branch1On, s.branch2On];
@@ -57,7 +61,7 @@ export function CabinetDiagram({ state: s, code }: { state: CabinetState; code: 
 
   return (
     <div className="relative">
-      <svg viewBox={`0 0 ${W} 300`} className={cn('h-auto w-full select-none', !online && 'opacity-60 grayscale')} role="img" aria-label={`Tủ ${code} và 2 nhánh đèn`}>
+      <svg viewBox={`0 0 ${W} 300`} className={cn('h-auto w-full select-none', !online && 'opacity-60 grayscale')} role="img" aria-label={fill(t.ariaLabel, { code })}>
         <defs>
           <linearGradient id="cab-body" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0" stopColor="#94a3b8" />
@@ -88,12 +92,12 @@ export function CabinetDiagram({ state: s, code }: { state: CabinetState; code: 
               <path d={d} className={cn('fill-none', cable, on && 'diagram-flow')} strokeWidth={4} strokeLinecap="round" strokeDasharray={on === null ? '6 6' : undefined} />
               <g transform={`translate(282 ${l.ground - 40})`}>
                 <text x={0} y={0} className="fill-fg" style={{ fontSize: 15, fontWeight: 700 }}>
-                  Nhánh {l.n}
+                  {t.branch(l.n)}
                 </text>
                 <rect x={0} y={8} width={78} height={20} rx={10} className={on === null ? 'fill-st-unknown/15' : on ? 'fill-st-on/15' : 'fill-muted'} />
                 <circle cx={11} cy={18} r={4} className={on === null ? 'fill-st-unknown' : on ? 'fill-st-on' : 'fill-subtle'} />
                 <text x={20} y={22} className={on === null ? 'fill-st-unknown' : on ? 'fill-st-on' : 'fill-subtle'} style={{ fontSize: 11, fontWeight: 600 }}>
-                  {stateText(on)}
+                  {stateText(on, dict.branchState)}
                 </text>
               </g>
               {POLES.map((x) => (
@@ -122,19 +126,19 @@ export function CabinetDiagram({ state: s, code }: { state: CabinetState; code: 
         </g>
         {/* indicator window */}
         <rect x={70} y={92} width={112} height={84} rx={6} fill="#0b1220" stroke="#334155" strokeWidth={2} />
-        <Led x={92} y={110} on={supply} color="#22c55e" label="NGUỒN" />
-        <Led x={126} y={110} on={online} color="#3b82f6" label="4G" />
-        <Led x={160} y={110} on={online ? s.plcOnline : null} color="#22c55e" label="PLC" />
-        <Led x={92} y={148} on={online ? branches[0] ?? null : null} color="#facc15" label="N1" />
-        <Led x={126} y={148} on={online ? branches[1] ?? null : null} color="#facc15" label="N2" />
-        <Led x={160} y={148} on={fault} color="#ef4444" label="LỖI" />
+        <Led x={92} y={110} on={supply} color="#22c55e" label={t.power} />
+        <Led x={126} y={110} on={online} color="#3b82f6" label={t.lte} />
+        <Led x={160} y={110} on={online ? s.plcOnline : null} color="#22c55e" label={t.plc} />
+        <Led x={92} y={148} on={online ? branches[0] ?? null : null} color="#facc15" label={t.b1} />
+        <Led x={126} y={148} on={online ? branches[1] ?? null : null} color="#facc15" label={t.b2} />
+        <Led x={160} y={148} on={fault} color="#ef4444" label={t.fault} />
         {/* name plate */}
         <rect x={78} y={190} width={96} height={20} rx={3} fill="#f8fafc" stroke="#94a3b8" />
         <text x={126} y={204} textAnchor="middle" fill="#0f172a" style={{ fontSize: 10, fontWeight: 700 }}>
           {code}
         </text>
         <text x={126} y={224} textAnchor="middle" fill="#475569" style={{ fontSize: 8 }}>
-          {s.manualMode === null ? '' : s.manualMode ? 'CHẾ ĐỘ THỦ CÔNG' : 'CHẾ ĐỘ TỰ ĐỘNG'}
+          {s.manualMode === null ? '' : s.manualMode ? t.manualMode : t.autoMode}
         </text>
         {/* vents */}
         {[234, 240, 246].map((y) => (
@@ -143,7 +147,7 @@ export function CabinetDiagram({ state: s, code }: { state: CabinetState; code: 
       </svg>
       {!online && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <span className="rounded-md bg-st-offline px-3 py-1 text-sm font-medium text-white shadow">Mất kết nối — hiển thị trạng thái cuối cùng</span>
+          <span className="rounded-md bg-st-offline px-3 py-1 text-sm font-medium text-white shadow">{t.offline}</span>
         </div>
       )}
     </div>

@@ -7,6 +7,8 @@ import { subscribe } from '@/lib/realtime';
 import { fmtTime } from '@/lib/utils';
 import { Badge, Skeleton, StatusBadge, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 import { cn } from '@/lib/utils';
+import { useDict } from '@/i18n';
+import { CABINET } from '@/i18n/dict/cabinet';
 import { DirectionsLink } from '@/components/Directions';
 import { ControlTab } from './ControlTab';
 import { DiagnosticsTab } from './DiagnosticsTab';
@@ -36,6 +38,7 @@ export function CabinetDrawer({
   onClose: () => void;
   onLocate: (p: GeoPoint) => void;
 }) {
+  const t = useDict(CABINET).drawer;
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ['cabinet', cabinetId], queryFn: () => api.cabinet(cabinetId) });
 
@@ -65,7 +68,7 @@ export function CabinetDrawer({
   const panel = (
     <aside
       role="dialog"
-      aria-label="Chi tiết tủ"
+      aria-label={t.ariaLabel}
       className={cn(
         'flex flex-col bg-panel shadow-2xl',
         mode === 'dock'
@@ -85,10 +88,10 @@ export function CabinetDrawer({
                 {data.cabinet.code} - {data.cabinet.name}
               </h2>
               <StatusBadge status={data.state.status} />
-              {data.cabinet.fwProfile === 'v2-1307ebc' && <Badge tone="orange">Firmware cũ · chỉ giám sát</Badge>}
+              {data.cabinet.fwProfile === 'v2-1307ebc' && <Badge tone="orange">{t.oldFw}</Badge>}
             </div>
             <div className="text-xs text-subtle">
-              {data.cabinet.ltid} · {data.cabinet.address}, {data.cabinet.wardName}, {data.cabinet.districtName} · cập nhật {fmtTime(data.state.lastSeenAt)}
+              {data.cabinet.ltid} · {data.cabinet.address}, {data.cabinet.wardName}, {data.cabinet.districtName} · {t.updated} {fmtTime(data.state.lastSeenAt)}
             </div>
           </div>
         )}
@@ -97,12 +100,12 @@ export function CabinetDrawer({
           <button
             onClick={onToggleMode}
             className="rounded-md p-1.5 hover:bg-muted"
-            aria-label={mode === 'center' ? 'Ghim sang phải để xem bản đồ' : 'Hiển thị giữa màn hình'}
-            title={mode === 'center' ? 'Ghim sang phải để xem bản đồ' : 'Hiển thị giữa màn hình'}
+            aria-label={mode === 'center' ? t.dock : t.center}
+            title={mode === 'center' ? t.dock : t.center}
           >
             {mode === 'center' ? <PanelRight className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
           </button>
-          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-muted" aria-label="Đóng chi tiết tủ">
+          <button onClick={onClose} className="rounded-md p-1.5 hover:bg-muted" aria-label={t.close}>
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -110,19 +113,19 @@ export function CabinetDrawer({
       {data && (
         <Tabs defaultValue="control" className="flex min-h-0 flex-1 flex-col">
           <TabsList>
-            <TabsTrigger value="control">Điều khiển</TabsTrigger>
-            <TabsTrigger value="diag">Chẩn đoán lỗi</TabsTrigger>
-            <TabsTrigger value="monitor">Giám sát</TabsTrigger>
-            <TabsTrigger value="voltage">Điện áp</TabsTrigger>
-            <TabsTrigger value="current">Dòng điện</TabsTrigger>
-            <TabsTrigger value="energy">Năng lượng</TabsTrigger>
-            <TabsTrigger value="leak">Rò dòng & nhiệt</TabsTrigger>
-            <TabsTrigger value="thresholds">Cài đặt</TabsTrigger>
-            <TabsTrigger value="dimming">Tiết giảm</TabsTrigger>
-            <TabsTrigger value="lamps">Đèn</TabsTrigger>
-            <TabsTrigger value="info">Thông tin</TabsTrigger>
-            <TabsTrigger value="alarms">Cảnh báo</TabsTrigger>
-            <TabsTrigger value="commands">Lệnh</TabsTrigger>
+            <TabsTrigger value="control">{t.tabs.control}</TabsTrigger>
+            <TabsTrigger value="diag">{t.tabs.diag}</TabsTrigger>
+            <TabsTrigger value="monitor">{t.tabs.monitor}</TabsTrigger>
+            <TabsTrigger value="voltage">{t.tabs.voltage}</TabsTrigger>
+            <TabsTrigger value="current">{t.tabs.current}</TabsTrigger>
+            <TabsTrigger value="energy">{t.tabs.energy}</TabsTrigger>
+            <TabsTrigger value="leak">{t.tabs.leak}</TabsTrigger>
+            <TabsTrigger value="thresholds">{t.tabs.thresholds}</TabsTrigger>
+            <TabsTrigger value="dimming">{t.tabs.dimming}</TabsTrigger>
+            <TabsTrigger value="lamps">{t.tabs.lamps}</TabsTrigger>
+            <TabsTrigger value="info">{t.tabs.info}</TabsTrigger>
+            <TabsTrigger value="alarms">{t.tabs.alarms}</TabsTrigger>
+            <TabsTrigger value="commands">{t.tabs.commands}</TabsTrigger>
           </TabsList>
           <div className="min-h-0 flex-1 overflow-auto p-4">
             <TabsContent value="control">
@@ -135,10 +138,10 @@ export function CabinetDrawer({
               <MonitorTab detail={data} />
             </TabsContent>
             <TabsContent value="voltage">
-              <ChartTab cabinetId={cabinetId} metrics={['vL1', 'vL2', 'vL3']} unit="V" title="Điện áp 3 pha" names={['L1N', 'L2N', 'L3N']} />
+              <ChartTab cabinetId={cabinetId} metrics={['vL1', 'vL2', 'vL3']} unit="V" title={t.voltageTitle} names={['L1N', 'L2N', 'L3N']} />
             </TabsContent>
             <TabsContent value="current">
-              <ChartTab cabinetId={cabinetId} metrics={['iL1', 'iL2', 'iL3']} unit="A" title="Dòng điện 3 pha" names={['I1', 'I2', 'I3']} />
+              <ChartTab cabinetId={cabinetId} metrics={['iL1', 'iL2', 'iL3']} unit="A" title={t.currentTitle} names={['I1', 'I2', 'I3']} />
             </TabsContent>
             <TabsContent value="energy">
               <EnergyTab cabinetId={cabinetId} />

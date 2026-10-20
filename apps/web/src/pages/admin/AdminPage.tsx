@@ -2,37 +2,41 @@ import { Fragment, useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
-import type { Permission, RoleKey } from '@citylight/shared';
-import { ALARM_TYPE_LABELS, LAMP_GROUP_LABELS, ROLE_LABELS, ROLE_PERMISSIONS, SEVERITY_LABELS, assignableRoles, roleRequires2fa, roleSeesAll } from '@citylight/shared';
+import type { AlarmType, Permission, RoleKey } from '@citylight/shared';
+import { LAMP_GROUP_LABELS, ROLE_PERMISSIONS, alarmTypeLabels, assignableRoles, roleRequires2fa, roleSeesAll } from '@citylight/shared';
 import { api, ApiError, type AdminUser, type UnknownDevice } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { ScopePicker, scopeLabel, useAreaNames, type ScopeValue } from '@/components/security';
 import { cn, fmtTime } from '@/lib/utils';
+import { dictNow, fill, useDict, useLabels, useLang } from '@/i18n';
+import { COMMON } from '@/i18n/dict/common';
+import { ADMIN, PERMISSION_LABELS } from '@/i18n/dict/admin';
 import { Badge, Button, Card, CardHeader, Checkbox, Field, Input, Modal, PageHeader, Select, Spinner, Toggle, confirm, toast } from '@/components/ui';
 import { ErrorCatalogTable } from '@/components/ErrorHelp';
 
-const TABS: { id: string; label: string; perm?: Permission }[] = [
-  { id: 'users', label: 'Người dùng' },
-  { id: 'roles', label: 'Vai trò & quyền' },
-  { id: 'areas', label: 'Khu vực' },
-  { id: 'zones', label: 'Vùng & khu quản lý' },
-  { id: 'devices', label: 'Đăng ký tủ' },
-  { id: 'field-map', label: 'Ánh xạ telemetry', perm: 'device.identity' },
-  { id: 'alarm-rules', label: 'Quy tắc cảnh báo' },
-  { id: 'settings', label: 'Cấu hình hệ thống' },
+const TABS: { id: string; label: keyof (typeof ADMIN)['vi']['tabs']; perm?: Permission }[] = [
+  { id: 'users', label: 'users' },
+  { id: 'roles', label: 'roles' },
+  { id: 'areas', label: 'areas' },
+  { id: 'zones', label: 'zones' },
+  { id: 'devices', label: 'devices' },
+  { id: 'field-map', label: 'fieldMap', perm: 'device.identity' },
+  { id: 'alarm-rules', label: 'alarmRules' },
+  { id: 'settings', label: 'settings' },
 ];
 
 export function AdminPage() {
   const { tab = 'users' } = useParams();
   const can = useSession((s) => s.can);
+  const a = useDict(ADMIN);
   const tabs = TABS.filter((t) => !t.perm || can(t.perm));
   return (
     <div className="flex h-full">
       <aside className="w-56 shrink-0 border-r bg-panel p-2">
-        <div className="mb-1 px-2 text-xs font-semibold uppercase text-subtle">Quản trị</div>
+        <div className="mb-1 px-2 text-xs font-semibold uppercase text-subtle">{a.title}</div>
         {tabs.map((t) => (
           <NavLink key={t.id} to={`/admin/${t.id}`} className={({ isActive }) => cn('block rounded px-2 py-1.5 text-sm hover:bg-muted', isActive && 'bg-primary/10 font-medium')}>
-            {t.label}
+            {a.tabs[t.label]}
           </NavLink>
         ))}
       </aside>
@@ -54,6 +58,9 @@ function UsersAdmin() {
   const qc = useQueryClient();
   const me = useSession((s) => s.user);
   const names = useAreaNames();
+  const t = useDict(ADMIN).users;
+  const c = useDict(COMMON);
+  const L = useLabels();
   const { data, isLoading } = useQuery({ queryKey: ['users'], queryFn: api.users });
   // S47: only roles below one's own (the provider: all); accounts at or above are listed read-only
   const roleChoices = me ? assignableRoles(me.role) : [];
@@ -63,7 +70,7 @@ function UsersAdmin() {
   const [scopeEdit, setScopeEdit] = useState<{ user: AdminUser; value: ScopeValue } | null>(null);
   const [secret, setSecret] = useState<{ email: string; tempPassword: string; created: boolean } | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ['users'] });
-  const fail = (e: unknown) => toast(e instanceof ApiError ? e.message : 'Lỗi', 'error');
+  const fail = (e: unknown) => toast(e instanceof ApiError ? e.message : dictNow(COMMON).error, 'error');
 
   const create = useMutation({
     mutationFn: () => api.createUser(form),
@@ -91,8 +98,8 @@ function UsersAdmin() {
     },
     onError: fail,
   });
-  const unlock = useMutation({ mutationFn: (u: AdminUser) => api.unlockUser(u.id), onSuccess: () => { toast('Đã mở khóa đăng nhập', 'success'); refresh(); }, onError: fail });
-  const reset2fa = useMutation({ mutationFn: (u: AdminUser) => api.resetUser2fa(u.id), onSuccess: () => { toast('Đã đặt lại 2FA', 'success'); refresh(); }, onError: fail });
+  const unlock = useMutation({ mutationFn: (u: AdminUser) => api.unlockUser(u.id), onSuccess: () => { toast(dictNow(ADMIN).users.unlocked, 'success'); refresh(); }, onError: fail });
+  const reset2fa = useMutation({ mutationFn: (u: AdminUser) => api.resetUser2fa(u.id), onSuccess: () => { toast(dictNow(ADMIN).users.reset2faDone, 'success'); refresh(); }, onError: fail });
 
   const ask = async (title: string, body: string, run: () => void) => {
     if (await confirm({ title, body, danger: true })) run();
@@ -101,9 +108,9 @@ function UsersAdmin() {
   return (
     <>
       <PageHeader
-        title="Người dùng"
-        subtitle="Đổi vai trò, phạm vi hoặc khóa tài khoản sẽ đăng xuất người đó ngay"
-        actions={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Thêm người dùng</Button>}
+        title={t.title}
+        subtitle={t.subtitle}
+        actions={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> {t.add}</Button>}
       />
       <Card className="overflow-x-auto">
         {isLoading ? (
@@ -111,7 +118,7 @@ function UsersAdmin() {
         ) : (
           <table className="w-full text-sm">
             <thead className="bg-muted/60 text-left text-xs text-subtle">
-              <tr><th className="px-3 py-2">Họ tên</th><th className="px-3 py-2">Email</th><th className="px-3 py-2">Vai trò</th><th className="px-3 py-2">Phạm vi</th><th className="px-3 py-2">2FA</th><th className="px-3 py-2">Đăng nhập gần nhất</th><th className="px-3 py-2">Hoạt động</th><th className="px-3 py-2" /></tr>
+              <tr><th className="px-3 py-2">{t.col.fullName}</th><th className="px-3 py-2">{t.col.email}</th><th className="px-3 py-2">{t.col.role}</th><th className="px-3 py-2">{t.col.scope}</th><th className="px-3 py-2">{t.col.totp}</th><th className="px-3 py-2">{t.col.lastLogin}</th><th className="px-3 py-2">{t.col.active}</th><th className="px-3 py-2" /></tr>
             </thead>
             <tbody>
               {data?.map((u) => {
@@ -120,38 +127,38 @@ function UsersAdmin() {
                 return (
                   <tr key={u.id} className="border-t align-top">
                     <td className="px-3 py-2 font-medium">
-                      {u.fullName} {self && <Badge tone="blue">Bạn</Badge>}
-                      {u.passwordChangeRequired && <div className="text-xs font-normal text-st-fault">Chưa đổi mật khẩu tạm</div>}
-                      {u.lockedUntil && <div className="text-xs font-normal text-st-offline">Tạm khóa tới {fmtTime(u.lockedUntil)}</div>}
+                      {u.fullName} {self && <Badge tone="blue">{t.you}</Badge>}
+                      {u.passwordChangeRequired && <div className="text-xs font-normal text-st-fault">{t.tempNotChanged}</div>}
+                      {u.lockedUntil && <div className="text-xs font-normal text-st-offline">{fill(t.lockedUntil, { time: fmtTime(u.lockedUntil) })}</div>}
                     </td>
                     <td className="px-3 py-2">{u.email}</td>
                     <td className="px-3 py-2">
                       {locked ? (
-                        <Badge tone={u.role === 'admin' ? 'blue' : undefined}>{ROLE_LABELS[u.role]}</Badge>
+                        <Badge tone={u.role === 'admin' ? 'blue' : undefined}>{L.role[u.role]}</Badge>
                       ) : (
                         <Select value={u.role} onChange={(e) => update.mutate({ id: u.id, patch: { role: e.target.value as RoleKey } })} className="h-8">
-                          {roleChoices.map((k) => <option key={k} value={k}>{ROLE_LABELS[k]}</option>)}
+                          {roleChoices.map((k) => <option key={k} value={k}>{L.role[k]}</option>)}
                         </Select>
                       )}
                     </td>
                     <td className="max-w-[16rem] px-3 py-2 text-xs">
-                      <span className={cn(!u.scopeAll && !u.scopeAreaIds.length && 'text-st-fault')}>{roleSeesAll(u.role) ? 'Toàn hệ thống (theo vai trò)' : scopeLabel(u, names)}</span>
+                      <span className={cn(!u.scopeAll && !u.scopeAreaIds.length && 'text-st-fault')}>{roleSeesAll(u.role) ? t.scopeAllByRole : scopeLabel(u, names)}</span>
                       {!locked && !roleSeesAll(u.role) && (
-                        <button className="ml-1 text-primary hover:underline" onClick={() => setScopeEdit({ user: u, value: { scopeAll: u.scopeAll, scopeAreaIds: u.scopeAreaIds } })}>Sửa</button>
+                        <button className="ml-1 text-primary hover:underline" onClick={() => setScopeEdit({ user: u, value: { scopeAll: u.scopeAll, scopeAreaIds: u.scopeAreaIds } })}>{c.edit}</button>
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      {u.totpEnabled ? <Badge tone="green">Bật</Badge> : u.totpRequired ? <Badge tone="orange">Bắt buộc, chưa bật</Badge> : <Badge>Tắt</Badge>}
+                      {u.totpEnabled ? <Badge tone="green">{t.totpOn}</Badge> : u.totpRequired ? <Badge tone="orange">{t.totpRequiredOff}</Badge> : <Badge>{t.totpOff}</Badge>}
                     </td>
                     <td className="px-3 py-2 text-xs">{fmtTime(u.lastLoginAt)}</td>
-                    <td className="px-3 py-2"><Toggle checked={u.active} disabled={locked} onChange={(v) => update.mutate({ id: u.id, patch: { active: v } })} label="Kích hoạt" /></td>
+                    <td className="px-3 py-2"><Toggle checked={u.active} disabled={locked} onChange={(v) => update.mutate({ id: u.id, patch: { active: v } })} label={t.activate} /></td>
                     <td className="whitespace-nowrap px-3 py-2 text-xs">
-                      {!self && u.manageable === false && <span className="text-subtle">Chỉ xem</span>}
+                      {!self && u.manageable === false && <span className="text-subtle">{t.readOnly}</span>}
                       {!locked && (
                         <div className="flex flex-col items-start gap-1">
-                          <button className="text-primary hover:underline" onClick={() => ask('Đặt lại mật khẩu?', `${u.email} sẽ bị đăng xuất và nhận mật khẩu tạm mới.`, () => resetPw.mutate(u))}>Đặt lại mật khẩu</button>
-                          {u.totpEnabled && <button className="text-primary hover:underline" onClick={() => ask('Đặt lại 2FA?', `Xóa 2FA của ${u.email} (ví dụ khi mất điện thoại). Người đó sẽ bị đăng xuất và phải thiết lập lại.`, () => reset2fa.mutate(u))}>Đặt lại 2FA</button>}
-                          {u.lockedUntil && <button className="text-primary hover:underline" onClick={() => unlock.mutate(u)}>Mở khóa đăng nhập</button>}
+                          <button className="text-primary hover:underline" onClick={() => ask(t.resetPasswordAsk, fill(t.resetPasswordBody, { email: u.email }), () => resetPw.mutate(u))}>{t.resetPassword}</button>
+                          {u.totpEnabled && <button className="text-primary hover:underline" onClick={() => ask(t.reset2faAsk, fill(t.reset2faBody, { email: u.email }), () => reset2fa.mutate(u))}>{t.reset2fa}</button>}
+                          {u.lockedUntil && <button className="text-primary hover:underline" onClick={() => unlock.mutate(u)}>{t.unlock}</button>}
                         </div>
                       )}
                     </td>
@@ -163,43 +170,43 @@ function UsersAdmin() {
         )}
       </Card>
 
-      <Modal open={open} onOpenChange={setOpen} title="Thêm người dùng" footer={<><Button variant="outline" onClick={() => setOpen(false)}>Hủy</Button><Button disabled={!form.email || !form.fullName} loading={create.isPending} onClick={() => create.mutate()}>Tạo</Button></>}>
+      <Modal open={open} onOpenChange={setOpen} title={t.add} footer={<><Button variant="outline" onClick={() => setOpen(false)}>{c.cancel}</Button><Button disabled={!form.email || !form.fullName} loading={create.isPending} onClick={() => create.mutate()}>{c.create}</Button></>}>
         <div className="space-y-3">
-          <Field label="Họ tên"><Input value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} /></Field>
-          <Field label="Email"><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-          <Field label="Vai trò" hint={roleRequires2fa(form.role) ? 'Vai trò này bắt buộc 2FA ở lần đăng nhập đầu' : undefined}>
+          <Field label={t.col.fullName}><Input value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} /></Field>
+          <Field label={t.col.email}><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+          <Field label={t.col.role} hint={roleRequires2fa(form.role) ? t.roleNeeds2fa : undefined}>
             <Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as RoleKey })} className="w-full">
-              {roleChoices.map((k) => <option key={k} value={k}>{ROLE_LABELS[k]}</option>)}
+              {roleChoices.map((k) => <option key={k} value={k}>{L.role[k]}</option>)}
             </Select>
           </Field>
           {roleSeesAll(form.role) ? (
-            <p className="text-xs text-subtle">{ROLE_LABELS[form.role]} luôn thấy toàn hệ thống.</p>
+            <p className="text-xs text-subtle">{fill(t.roleSeesAll, { role: L.role[form.role] })}</p>
           ) : (
-            <Field label="Phạm vi khu vực"><ScopePicker value={form} onChange={(v) => setForm({ ...form, ...v })} /></Field>
+            <Field label={t.scopeField}><ScopePicker value={form} onChange={(v) => setForm({ ...form, ...v })} /></Field>
           )}
-          <p className="text-xs text-subtle">Hệ thống tạo mật khẩu tạm; người dùng phải đổi ở lần đăng nhập đầu.</p>
+          <p className="text-xs text-subtle">{t.tempNote}</p>
         </div>
       </Modal>
 
       <Modal
         open={!!scopeEdit}
         onOpenChange={(v) => !v && setScopeEdit(null)}
-        title={`Phạm vi: ${scopeEdit?.user.fullName ?? ''}`}
-        footer={<><Button variant="outline" onClick={() => setScopeEdit(null)}>Hủy</Button><Button loading={update.isPending} onClick={() => scopeEdit && update.mutate({ id: scopeEdit.user.id, patch: scopeEdit.value })}>Lưu</Button></>}
+        title={fill(t.scopeTitle, { name: scopeEdit?.user.fullName ?? '' })}
+        footer={<><Button variant="outline" onClick={() => setScopeEdit(null)}>{c.cancel}</Button><Button loading={update.isPending} onClick={() => scopeEdit && update.mutate({ id: scopeEdit.user.id, patch: scopeEdit.value })}>{c.save}</Button></>}
       >
         {scopeEdit && <ScopePicker value={scopeEdit.value} onChange={(v) => setScopeEdit({ ...scopeEdit, value: v })} />}
-        <p className="mt-2 text-xs text-subtle">Lưu sẽ đăng xuất người dùng này để áp phạm vi mới.</p>
+        <p className="mt-2 text-xs text-subtle">{t.scopeSaveNote}</p>
       </Modal>
 
-      <Modal open={!!secret} onOpenChange={(v) => !v && setSecret(null)} title={secret?.created ? 'Đã tạo người dùng' : 'Đã đặt lại mật khẩu'} footer={<Button onClick={() => setSecret(null)}>Đã gửi cho người dùng</Button>}>
+      <Modal open={!!secret} onOpenChange={(v) => !v && setSecret(null)} title={secret?.created ? t.created : t.passwordReset} footer={<Button onClick={() => setSecret(null)}>{t.sentToUser}</Button>}>
         {secret && (
           <div className="space-y-2">
-            <p>Mật khẩu tạm cho <b>{secret.email}</b> (chỉ hiện lần này, gửi qua kênh riêng):</p>
+            <p>{t.tempFor} <b>{secret.email}</b> {t.tempOnce}</p>
             <div className="flex items-center gap-2">
               <code className="rounded bg-muted px-2 py-1 font-mono text-base">{secret.tempPassword}</code>
-              <Button size="sm" variant="outline" onClick={() => navigator.clipboard?.writeText(secret.tempPassword).then(() => toast('Đã chép', 'success'))}>Chép</Button>
+              <Button size="sm" variant="outline" onClick={() => navigator.clipboard?.writeText(secret.tempPassword).then(() => toast(dictNow(COMMON).copied, 'success'))}>{c.copy}</Button>
             </div>
-            <p className="text-xs text-subtle">Người dùng phải đổi mật khẩu này ở lần đăng nhập đầu.</p>
+            <p className="text-xs text-subtle">{t.mustChange}</p>
           </div>
         )}
       </Modal>
@@ -208,25 +215,30 @@ function UsersAdmin() {
 }
 
 function RolesAdmin() {
+  const t = useDict(ADMIN).roles;
+  const L = useLabels();
+  const P = useDict(PERMISSION_LABELS);
   const perms = [...new Set(Object.values(ROLE_PERMISSIONS).flat())];
-  const roles = Object.keys(ROLE_LABELS) as RoleKey[];
+  const roles = Object.keys(L.role) as RoleKey[];
   return (
     <>
-      <PageHeader title="Vai trò & quyền" subtitle="Quyền luôn được kiểm ở backend; giao diện chỉ ẩn/hiện" />
+      <PageHeader title={t.title} subtitle={t.subtitle} />
       <Card className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-muted/60 text-left text-xs text-subtle">
-            <tr><th className="px-3 py-2">Quyền</th>{roles.map((r) => <th key={r} className="px-3 py-2 text-center">{ROLE_LABELS[r]}</th>)}</tr>
+            <tr><th className="px-3 py-2">{t.permission}</th>{roles.map((r) => <th key={r} className="px-3 py-2 text-center">{L.role[r]}</th>)}</tr>
           </thead>
           <tbody>
             {perms.map((p) => (
               <tr key={p} className="border-t">
-                <td className="px-3 py-1.5 font-mono text-xs">{p}</td>
+                <td className="px-3 py-1.5">
+                  {P[p] ?? p} <span className="ml-1 font-mono text-[11px] text-subtle">{p}</span>
+                </td>
                 {roles.map((r) => <td key={r} className="px-3 py-1.5 text-center">{ROLE_PERMISSIONS[r].includes(p) ? '✔' : ''}</td>)}
               </tr>
             ))}
             <tr className="border-t bg-muted/30">
-              <td className="px-3 py-1.5 text-xs">Bắt buộc 2FA (vai trò có quyền điều khiển tủ)</td>
+              <td className="px-3 py-1.5 text-xs">{t.requires2fa}</td>
               {roles.map((r) => <td key={r} className="px-3 py-1.5 text-center">{roleRequires2fa(r) ? '✔' : ''}</td>)}
             </tr>
           </tbody>
@@ -236,7 +248,7 @@ function RolesAdmin() {
   );
 }
 
-const errToast = (e: unknown) => toast(e instanceof ApiError ? e.message : 'Lỗi', 'error');
+const errToast = (e: unknown) => toast(e instanceof ApiError ? e.message : dictNow(COMMON).error, 'error');
 
 /** Small inline "name" editor used by the catalog tables. */
 async function askName(title: string, current = ''): Promise<string | null> {
@@ -246,9 +258,12 @@ async function askName(title: string, current = ''): Promise<string | null> {
 
 function AreasAdmin() {
   const qc = useQueryClient();
+  const a = useDict(ADMIN);
+  const t = a.areas;
+  const c = useDict(COMMON);
   const { data } = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
-  const unit = data?.areas.find((a) => a.kind === 'unit');
-  const districts = data?.areas.filter((a) => a.kind === 'district') ?? [];
+  const unit = data?.areas.find((x) => x.kind === 'unit');
+  const districts = data?.areas.filter((x) => x.kind === 'district') ?? [];
   const [open, setOpen] = useState<string | null>(null);
   const refresh = () => void qc.invalidateQueries({ queryKey: ['area-tree'] });
   const run = async (f: () => Promise<unknown>, ok: string) => {
@@ -261,38 +276,38 @@ function AreasAdmin() {
     }
   };
   const add = async (kind: 'district' | 'ward', parentId: string) => {
-    const name = await askName(kind === 'district' ? 'Tên quận / huyện mới' : 'Tên phường / xã mới');
-    if (name) await run(() => api.createArea({ kind, name, parentId }), `Đã thêm ${name}`);
+    const name = await askName(kind === 'district' ? t.newDistrict : t.newWard);
+    if (name) await run(() => api.createArea({ kind, name, parentId }), fill(a.added, { name }));
   };
   const rename = async (id: string, cur: string) => {
-    const name = await askName('Tên mới', cur);
-    if (name && name !== cur) await run(() => api.renameArea(id, name), 'Đã đổi tên');
+    const name = await askName(a.newName, cur);
+    if (name && name !== cur) await run(() => api.renameArea(id, name), a.renamed);
   };
   const del = async (id: string, name: string) => {
-    if (await confirm({ title: `Xóa "${name}"?`, body: 'Chỉ xóa được khu vực không còn tủ, khu vực con hay người dùng được phân quyền.', danger: true, confirmLabel: 'Xóa' }))
-      await run(() => api.deleteArea(id), `Đã xóa ${name}`);
+    if (await confirm({ title: fill(t.deleteAsk, { name }), body: t.deleteBody, danger: true, confirmLabel: c.delete }))
+      await run(() => api.deleteArea(id), fill(t.deletedName, { name }));
   };
   return (
     <>
-      <PageHeader title="Khu vực" subtitle="Cây đơn vị → quận / huyện → phường / xã; dùng cho phân quyền và lọc" actions={unit && <Button onClick={() => add('district', unit.id)}><Plus className="h-4 w-4" /> Thêm quận</Button>} />
+      <PageHeader title={t.title} subtitle={t.subtitle} actions={unit && <Button onClick={() => add('district', unit.id)}><Plus className="h-4 w-4" /> {t.addDistrict}</Button>} />
       <Card>
         <table className="w-full text-sm">
-          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">Quận / huyện · phường / xã</th><th className="px-3 py-2">Số tủ</th><th /></tr></thead>
+          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">{t.colName}</th><th className="px-3 py-2">{t.colCabinets}</th><th /></tr></thead>
           <tbody>
             {districts.map((d) => {
-              const wards = data!.areas.filter((a) => a.parentId === d.id);
+              const wards = data!.areas.filter((x) => x.parentId === d.id);
               return (
                 <Fragment key={d.id}>
                   <tr className="border-t">
                     <td className="px-3 py-2">
                       <button className="font-medium" onClick={() => setOpen(open === d.id ? null : d.id)}>{open === d.id ? '▾' : '▸'} {d.name}</button>
-                      <span className="ml-2 text-xs text-subtle">{wards.length} phường</span>
+                      <span className="ml-2 text-xs text-subtle">{t.wards(wards.length)}</span>
                     </td>
                     <td className="px-3 py-2">{d.cabinetCount}</td>
                     <td className="space-x-1 px-3 py-2 text-right">
-                      <Button size="sm" variant="ghost" onClick={() => add('ward', d.id)}>+ Phường</Button>
-                      <Button size="sm" variant="ghost" onClick={() => rename(d.id, d.name)}>Đổi tên</Button>
-                      <Button size="sm" variant="ghost" onClick={() => del(d.id, d.name)}>Xóa</Button>
+                      <Button size="sm" variant="ghost" onClick={() => add('ward', d.id)}>{t.addWard}</Button>
+                      <Button size="sm" variant="ghost" onClick={() => rename(d.id, d.name)}>{a.rename}</Button>
+                      <Button size="sm" variant="ghost" onClick={() => del(d.id, d.name)}>{c.delete}</Button>
                     </td>
                   </tr>
                   {open === d.id &&
@@ -301,15 +316,15 @@ function AreasAdmin() {
                         <td className="px-3 py-1.5 pl-8">{w.name}</td>
                         <td className="px-3 py-1.5">{w.cabinetCount}</td>
                         <td className="space-x-1 px-3 py-1.5 text-right">
-                          <Button size="sm" variant="ghost" onClick={() => rename(w.id, w.name)}>Đổi tên</Button>
-                          <Button size="sm" variant="ghost" onClick={() => del(w.id, w.name)}>Xóa</Button>
+                          <Button size="sm" variant="ghost" onClick={() => rename(w.id, w.name)}>{a.rename}</Button>
+                          <Button size="sm" variant="ghost" onClick={() => del(w.id, w.name)}>{c.delete}</Button>
                         </td>
                       </tr>
                     ))}
                 </Fragment>
               );
             })}
-            <tr className="border-t"><td className="px-3 py-2 text-st-fault">Chưa phân khu vực</td><td className="px-3 py-2">{data?.unassigned}</td><td /></tr>
+            <tr className="border-t"><td className="px-3 py-2 text-st-fault">{t.unassigned}</td><td className="px-3 py-2">{data?.unassigned}</td><td /></tr>
           </tbody>
         </table>
       </Card>
@@ -319,10 +334,13 @@ function AreasAdmin() {
 
 function ZonesAdmin() {
   const qc = useQueryClient();
+  const a = useDict(ADMIN);
+  const t = a.zones;
+  const c = useDict(COMMON);
   const zones = useQuery({ queryKey: ['zones'], queryFn: api.zones });
   const mus = useQuery({ queryKey: ['management-units'], queryFn: api.managementUnits });
   const tree = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
-  const districts = tree.data?.areas.filter((a) => a.kind === 'district') ?? [];
+  const districts = tree.data?.areas.filter((x) => x.kind === 'district') ?? [];
   const [assignFor, setAssignFor] = useState<string | null>(null);
   const [areaIds, setAreaIds] = useState<string[]>([]);
   const refresh = () => {
@@ -339,17 +357,17 @@ function ZonesAdmin() {
     }
   };
   const addZone = async () => {
-    const name = await askName('Tên vùng mới');
+    const name = await askName(t.newZone);
     if (!name) return;
-    const ll = await askName('Tâm vùng (vĩ độ, kinh độ), dùng cho lịch thiên văn', '10.7769, 106.7009');
+    const ll = await askName(t.center, '10.7769, 106.7009');
     const [lat, lng] = (ll ?? '').split(',').map((x) => Number(x.trim()));
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return toast('Tọa độ không hợp lệ', 'error');
-    await run(() => api.createZone({ name, center: { lat: lat!, lng: lng! } }), `Đã thêm vùng ${name}`);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return toast(t.badCoords, 'error');
+    await run(() => api.createZone({ name, center: { lat: lat!, lng: lng! } }), fill(t.zoneAdded, { name }));
   };
   const assign = useMutation({
     mutationFn: () => api.assignZone(assignFor!, { areaIds }),
     onSuccess: (r) => {
-      toast(`Đã chuyển ${r.assigned} tủ vào vùng`, 'success');
+      toast(dictNow(ADMIN).zones.assigned(r.assigned), 'success');
       setAssignFor(null);
       setAreaIds([]);
       refresh();
@@ -358,35 +376,35 @@ function ZonesAdmin() {
   });
   return (
     <>
-      <PageHeader title="Vùng & khu quản lý" />
+      <PageHeader title={t.title} />
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
-          <CardHeader title="Vùng (lịch / tiết giảm)" actions={<Button size="sm" onClick={addZone}><Plus className="h-4 w-4" /> Thêm</Button>} />
+          <CardHeader title={t.zonesCard} actions={<Button size="sm" onClick={addZone}><Plus className="h-4 w-4" /> {c.add}</Button>} />
           <div className="divide-y">
             {zones.data?.map((z) => (
               <div key={z.id} className="flex items-center justify-between gap-2 px-4 py-2 text-sm">
                 <div>
                   <div>{z.name}</div>
-                  <div className="text-xs text-subtle">{z.cabinetCount} tủ · tâm {z.center.lat.toFixed(4)}, {z.center.lng.toFixed(4)}</div>
+                  <div className="text-xs text-subtle">{fill(t.zoneLine, { cabinets: t.cabinets(z.cabinetCount), lat: z.center.lat.toFixed(4), lng: z.center.lng.toFixed(4) })}</div>
                 </div>
                 <div className="space-x-1 whitespace-nowrap">
-                  <Button size="sm" variant="ghost" onClick={() => setAssignFor(z.id)}>Gán tủ</Button>
-                  <Button size="sm" variant="ghost" onClick={async () => { const n = await askName('Tên mới', z.name); if (n) await run(() => api.updateZone(z.id, { name: n }), 'Đã đổi tên'); }}>Đổi tên</Button>
-                  <Button size="sm" variant="ghost" onClick={async () => { if (await confirm({ title: `Xóa vùng ${z.name}?`, body: 'Chỉ xóa được vùng không còn tủ. Lịch / ngưỡng của vùng bị xóa theo.', danger: true, confirmLabel: 'Xóa' })) await run(() => api.deleteZone(z.id), 'Đã xóa vùng'); }}>Xóa</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setAssignFor(z.id)}>{t.assign}</Button>
+                  <Button size="sm" variant="ghost" onClick={async () => { const n = await askName(a.newName, z.name); if (n) await run(() => api.updateZone(z.id, { name: n }), a.renamed); }}>{a.rename}</Button>
+                  <Button size="sm" variant="ghost" onClick={async () => { if (await confirm({ title: fill(t.deleteZoneAsk, { name: z.name }), body: t.deleteZoneBody, danger: true, confirmLabel: c.delete })) await run(() => api.deleteZone(z.id), t.zoneDeleted); }}>{c.delete}</Button>
                 </div>
               </div>
             ))}
           </div>
         </Card>
         <Card>
-          <CardHeader title="Khu quản lý" actions={<Button size="sm" onClick={async () => { const n = await askName('Tên khu quản lý mới'); if (n) await run(() => api.createUnit(n), `Đã thêm ${n}`); }}><Plus className="h-4 w-4" /> Thêm</Button>} />
+          <CardHeader title={t.units} actions={<Button size="sm" onClick={async () => { const n = await askName(t.newUnit); if (n) await run(() => api.createUnit(n), fill(a.added, { name: n })); }}><Plus className="h-4 w-4" /> {c.add}</Button>} />
           <div className="divide-y">
             {mus.data?.map((m) => (
               <div key={m.id} className="flex items-center justify-between px-4 py-2 text-sm">
                 <span>{m.name}</span>
                 <span className="space-x-1">
-                  <Button size="sm" variant="ghost" onClick={async () => { const n = await askName('Tên mới', m.name); if (n) await run(() => api.renameUnit(m.id, n), 'Đã đổi tên'); }}>Đổi tên</Button>
-                  <Button size="sm" variant="ghost" onClick={async () => { if (await confirm({ title: `Xóa ${m.name}?`, body: 'Chỉ xóa được khu quản lý không còn tủ.', danger: true, confirmLabel: 'Xóa' })) await run(() => api.deleteUnit(m.id), 'Đã xóa'); }}>Xóa</Button>
+                  <Button size="sm" variant="ghost" onClick={async () => { const n = await askName(a.newName, m.name); if (n) await run(() => api.renameUnit(m.id, n), a.renamed); }}>{a.rename}</Button>
+                  <Button size="sm" variant="ghost" onClick={async () => { if (await confirm({ title: fill(t.deleteUnitAsk, { name: m.name }), body: t.deleteUnitBody, danger: true, confirmLabel: c.delete })) await run(() => api.deleteUnit(m.id), a.deleted); }}>{c.delete}</Button>
                 </span>
               </div>
             ))}
@@ -396,10 +414,10 @@ function ZonesAdmin() {
       <Modal
         open={!!assignFor}
         onOpenChange={(v) => !v && setAssignFor(null)}
-        title={`Gán tủ vào vùng ${zones.data?.find((z) => z.id === assignFor)?.name ?? ''}`}
-        footer={<><Button variant="outline" onClick={() => setAssignFor(null)}>Hủy</Button><Button disabled={!areaIds.length} loading={assign.isPending} onClick={() => assign.mutate()}>Gán</Button></>}
+        title={fill(t.assignTitle, { name: zones.data?.find((z) => z.id === assignFor)?.name ?? '' })}
+        footer={<><Button variant="outline" onClick={() => setAssignFor(null)}>{c.cancel}</Button><Button disabled={!areaIds.length} loading={assign.isPending} onClick={() => assign.mutate()}>{t.assignButton}</Button></>}
       >
-        <p className="mb-2 text-sm text-subtle">Mọi tủ thuộc các quận đã chọn sẽ chuyển sang vùng này (lịch vùng áp lại tự động).</p>
+        <p className="mb-2 text-sm text-subtle">{t.assignNote}</p>
         <div className="grid max-h-72 grid-cols-2 gap-1 overflow-auto">
           {districts.map((d) => (
             <Checkbox key={d.id} label={`${d.name} (${d.cabinetCount})`} checked={areaIds.includes(d.id)} onChange={(v) => setAreaIds((s) => (v ? [...s, d.id] : s.filter((x) => x !== d.id)))} />
@@ -412,6 +430,8 @@ function ZonesAdmin() {
 
 function DevicesAdmin() {
   const qc = useQueryClient();
+  const t = useDict(ADMIN).devices;
+  const c = useDict(COMMON);
   const { data } = useQuery({ queryKey: ['unknown-devices'], queryFn: api.unknownDevices });
   const tree = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
   const zones = useQuery({ queryKey: ['zones'], queryFn: api.zones });
@@ -436,7 +456,7 @@ function DevicesAdmin() {
         imei: form!.imei || null,
       }),
     onSuccess: () => {
-      toast(`Đã đăng ký tủ ${form!.code}`, 'success');
+      toast(fill(dictNow(ADMIN).devices.registered, { code: form!.code }), 'success');
       setForm(null);
       void qc.invalidateQueries({ queryKey: ['unknown-devices'] });
       void qc.invalidateQueries({ queryKey: ['map-cabinets'] });
@@ -446,23 +466,23 @@ function DevicesAdmin() {
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setForm((f) => ({ ...f!, [k]: e.target.value }));
   return (
     <>
-      <PageHeader title="Đăng ký tủ" subtitle="Thiết bị gửi frame có LTID chưa đăng ký nằm ở đây chờ duyệt; tủ mới được nhận dữ liệu ngay" actions={<Button onClick={() => { setFromGps(false); setForm(blank); }}><Plus className="h-4 w-4" /> Đăng ký tủ mới</Button>} />
+      <PageHeader title={t.title} subtitle={t.subtitle} actions={<Button onClick={() => { setFromGps(false); setForm(blank); }}><Plus className="h-4 w-4" /> {t.registerNew}</Button>} />
       <Card>
-        <CardHeader title="Thiết bị chưa đăng ký" />
+        <CardHeader title={t.unknown} />
         <table className="w-full text-sm">
-          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">LTID</th><th className="px-3 py-2">IMEI</th><th className="px-3 py-2">GPS</th><th className="px-3 py-2">Thấy lần đầu</th><th className="px-3 py-2">Thấy gần nhất</th><th className="px-3 py-2">Số frame</th><th /></tr></thead>
+          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">LTID</th><th className="px-3 py-2">IMEI</th><th className="px-3 py-2">GPS</th><th className="px-3 py-2">{t.col.firstSeen}</th><th className="px-3 py-2">{t.col.lastSeen}</th><th className="px-3 py-2">{t.col.frames}</th><th /></tr></thead>
           <tbody>
-            {!data?.length && <tr><td colSpan={7} className="px-3 py-4 text-center text-subtle">Không có thiết bị lạ</td></tr>}
+            {!data?.length && <tr><td colSpan={7} className="px-3 py-4 text-center text-subtle">{t.none}</td></tr>}
             {data?.map((d) => (
               <tr key={d.ltid} className="border-t">
                 <td className="px-3 py-2 font-medium">{d.ltid}</td>
                 <td className="px-3 py-2 font-mono text-xs">
                   {d.imei}
-                  {d.otherImei && <div className="font-sans text-st-offline" title="Cùng LTID nhưng gửi từ 2 IMEI khác nhau: có thể có frame giả">⚠ cả IMEI {d.otherImei}</div>}
+                  {d.otherImei && <div className="font-sans text-st-offline" title={t.twoImeiHint}>{fill(t.alsoImei, { imei: d.otherImei })}</div>}
                 </td>
-                <td className="px-3 py-2 font-mono text-xs">{d.gps ? `${d.gps.lat.toFixed(5)}, ${d.gps.lng.toFixed(5)}` : <span className="text-subtle">chưa có fix</span>}</td>
+                <td className="px-3 py-2 font-mono text-xs">{d.gps ? `${d.gps.lat.toFixed(5)}, ${d.gps.lng.toFixed(5)}` : <span className="text-subtle">{t.noFix}</span>}</td>
                 <td className="px-3 py-2 text-xs">{fmtTime(d.firstSeenAt)}</td><td className="px-3 py-2 text-xs">{fmtTime(d.lastSeenAt)}</td><td className="px-3 py-2">{d.frames}</td>
-                <td className="px-3 py-2"><Button size="sm" onClick={() => review(d)}>Duyệt & đăng ký</Button></td>
+                <td className="px-3 py-2"><Button size="sm" onClick={() => review(d)}>{t.review}</Button></td>
               </tr>
             ))}
           </tbody>
@@ -471,48 +491,48 @@ function DevicesAdmin() {
       <Modal
         open={!!form}
         onOpenChange={(v) => !v && setForm(null)}
-        title="Đăng ký tủ"
-        footer={<><Button variant="outline" onClick={() => setForm(null)}>Hủy</Button><Button loading={reg.isPending} disabled={!form?.ltid || !form.code || !form.name || !form.lat || !form.lng || (imeiChoices.length > 0 && !form.imei)} onClick={() => reg.mutate()}>Đăng ký</Button></>}
+        title={t.title}
+        footer={<><Button variant="outline" onClick={() => setForm(null)}>{c.cancel}</Button><Button loading={reg.isPending} disabled={!form?.ltid || !form.code || !form.name || !form.lat || !form.lng || (imeiChoices.length > 0 && !form.imei)} onClick={() => reg.mutate()}>{t.register}</Button></>}
       >
         {form && (
           <div className="grid grid-cols-2 gap-3">
-            <Field label="LTID (trong firmware)"><Input value={form.ltid} onChange={set('ltid')} /></Field>
-            <Field label="Mã tủ"><Input value={form.code} onChange={set('code')} placeholder="TL01.0123" /></Field>
-            <Field label="Tên tủ"><Input value={form.name} onChange={set('name')} /></Field>
-            <Field label="Địa chỉ"><Input value={form.address} onChange={set('address')} /></Field>
-            <Field label="Vĩ độ"><Input value={form.lat} onChange={set('lat')} placeholder="10.7769" /></Field>
-            <Field label="Kinh độ"><Input value={form.lng} onChange={set('lng')} placeholder="106.7009" /></Field>
+            <Field label={t.ltid}><Input value={form.ltid} onChange={set('ltid')} /></Field>
+            <Field label={t.code}><Input value={form.code} onChange={set('code')} placeholder="TL01.0123" /></Field>
+            <Field label={t.name}><Input value={form.name} onChange={set('name')} /></Field>
+            <Field label={t.address}><Input value={form.address} onChange={set('address')} /></Field>
+            <Field label={t.lat}><Input value={form.lat} onChange={set('lat')} placeholder="10.7769" /></Field>
+            <Field label={t.lng}><Input value={form.lng} onChange={set('lng')} placeholder="106.7009" /></Field>
             {fromGps && (
               <div className="col-span-2 -mt-1 text-xs text-subtle">
-                Tọa độ điền sẵn từ GPS thiết bị gửi lên (điểm gần nhất). Sửa lại nếu thiết bị đang ở chỗ khác chỗ lắp tủ.
+                {t.fromGps}
               </div>
             )}
             {imeiChoices.length > 0 ? (
               <div className="col-span-2 space-y-1 rounded-md border border-st-offline/40 bg-st-offline/10 p-3 text-sm">
-                <div><b>LTID này gửi frame từ 2 IMEI khác nhau</b>: một trong hai có thể là frame giả. Đối chiếu tem trên module EC25 (hoặc log UART2) rồi chọn IMEI của tủ thật:</div>
-                <Select value={form.imei} onChange={set('imei')} aria-label="IMEI của tủ thật">
-                  <option value="">— chọn IMEI —</option>
+                <div><b>{t.twoImeiTitle}</b>{t.twoImeiBody}</div>
+                <Select value={form.imei} onChange={set('imei')} aria-label={t.realImei}>
+                  <option value="">{t.pickImei}</option>
                   {imeiChoices.map((i) => <option key={i} value={i}>{i}</option>)}
                 </Select>
               </div>
             ) : (
-              <Field label="IMEI (tự lấy từ frame; frame sau mang IMEI khác sẽ bị bỏ qua)" className="col-span-2">
-                <Input value={form.imei} onChange={set('imei')} placeholder="để trống = ghi nhận từ frame đầu tiên" className="font-mono" />
+              <Field label={t.imeiField} className="col-span-2">
+                <Input value={form.imei} onChange={set('imei')} placeholder={t.imeiPlaceholder} className="font-mono" />
               </Field>
             )}
-            <Field label="Quận / huyện">
+            <Field label={t.district}>
               <Select value={form.districtId} onChange={(e) => setForm({ ...form, districtId: e.target.value, wardId: '' })}>
-                <option value="">— chưa phân —</option>
+                <option value="">{t.notAssigned}</option>
                 {districts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </Select>
             </Field>
-            <Field label="Phường / xã">
+            <Field label={t.ward}>
               <Select value={form.wardId} onChange={set('wardId')} disabled={!form.districtId}>
                 <option value="">—</option>
                 {wards.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </Select>
             </Field>
-            <Field label="Vùng lịch">
+            <Field label={t.zone}>
               <Select value={form.zone1Id} onChange={set('zone1Id')}>
                 <option value="">—</option>
                 {zones.data?.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
@@ -526,29 +546,30 @@ function DevicesAdmin() {
 }
 
 function FieldMapAdmin() {
+  const t = useDict(ADMIN).fieldMap;
   const { data } = useQuery({ queryKey: ['field-map'], queryFn: api.fieldMap });
   return (
     <>
-      <PageHeader title="Ánh xạ telemetry CoreIF" subtitle="Ánh xạ đang dùng (trong code ingest). Chỉnh trên web sẽ làm ở mốc sau; key lạ tủ đang gửi liệt kê bên dưới." />
+      <PageHeader title={t.title} subtitle={t.subtitle} />
       <Card className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">Key</th><th className="px-3 py-2">Trường</th><th className="px-3 py-2">Kiểu</th><th className="px-3 py-2">Hệ số</th><th className="px-3 py-2">Đơn vị</th><th className="px-3 py-2">Ghi chú</th><th className="px-3 py-2">Firmware</th></tr></thead>
+          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">Key</th><th className="px-3 py-2">{t.col.field}</th><th className="px-3 py-2">{t.col.type}</th><th className="px-3 py-2">{t.col.scale}</th><th className="px-3 py-2">{t.col.unit}</th><th className="px-3 py-2">{t.col.note}</th><th className="px-3 py-2">Firmware</th></tr></thead>
           <tbody>
             {data?.entries.map((f) => (
               <tr key={f.key} className="border-t">
                 <td className="px-3 py-1.5 font-mono font-medium">{f.key}</td><td className="px-3 py-1.5 font-mono text-xs">{f.field}</td><td className="px-3 py-1.5">{f.type}</td><td className="px-3 py-1.5">{f.scale ?? '—'}</td><td className="px-3 py-1.5">{f.unit ?? '—'}</td><td className="px-3 py-1.5 text-xs text-subtle">{f.note}</td>
-                <td className="px-3 py-1.5">{f.supported ? <Badge tone="green">Đang gửi</Badge> : <Badge>Chờ</Badge>}</td>
+                <td className="px-3 py-1.5">{f.supported ? <Badge tone="green">{t.sending}</Badge> : <Badge>{t.waiting}</Badge>}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </Card>
-      <h2 className="mb-2 mt-6 text-base font-semibold">Key lạ tủ đang gửi</h2>
+      <h2 className="mb-2 mt-6 text-base font-semibold">{t.unknownKeys}</h2>
       <Card>
         <table className="w-full text-sm">
-          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">Key</th><th className="px-3 py-2">Số tủ</th><th className="px-3 py-2">Giá trị mẫu</th></tr></thead>
+          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">Key</th><th className="px-3 py-2">{t.col.cabinets}</th><th className="px-3 py-2">{t.col.sample}</th></tr></thead>
           <tbody>
-            {!data?.unknownKeys.length && <tr><td colSpan={3} className="px-3 py-4 text-center text-subtle">Không có key lạ</td></tr>}
+            {!data?.unknownKeys.length && <tr><td colSpan={3} className="px-3 py-4 text-center text-subtle">{t.noUnknown}</td></tr>}
             {data?.unknownKeys.map((k) => (
               <tr key={k.key} className="border-t"><td className="px-3 py-1.5 font-mono">{k.key}</td><td className="px-3 py-1.5">{k.cabinets}</td><td className="px-3 py-1.5 font-mono text-xs">{k.sample}</td></tr>
             ))}
@@ -560,23 +581,27 @@ function FieldMapAdmin() {
 }
 
 function AlarmRulesAdmin() {
+  const t = useDict(ADMIN).alarmRules;
+  const L = useLabels();
+  const lang = useLang((s) => s.lang);
+  const typeLabels = alarmTypeLabels(lang);
   const { data } = useQuery({ queryKey: ['alarm-rules'], queryFn: api.alarmRules });
   return (
     <>
-      <PageHeader title="Quy tắc cảnh báo" subtitle="Rule engine phía máy chủ; ngưỡng chi tiết đặt theo vùng hoặc từng tủ" />
-      <h2 className="mb-2 mt-2 text-base font-semibold">Bảng mã lỗi thiết bị</h2>
+      <PageHeader title={t.title} subtitle={t.subtitle} />
+      <h2 className="mb-2 mt-2 text-base font-semibold">{t.catalog}</h2>
       <ErrorCatalogTable />
-      <h2 className="mb-2 mt-6 text-base font-semibold">Quy tắc đang chạy</h2>
+      <h2 className="mb-2 mt-6 text-base font-semibold">{t.running}</h2>
       <Card>
         <table className="w-full text-sm">
-          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">Loại</th><th className="px-3 py-2">Mức</th><th className="px-3 py-2">Điều kiện</th><th className="px-3 py-2">Trạng thái</th></tr></thead>
+          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">{t.col.type}</th><th className="px-3 py-2">{t.col.severity}</th><th className="px-3 py-2">{t.col.condition}</th><th className="px-3 py-2">{t.col.status}</th></tr></thead>
           <tbody>
             {data?.map((r) => (
               <tr key={r.type} className="border-t">
-                <td className="px-3 py-2">{ALARM_TYPE_LABELS[r.type as keyof typeof ALARM_TYPE_LABELS] ?? r.type}</td>
-                <td className="px-3 py-2"><Badge tone={r.severity === 'critical' ? 'red' : r.severity === 'major' ? 'orange' : 'amber'}>{SEVERITY_LABELS[r.severity as keyof typeof SEVERITY_LABELS]}</Badge></td>
+                <td className="px-3 py-2">{typeLabels[r.type as AlarmType] ?? r.type}</td>
+                <td className="px-3 py-2"><Badge tone={r.severity === 'critical' ? 'red' : r.severity === 'major' ? 'orange' : 'amber'}>{L.severity[r.severity as keyof typeof L.severity]}</Badge></td>
                 <td className="px-3 py-2 text-xs">{r.condition}</td>
-                <td className="px-3 py-2">{r.enabled ? <Badge tone="green">Đang chạy</Badge> : <Badge>Chờ firmware / cấu hình</Badge>}</td>
+                <td className="px-3 py-2">{r.enabled ? <Badge tone="green">{t.enabled}</Badge> : <Badge>{t.waiting}</Badge>}</td>
               </tr>
             ))}
           </tbody>
@@ -588,6 +613,8 @@ function AlarmRulesAdmin() {
 
 function SettingsAdmin() {
   const qc = useQueryClient();
+  const t = useDict(ADMIN).settings;
+  const c = useDict(COMMON);
   const { data, isLoading } = useQuery({ queryKey: ['settings'], queryFn: api.settings });
   const [offline, setOffline] = useState<number | null>(null);
   const [labels, setLabels] = useState<Record<string, string> | null>(null);
@@ -599,7 +626,7 @@ function SettingsAdmin() {
       setOffline(null);
       setLabels(null);
       setPrice(null);
-      toast('Đã lưu cấu hình, áp dụng ngay', 'success');
+      toast(dictNow(ADMIN).settings.saved, 'success');
     },
     onError: errToast,
   });
@@ -607,23 +634,23 @@ function SettingsAdmin() {
   const l = labels ?? data.lampGroupLabels;
   return (
     <>
-      <PageHeader title="Cấu hình hệ thống" subtitle={data.updatedAt ? `Sửa lần cuối ${fmtTime(data.updatedAt)} bởi ${data.updatedBy}` : undefined} />
+      <PageHeader title={t.title} subtitle={data.updatedAt ? fill(t.updated, { time: fmtTime(data.updatedAt), user: data.updatedBy ?? '—' }) : undefined} />
       <Card className="max-w-xl">
         <div className="space-y-3 p-4">
-          <Field label="Coi tủ mất kết nối sau (giây, 30–900)">
+          <Field label={t.offlineAfter}>
             <Input type="number" min={30} max={900} value={offline ?? data.offlineAfterS} onChange={(e) => setOffline(Number(e.target.value))} />
           </Field>
-          <Field label="Giá điện để ước tính tiết giảm (đ/kWh, 0 = chỉ hiện kWh)">
+          <Field label={t.price}>
             <Input type="number" min={0} max={100000} step={50} value={price ?? data.pricePerKwh ?? 2000} onChange={(e) => setPrice(Number(e.target.value))} />
           </Field>
-          <div className="text-sm font-medium">Tên nhóm đèn</div>
+          <div className="text-sm font-medium">{t.lampGroups}</div>
           {['0', '1', '2', '3'].map((k) => (
-            <Field key={k} label={`Nhóm ${k}`}>
+            <Field key={k} label={fill(t.group, { k })}>
               <Input value={l[k] ?? ''} onChange={(e) => setLabels({ ...l, [k]: e.target.value })} />
             </Field>
           ))}
-          <p className="text-xs text-subtle">Tốc độ gửi lệnh, thời gian chờ ack / xác nhận, thời gian lưu dữ liệu đặt bằng biến môi trường của worker (xem README).</p>
-          <Button loading={save.isPending} disabled={offline === null && labels === null && price === null} onClick={() => save.mutate()}>Lưu</Button>
+          <p className="text-xs text-subtle">{t.envNote}</p>
+          <Button loading={save.isPending} disabled={offline === null && labels === null && price === null} onClick={() => save.mutate()}>{c.save}</Button>
         </div>
       </Card>
     </>

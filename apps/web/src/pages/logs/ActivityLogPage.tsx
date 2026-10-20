@@ -6,10 +6,16 @@ import type { ActivityLog } from '@citylight/shared';
 import { api } from '@/lib/api';
 import { downloadCsv } from '@/lib/exportFile';
 import { fmtTime } from '@/lib/utils';
+import { useDict } from '@/i18n';
+import { ACTIVITY, LOG_ACTIONS } from '@/i18n/dict/logs';
 import { DataTable } from '@/components/DataTable';
 import { Button, Input, PageHeader, Select } from '@/components/ui';
 
 export function ActivityLogPage() {
+  const t = useDict(ACTIVITY);
+  // the action is stored as Vietnamese text by the server; shown in the user's language when known
+  const actions = useDict(LOG_ACTIONS);
+  const actionText = (a: string) => actions[a] ?? a;
   const [user, setUser] = useState('');
   const [q, setQ] = useState('');
   const [from, setFrom] = useState('');
@@ -22,26 +28,26 @@ export function ActivityLogPage() {
 
   const columns = useMemo<ColumnDef<ActivityLog, unknown>[]>(
     () => [
-      { header: 'Mã', accessorKey: 'id' },
-      { header: 'Thời điểm', cell: ({ row: r }) => <span className="whitespace-nowrap text-xs">{fmtTime(r.original.ts)}</span> },
-      { header: 'Người thực hiện', accessorKey: 'userEmail' },
-      { header: 'Hành động', accessorKey: 'action' },
-      { header: 'Đối tượng', cell: ({ row: r }) => <span>{r.original.targetName}</span> },
-      { header: 'Giá trị cũ', cell: ({ row: r }) => <span className="text-xs text-subtle">{r.original.oldValue ?? '—'}</span> },
-      { header: 'Giá trị mới', cell: ({ row: r }) => <span className="text-xs">{r.original.newValue ?? '—'}</span> },
-      { header: 'IP', accessorKey: 'ip' },
+      { header: t.col.id, accessorKey: 'id' },
+      { header: t.col.ts, cell: ({ row: r }) => <span className="whitespace-nowrap text-xs">{fmtTime(r.original.ts)}</span> },
+      { header: t.col.user, accessorKey: 'userEmail' },
+      { header: t.col.action, accessorKey: 'action', cell: ({ row: r }) => actions[r.original.action] ?? r.original.action },
+      { header: t.col.target, cell: ({ row: r }) => <span>{r.original.targetName}</span> },
+      { header: t.col.oldValue, cell: ({ row: r }) => <span className="text-xs text-subtle">{r.original.oldValue ?? '—'}</span> },
+      { header: t.col.newValue, cell: ({ row: r }) => <span className="text-xs">{r.original.newValue ?? '—'}</span> },
+      { header: t.col.ip, accessorKey: 'ip' },
     ],
-    [],
+    [t, actions],
   );
 
   return (
     <div className="p-4">
       <PageHeader
-        title="Nhật ký thao tác"
-        subtitle="Ghi tự động mọi API ghi và mọi lệnh thiết bị"
+        title={t.title}
+        subtitle={t.subtitle}
         actions={
-          <Button variant="outline" onClick={() => downloadCsv('nhat-ky-thao-tac.csv', ['Mã', 'Thời điểm', 'Người', 'Hành động', 'Đối tượng', 'Cũ', 'Mới', 'IP'], (data?.items ?? []).map((l) => [l.id, fmtTime(l.ts), l.userEmail, l.action, l.targetName, l.oldValue, l.newValue, l.ip]))}>
-            <Download className="h-4 w-4" /> Xuất Excel
+          <Button variant="outline" onClick={() => downloadCsv(t.csv.file, [t.csv.id, t.csv.ts, t.csv.user, t.csv.action, t.csv.target, t.csv.oldValue, t.csv.newValue, t.csv.ip], (data?.items ?? []).map((l) => [l.id, fmtTime(l.ts), l.userEmail, actionText(l.action), l.targetName, l.oldValue, l.newValue, l.ip]))}>
+            <Download className="h-4 w-4" /> {t.export}
           </Button>
         }
       />
@@ -58,12 +64,12 @@ export function ActivityLogPage() {
         toolbar={
           <>
             <Select value={user} onChange={(e) => { setUser(e.target.value); setPage(1); }}>
-              <option value="">Mọi người dùng</option>
+              <option value="">{t.allUsers}</option>
               {users.data?.map((u) => <option key={u.id} value={u.email}>{u.email}</option>)}
             </Select>
-            <Input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Tìm tủ / hành động…" className="w-56" />
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" aria-label="Từ ngày" />
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" aria-label="Đến ngày" />
+            <Input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder={t.search} className="w-56" />
+            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" aria-label={t.from} />
+            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" aria-label={t.to} />
           </>
         }
       />

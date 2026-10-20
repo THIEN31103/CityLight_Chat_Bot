@@ -33,7 +33,7 @@ export class FavoritesController {
   async add(@Req() r: AuthedRequest, @Body() body: unknown) {
     const b = FavoriteBody.parse(body);
     const n = await this.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM map_favorites WHERE user_id = ${r.user!.id}`;
-    if ((n[0]?.n ?? 0) >= MAX_PER_USER) throw new ApiError(409, 'too_many_favorites', `Tối đa ${MAX_PER_USER} vị trí đã lưu`);
+    if ((n[0]?.n ?? 0) >= MAX_PER_USER) throw new ApiError(409, 'too_many_favorites', `Tối đa ${MAX_PER_USER} vị trí đã lưu`, { max: MAX_PER_USER });
     const rows = await this.sql<Row[]>`
       INSERT INTO map_favorites (user_id, name, lat, lng, zoom) VALUES (${r.user!.id}, ${b.name}, ${b.center.lat}, ${b.center.lng}, ${b.zoom})
       RETURNING id, name, lat, lng, zoom`;

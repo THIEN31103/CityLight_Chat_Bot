@@ -4,6 +4,8 @@ import * as Popover from '@radix-ui/react-popover';
 import { Columns3, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button, Checkbox, Empty, Select, Skeleton } from './ui';
 import { cn } from '@/lib/utils';
+import { fill, locale, useDict } from '@/i18n';
+import { TABLE } from '@/i18n/dict/table';
 
 /** Server-paginated table with column show/hide (spec: lists paginate on the server). */
 export function DataTable<T>({
@@ -31,6 +33,7 @@ export function DataTable<T>({
   toolbar?: React.ReactNode;
   initialHidden?: VisibilityState;
 }) {
+  const t = useDict(TABLE);
   const [visibility, setVisibility] = useState<VisibilityState>(initialHidden);
   const table = useReactTable({
     data,
@@ -49,7 +52,7 @@ export function DataTable<T>({
         <Popover.Root>
           <Popover.Trigger asChild>
             <Button variant="outline" size="sm">
-              <Columns3 className="h-4 w-4" /> Cột
+              <Columns3 className="h-4 w-4" /> {t.columns}
             </Button>
           </Popover.Trigger>
           <Popover.Portal>
@@ -101,21 +104,19 @@ export function DataTable<T>({
       </div>
       {total !== undefined && page !== undefined && size !== undefined && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2 text-xs text-subtle">
-          <span>
-            {total.toLocaleString('vi-VN')} dòng · trang {page}/{pages}
-          </span>
+          <span>{t.summary(total, total.toLocaleString(locale()), page, pages)}</span>
           <div className="flex items-center gap-2">
             <Select value={size} onChange={(e) => onSize?.(Number(e.target.value))} className="h-8">
               {[20, 50, 100].map((s) => (
                 <option key={s} value={s}>
-                  {s} / trang
+                  {fill(t.perPage, { n: s })}
                 </option>
               ))}
             </Select>
-            <Button variant="outline" size="icon" disabled={page <= 1} onClick={() => onPage?.(page - 1)} aria-label="Trang trước">
+            <Button variant="outline" size="icon" disabled={page <= 1} onClick={() => onPage?.(page - 1)} aria-label={t.prev}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <Button variant="outline" size="icon" disabled={page >= pages} onClick={() => onPage?.(page + 1)} aria-label="Trang sau">
+            <Button variant="outline" size="icon" disabled={page >= pages} onClick={() => onPage?.(page + 1)} aria-label={t.next}>
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>

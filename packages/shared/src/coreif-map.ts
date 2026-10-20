@@ -1,5 +1,6 @@
 // Default CoreIF telemetry key -> field mapping (spec section 5).
 // The server stores this as editable config (device_field_map); this is the seed.
+import type { Lang } from './i18n';
 
 export interface FieldMapEntry {
   key: string;
@@ -48,3 +49,33 @@ export const DEFAULT_FIELD_MAP: FieldMapEntry[] = [
   { key: 'MFRQ', field: 'freqHz', type: 'decimal', scale: 1, unit: 'Hz', note: 'Tương lai', supported: false },
   { key: 'LCSQ', field: 'simSignal', type: 'int', scale: 1, unit: null, note: 'Tương lai', supported: false },
 ];
+
+/** English `note` of DEFAULT_FIELD_MAP entries, by CoreIF key (keys with an empty note are not listed). */
+export const FIELD_MAP_NOTES_EN: Record<string, string> = {
+  LTID: 'Cabinet identification key',
+  LGPS: 'X before the first GNSS fix; format needs a sample frame',
+  LACI: 'Meaning unclear',
+  LCLI: '0 OK, 1 PLC lost, 2 PM lost, 3 CT lost, 4 all three lost',
+  CTTE: '1000 = sensor fault',
+  MPI1: 'Phase current',
+  MPI2: 'Phase current',
+  MPI3: 'Phase current',
+  MCO1: 'Sign lost (u32)',
+  MPOW: 'Unit to be confirmed',
+  LQ2: 'Real state of branch 1',
+  LQ3: 'Real state of branch 2',
+  PIN5: 'Command echo',
+  LINE1: 'Command echo',
+  LINE2: 'Command echo',
+  PTIM: 'X when PLC is lost',
+  PDOR: 'Waiting for the firmware flag',
+  PFLT: 'Waiting for the firmware flag',
+  MKWH: 'Future',
+  MFRQ: 'Future',
+  LCSQ: 'Future',
+};
+
+/** DEFAULT_FIELD_MAP with its notes in one language. */
+export function defaultFieldMap(lang: Lang = 'vi'): FieldMapEntry[] {
+  return lang === 'vi' ? DEFAULT_FIELD_MAP : DEFAULT_FIELD_MAP.map((e) => ({ ...e, note: FIELD_MAP_NOTES_EN[e.key] ?? e.note }));
+}

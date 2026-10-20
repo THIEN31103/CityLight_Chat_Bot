@@ -1,7 +1,8 @@
 // MSW handlers implementing the /api/v1 contract of docs/spec.md section 11 against the in-browser mock DB.
 import { http, HttpResponse, delay, type PathParams } from 'msw';
 import type { Alarm, CommandType, DimmingProfile, GpsDriftItem, GpsSuggestion, Incident, LampGroup, Schedule, Thresholds, User } from '@citylight/shared';
-import { DEFAULT_FIELD_MAP, GPS_RELOCATE_WINDOW_MIN, canManageRole, categoryForAlarm, distanceM, estimateDimming, judgeGpsSuggestion, roleRequires2fa, validateDimming } from '@citylight/shared';
+import { GPS_RELOCATE_WINDOW_MIN, canManageRole, categoryForAlarm, defaultFieldMap, errorCatalog, distanceM, estimateDimming, judgeGpsSuggestion, roleRequires2fa, validateDimming } from '@citylight/shared';
+import { getLang } from '@/i18n';
 import {
   MockApiError,
   batchItems,
@@ -34,7 +35,10 @@ const SESSION_KEY = 'cl.mockSession';
 function loadSession(): User | null {
   try {
     const id = sessionStorage.getItem(SESSION_KEY);
-    return users.find((u) => u.id === id) ?? null;
+    const u = users.find((x) => x.id === id) ?? null;
+    // mock data is rebuilt on every reload: this browser's remembered language stands in for users.lang
+    if (u) u.lang = getLang();
+    return u;
   } catch {
     return null;
   }
@@ -126,7 +130,7 @@ function mockGpsSuggestion(cabinetId: string): GpsSuggestion {
   const st = states.get(cabinetId);
   const gps = st?.online && st.gpsDevice ? st.gpsDevice : null;
   const s = { samples: gps ? 180 : 0, spreadM: gps ? 8 : null, distanceM: gps ? Math.round(distanceM(c.location, gps)) : null };
-  return { declared: c.location, gps, ...s, windowMin: GPS_RELOCATE_WINDOW_MIN, ...judgeGpsSuggestion(s) };
+  return { declared: c.location, gps, ...s, windowMin: GPS_RELOCATE_WINDOW_MIN, ...judgeGpsSuggestion(s, getLang()) };
 }
 
 function paginate<T>(items: T[], url: URL) {
@@ -409,7 +413,7 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
   http.put(`${API}/cabinets/:id/dimming`, wrap(async ({ params, request }: { params: Record<string, string>; request: Request }) => {
     const u = requireUser();
     const body = (await request.json()) as DimmingProfile;
-    const errors = validateDimming(body.segments);
+    const errors = validateDimming(body.segments, getLang());
     if (errors.length) return problem(422, 'invalid_profile', errors.join('; '));
     const group = (body.lampGroup ?? 0) as LampGroup;
     dimming.set(`${params.id}:${group}`, { lampGroup: group, segments: body.segments, inheritedFromZone: false });
@@ -625,7 +629,7 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
     const group = Number(params.group) as LampGroup;
     const zoneId = new URL(request.url).searchParams.get('zoneId');
     const body = (await request.json()) as DimmingProfile;
-    const errors = validateDimming(body.segments);
+    const errors = validateDimming(body.segments, getLang());
     if (errors.length) return problem(422, 'invalid_profile', errors.join('; '));
     const p = { lampGroup: group, segments: body.segments, inheritedFromZone: false };
     if (zoneId) zoneDimming.set(`${zoneId}:${group}`, p);
@@ -698,23 +702,13 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
       { ltid: 'CTY9002', firstSeenAt: new Date(Date.now() - 86400000).toISOString(), lastSeenAt: new Date(Date.now() - 600000).toISOString(), frames: 8120, imei: '861234567890456', otherImei: '861999000111222', gps: null },
     ]),
   )),
-  http.get(`${API}/field-map`, wrap(() => HttpResponse.json({ entries: DEFAULT_FIELD_MAP, unknownKeys: [] }))),
+  http.get(`${API}/field-map`, wrap(() => HttpResponse.json({ entries: defaultFieldMap(getLang()), unknownKeys: [] }))),
   http.get(`${API}/settings`, wrap(() => HttpResponse.json({ offlineAfterS: 60, pricePerKwh: 2000, lampGroupLabels: { 0: 'Đèn chính', 1: 'Đèn giao lộ', 2: 'Đèn trên cầu', 3: 'Nhóm mở rộng' }, updatedAt: null, updatedBy: null }))),
+  // like the API (alarm-config.ts): the catalog in the reader's language, condition = the rule's telemetry evidence
   http.get(`${API}/alarm-rules`, wrap(() =>
-    HttpResponse.json([
-      { type: 'offline', severity: 'critical', condition: 'Không có frame > 60 s', enabled: true },
-      { type: 'plc_lost', severity: 'critical', condition: 'PCON=0 > 30 s', enabled: true },
-      { type: 'pm_lost', severity: 'major', condition: 'MCON=0 > 30 s', enabled: true },
-      { type: 'over_voltage', severity: 'major', condition: 'U pha > ngưỡng cao, debounce 30 s', enabled: true },
-      { type: 'under_voltage', severity: 'major', condition: 'U pha < ngưỡng thấp, debounce 30 s', enabled: true },
-      { type: 'no_load', severity: 'major', condition: 'Nhánh sáng nhưng I < ngưỡng không tải', enabled: true },
-      { type: 'leak_current', severity: 'critical', condition: 'CTVL > ngưỡng mA', enabled: true },
-      { type: 'over_temp', severity: 'minor', condition: 'CTTE > ngưỡng °C', enabled: true },
-      { type: 'clock_drift', severity: 'minor', condition: '|PTIM − giờ máy chủ| > 5 phút', enabled: true },
-      { type: 'schedule_mismatch', severity: 'major', condition: 'Trạng thái nhánh lệch lịch > 10 phút (bỏ qua khi PMAN=1)', enabled: true },
-      { type: 'door_open', severity: 'major', condition: 'PDOR=1 (chờ firmware)', enabled: false },
-      { type: 'contactor_fault', severity: 'critical', condition: 'PFLT=1 (chờ firmware)', enabled: false },
-    ]),
+    HttpResponse.json(
+      errorCatalog(getLang()).map((e) => ({ type: e.type, code: e.code, title: e.title, severity: e.severity, condition: e.source, enabled: e.supported })),
+    ),
   )),
   http.get(`${API}/system/stats`, wrap(() => {
     const online = cabinets.filter((c) => states.get(c.id)!.online).length;

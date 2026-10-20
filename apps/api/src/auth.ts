@@ -185,8 +185,10 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   private assertUsable(u: AuthRow) {
-    if (u.locked_until && u.locked_until.getTime() > Date.now())
-      throw new ApiError(423, 'account_locked', `Tài khoản tạm khóa tới ${u.locked_until.toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}`);
+    if (u.locked_until && u.locked_until.getTime() > Date.now()) {
+      const until = u.locked_until.toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+      throw new ApiError(423, 'account_locked', `Tài khoản tạm khóa tới ${until}`, { until });
+    }
     if (!u.active) throw new ApiError(403, 'account_disabled', 'Tài khoản đã bị khóa');
   }
 
@@ -247,7 +249,10 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       if (!ok) {
         if (await this.registerFailure(u, ip, ua)) {
           await this.revokeUser(u.id);
-          throw new ApiError(423, 'account_locked', `Nhập sai ${MAX_FAILED} lần: tài khoản tạm khóa ${LOCK_MINUTES} phút và đã đăng xuất mọi nơi`);
+          throw new ApiError(423, 'reauth_locked', `Nhập sai ${MAX_FAILED} lần: tài khoản tạm khóa ${LOCK_MINUTES} phút và đã đăng xuất mọi nơi`, {
+            max: MAX_FAILED,
+            minutes: LOCK_MINUTES,
+          });
         }
         throw new ApiError(422, 'invalid_otp', 'Mã xác thực không đúng hoặc đã dùng');
       }
@@ -418,7 +423,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const pending = await this.redis.get(`cl:2fa-setup:${u.id}`);
     if (!pending) throw new ApiError(409, 'totp_setup_expired', 'Phiên thiết lập 2FA đã hết hạn, bấm "Thiết lập 2FA" lại');
     const step = verifyTotp(decryptSecret(pending, this.encKey), code, null);
-    if (step === null) throw new ApiError(422, 'invalid_totp', 'Mã xác thực không đúng — kiểm tra giờ trên điện thoại');
+    if (step === null) throw new ApiError(422, 'totp_setup_invalid', 'Mã xác thực không đúng — kiểm tra giờ trên điện thoại');
     const codes = newRecoveryCodes();
     const hashes = await Promise.all(codes.map((c) => hash(normalizeRecoveryCode(c))));
     await this.sql.begin(async (tx) => {

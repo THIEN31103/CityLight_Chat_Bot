@@ -1,17 +1,21 @@
 import { useEffect, useState } from 'react';
 import { Check, Clock, Lightbulb, LightbulbOff, Loader2, Power, RotateCcw, Send } from 'lucide-react';
 import type { CabinetDetail, Command, CommandType, Schedule } from '@citylight/shared';
-import { COMMAND_STATUS_LABELS, describeCommand } from '@citylight/shared';
+import { describeCommand } from '@citylight/shared';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { cn, fmtTime } from '@/lib/utils';
 import { Badge, Button, Card, CardHeader, Checkbox, Input, StatusBadge, Unsupported, confirm, toast } from '@/components/ui';
+import { fill, useDict, useLabels, useLang } from '@/i18n';
+import { CABINET } from '@/i18n/dict/cabinet';
 import { useCommand } from './useCommand';
+import { rich } from './rich';
 import { CabinetDiagram } from './CabinetDiagram';
 
 type Detail = CabinetDetail & { cabinet: { districtName: string; wardName: string } };
 
 function BranchBulb({ label, on }: { label: string; on: boolean | null }) {
+  const t = useDict(CABINET).branchState;
   return (
     <div className="flex flex-col items-center gap-1">
       <div
@@ -25,7 +29,7 @@ function BranchBulb({ label, on }: { label: string; on: boolean | null }) {
         {on ? <Lightbulb className="h-7 w-7" /> : <LightbulbOff className="h-7 w-7" />}
       </div>
       <div className="text-sm font-medium">{label}</div>
-      <div className="text-xs text-subtle">{on === null ? 'Không rõ' : on ? 'Đang sáng' : 'Tắt'}</div>
+      <div className="text-xs text-subtle">{on === null ? t.unknown : on ? t.on : t.off}</div>
     </div>
   );
 }
@@ -73,6 +77,7 @@ function ControlButton({
   className?: string;
   children: React.ReactNode;
 }) {
+  const t = useDict(CABINET).control;
   return (
     <button
       type="button"
@@ -80,7 +85,7 @@ function ControlButton({
       disabled={disabled}
       aria-pressed={selected}
       aria-busy={pending}
-      title={pending ? 'Đang gửi lệnh, chờ tủ xác nhận' : selected ? 'Trạng thái hiện tại của tủ' : undefined}
+      title={pending ? t.pendingTitle : selected ? t.selectedTitle : undefined}
       className={cn(
         'inline-flex h-9 items-center justify-center gap-1.5 rounded-md border px-3.5 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary',
         'disabled:cursor-not-allowed',
@@ -100,6 +105,9 @@ function ControlButton({
 
 export function ControlTab({ detail }: { detail: Detail }) {
   const { cabinet, state, capabilities } = detail;
+  const t = useDict(CABINET).control;
+  const L = useLabels();
+  const lang = useLang((s) => s.lang);
   const can = useSession((s) => s.can);
   const label = `${cabinet.code} - ${cabinet.name}`;
   const { active, send } = useCommand(cabinet.id, label);
@@ -107,11 +115,11 @@ export function ControlTab({ detail }: { detail: Detail }) {
   const offline = !state.online;
   const disabled = !canControl || offline;
   const disabledReason = !can('cabinet.control')
-    ? 'Tài khoản không có quyền điều khiển'
+    ? t.noPermission
     : !capabilities.includes('manual_control')
-      ? 'Firmware cũ: chặn điều khiển (không lọc LTID)'
+      ? t.oldFw
       : offline
-        ? 'Tủ đang mất kết nối'
+        ? t.offline
         : null;
 
   const inFlight = !!active && IN_FLIGHT.includes(active.status);
@@ -133,47 +141,47 @@ export function ControlTab({ detail }: { detail: Detail }) {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader title="Sơ đồ tủ" subtitle="Đèn báo trên tủ và 2 nhánh đèn, cập nhật theo thời gian thực" actions={<StatusBadge status={state.status} />} />
+        <CardHeader title={t.diagramTitle} subtitle={t.diagramSub} actions={<StatusBadge status={state.status} />} />
         <div className="p-3">
           <CabinetDiagram state={state} code={cabinet.code} />
         </div>
       </Card>
 
       <Card>
-        <CardHeader title="Điều khiển bằng tay" subtitle={disabledReason ?? 'Mọi lệnh đều có hộp xác nhận và được ghi nhật ký'} />
+        <CardHeader title={t.manualTitle} subtitle={disabledReason ?? t.manualSub} />
         <div className="grid gap-2 p-4 sm:grid-cols-3">
-          <ControlButton {...ctl('on', manual && state.branch1On === true && state.branch2On === true, 'MANUAL_ALL', { on: true }, 'Bật toàn tủ (chế độ thủ công)')}>
-            <Lightbulb className="h-4 w-4" /> Bật toàn tủ
+          <ControlButton {...ctl('on', manual && state.branch1On === true && state.branch2On === true, 'MANUAL_ALL', { on: true }, t.allOnAction)}>
+            <Lightbulb className="h-4 w-4" /> {t.allOn}
           </ControlButton>
-          <ControlButton {...ctl('off', manual && state.branch1On === false && state.branch2On === false, 'MANUAL_ALL', { on: false }, 'Tắt toàn tủ (chế độ thủ công)', true)}>
-            <LightbulbOff className="h-4 w-4" /> Tắt toàn tủ
+          <ControlButton {...ctl('off', manual && state.branch1On === false && state.branch2On === false, 'MANUAL_ALL', { on: false }, t.allOffAction, true)}>
+            <LightbulbOff className="h-4 w-4" /> {t.allOff}
           </ControlButton>
-          <ControlButton {...ctl('auto', known && state.manualMode === false, 'AUTO', {}, 'Về chế độ tự động theo lịch')}>
-            <RotateCcw className="h-4 w-4" /> Về tự động
+          <ControlButton {...ctl('auto', known && state.manualMode === false, 'AUTO', {}, t.autoAction)}>
+            <RotateCcw className="h-4 w-4" /> {t.auto}
           </ControlButton>
           {[1, 2].map((b) => (
             <div key={b} className="flex gap-2 sm:col-span-3 md:col-span-1">
-              <ControlButton className="flex-1" {...ctl('on', manual && branchOn(b) === true, 'MANUAL_BRANCH', { branch: b, on: true }, `Bật nhánh ${b}`)}>
-                Bật N{b}
+              <ControlButton className="flex-1" {...ctl('on', manual && branchOn(b) === true, 'MANUAL_BRANCH', { branch: b, on: true }, t.branchOnAction(b))}>
+                {t.branchOn(b)}
               </ControlButton>
-              <ControlButton className="flex-1" {...ctl('off', manual && branchOn(b) === false, 'MANUAL_BRANCH', { branch: b, on: false }, `Tắt nhánh ${b}`, true)}>
-                Tắt N{b}
+              <ControlButton className="flex-1" {...ctl('off', manual && branchOn(b) === false, 'MANUAL_BRANCH', { branch: b, on: false }, t.branchOffAction(b), true)}>
+                {t.branchOff(b)}
               </ControlButton>
             </div>
           ))}
         </div>
         <div className="-mt-2 flex flex-wrap gap-x-4 gap-y-1 px-4 pb-3 text-xs text-subtle">
           <span className="flex items-center gap-1">
-            <Check className="h-3.5 w-3.5" /> Nút tô màu = trạng thái tủ đang báo về
+            <Check className="h-3.5 w-3.5" /> {t.legendSelected}
           </span>
           <span className="flex items-center gap-1">
-            <Loader2 className="h-3.5 w-3.5 text-st-dimming" /> Viền vàng = lệnh đang gửi, chờ tủ xác nhận
+            <Loader2 className="h-3.5 w-3.5 text-st-dimming" /> {t.legendPending}
           </span>
         </div>
         {active && (
           <div className="mx-4 mb-4 flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-sm">
-            <span className="truncate">{describeCommand(active.type, active.params)}</span>
-            <Badge tone={STATUS_TONE[active.status]}>{COMMAND_STATUS_LABELS[active.status]}</Badge>
+            <span className="truncate">{describeCommand(active.type, active.params, lang)}</span>
+            <Badge tone={STATUS_TONE[active.status]}>{L.commandStatus[active.status]}</Badge>
           </div>
         )}
       </Card>
@@ -181,15 +189,15 @@ export function ControlTab({ detail }: { detail: Detail }) {
       <ScheduleCard detail={detail} />
 
       <Card>
-        <CardHeader title="Thời gian TĐK" />
+        <CardHeader title={t.timeTitle} />
         <div className="flex flex-wrap items-center justify-between gap-3 p-4">
           <div className="flex items-center gap-2 text-sm">
             <Clock className="h-4 w-4 text-subtle" />
             <span className="font-mono">{fmtTime(state.deviceTime, 'DD/MM/YYYY HH:mm')}</span>
-            {!state.deviceTime && <span className="text-xs text-subtle">(PLC không phản hồi)</span>}
+            {!state.deviceTime && <span className="text-xs text-subtle">{t.plcNoReply}</span>}
           </div>
-          <Button variant="outline" size="sm" disabled={!can('cabinet.control') || offline} onClick={() => send('SET_TIME', {}, 'Đồng bộ thời gian với máy chủ')}>
-            Đồng bộ thời gian với máy chủ
+          <Button variant="outline" size="sm" disabled={!can('cabinet.control') || offline} onClick={() => send('SET_TIME', {}, t.syncTime)}>
+            {t.syncTime}
           </Button>
         </div>
       </Card>
@@ -199,6 +207,7 @@ export function ControlTab({ detail }: { detail: Detail }) {
 
 function ScheduleCard({ detail }: { detail: Detail }) {
   const { cabinet, schedule } = detail;
+  const t = useDict(CABINET).schedule;
   const can = useSession((s) => s.can);
   const [s, setS] = useState<Schedule>(schedule);
   const [saving, setSaving] = useState(false);
@@ -208,26 +217,26 @@ function ScheduleCard({ detail }: { detail: Detail }) {
 
   async function save() {
     if (s.mode === 2 && !s.branch1Enabled && !s.branch2Enabled) {
-      const ok = await confirm({ title: 'Cả hai nhánh bị tắt', body: 'Ở Chế độ 2, tắt cả hai nhánh làm LOGO quay về Chế độ 1. Vẫn gửi?', danger: true });
+      const ok = await confirm({ title: t.bothOffTitle, body: t.bothOffBody, danger: true });
       if (!ok) return;
     }
     const ok = await confirm({
-      title: 'Gửi lịch xuống tủ',
+      title: t.sendTitle,
       body: (
         <div>
-          Tủ <b>{cabinet.code} - {cabinet.name}</b>: Chế độ {s.mode}, nhánh 1 {s.on1} → {s.off1}
-          {s.mode === 2 && `, nhánh 2 ${s.on2} → ${s.off2}`}
+          {rich(t.summary, { cabinet: <b>{cabinet.code} - {cabinet.name}</b>, mode: s.mode, on1: s.on1, off1: s.off1 })}
+          {s.mode === 2 && fill(t.summary2, { on2: s.on2, off2: s.off2 })}
         </div>
       ),
-      confirmLabel: 'Gửi lịch',
+      confirmLabel: t.sendLabel,
     });
     if (!ok) return;
     setSaving(true);
     try {
       await api.setSchedule(cabinet.id, s);
-      toast('Đã gửi lịch, đang chờ tủ xác nhận', 'success');
+      toast(t.sent, 'success');
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : 'Gửi lịch thất bại', 'error');
+      toast(e instanceof ApiError ? e.message : t.sendFailed, 'error');
     } finally {
       setSaving(false);
     }
@@ -245,12 +254,12 @@ function ScheduleCard({ detail }: { detail: Detail }) {
   return (
     <Card>
       <CardHeader
-        title="Lịch bật/tắt"
-        subtitle={`${s.inheritedFromZone ? 'Kế thừa từ vùng' : 'Riêng cho tủ'} · gửi lần cuối ${fmtTime(s.appliedAt)} · tủ chưa báo lại lịch đang chạy (chờ firmware)`}
+        title={t.title}
+        subtitle={fill(t.subtitle, { source: s.inheritedFromZone ? t.inherited : t.own, time: fmtTime(s.appliedAt) })}
         actions={
           editable && (
             <Button size="sm" onClick={save} loading={saving} disabled={!detail.state.online}>
-              <Send className="h-4 w-4" /> Lưu & gửi xuống tủ
+              <Send className="h-4 w-4" /> {t.saveSend}
             </Button>
           )
         }
@@ -258,27 +267,27 @@ function ScheduleCard({ detail }: { detail: Detail }) {
       <div className="space-y-4 p-4">
         <div className="flex gap-4 text-sm">
           <label className="flex items-center gap-2">
-            <input type="radio" checked={s.mode === 1} onChange={() => set('mode', 1)} disabled={!editable} /> Chế độ 1 (chung 2 nhánh)
+            <input type="radio" checked={s.mode === 1} onChange={() => set('mode', 1)} disabled={!editable} /> {t.mode1}
           </label>
           <label className="flex items-center gap-2">
-            <input type="radio" checked={s.mode === 2} onChange={() => set('mode', 2)} disabled={!editable} /> Chế độ 2 (lịch riêng từng nhánh)
+            <input type="radio" checked={s.mode === 2} onChange={() => set('mode', 2)} disabled={!editable} /> {t.mode2}
           </label>
         </div>
         {s.mode === 1 ? (
           <div className="space-y-2">
-            {timeRange('Thời gian mở đèn', 'on1', 'off1')}
+            {timeRange(t.lightsOn, 'on1', 'off1')}
             <div className="flex items-center gap-2">
-              <span className="w-40 text-sm text-subtle">Thời gian tiết giảm</span>
-              <Unsupported>Chưa hỗ trợ trên thiết bị (T12 đang tắt)</Unsupported>
+              <span className="w-40 text-sm text-subtle">{t.dimTime}</span>
+              <Unsupported>{t.dimUnsupportedT12}</Unsupported>
             </div>
           </div>
         ) : (
           <div className="space-y-2">
-            {timeRange('Mở nhánh 1', 'on1', 'off1', 'branch1Enabled')}
-            {timeRange('Mở nhánh 2', 'on2', 'off2', 'branch2Enabled')}
+            {timeRange(t.branchOn(1), 'on1', 'off1', 'branch1Enabled')}
+            {timeRange(t.branchOn(2), 'on2', 'off2', 'branch2Enabled')}
             <div className="flex items-center gap-2">
-              <span className="w-40 text-sm text-subtle">Thời gian tiết giảm</span>
-              <Unsupported>Chưa hỗ trợ trên thiết bị</Unsupported>
+              <span className="w-40 text-sm text-subtle">{t.dimTime}</span>
+              <Unsupported>{t.dimUnsupported}</Unsupported>
             </div>
           </div>
         )}

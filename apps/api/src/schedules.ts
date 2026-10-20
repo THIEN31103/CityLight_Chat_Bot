@@ -79,7 +79,7 @@ export class SchedulesService {
   async dropCabinetSchedule(u: SessionUser, id: string, ip?: string) {
     const cid = await this.cabinets.assertCabinet(u.scope, id);
     const done = await this.sql`DELETE FROM schedules WHERE cabinet_id = ${cid} RETURNING id`;
-    if (!done.length) throw new ApiError(404, 'not_found', 'Tủ không có lịch riêng');
+    if (!done.length) throw new ApiError(404, 'no_cabinet_schedule', 'Tủ không có lịch riêng');
     const c = (await this.sql<{ code: string; name: string }[]>`SELECT code, name FROM cabinets WHERE id = ${cid}`)[0]!;
     await this.log(u, 'Bỏ lịch riêng của tủ', 'cabinet', cid, `${c.code} - ${c.name}`, 'Dùng lịch vùng', ip);
     await this.reconcile({ cabinetId: cid });

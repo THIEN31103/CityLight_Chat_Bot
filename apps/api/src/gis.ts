@@ -6,11 +6,12 @@ import ExcelJS from 'exceljs';
 import type { PendingQuery, Row as PgRow, TransactionSql } from 'postgres';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
-import { IMPORT_COLUMNS, parseImportRows, poleCode, pointsAlong, routeCode, type ImportPole, type LngLat } from '@citylight/shared';
+import { IMPORT_COLUMNS_I18N, parseImportRows, poleCode, pointsAlong, routeCode, type ImportPole, type Lang, type LngLat } from '@citylight/shared';
 import { CONFIG_CHANNEL } from '@citylight/db/notify';
 import { RequirePerm, type AuthedRequest, type SessionUser } from './auth';
 import { CabinetsModule, CabinetsService } from './cabinets';
 import { ApiError } from './errors';
+import { XLSX_TEXT } from './xlsx';
 import { REDIS, SQL, type Sql } from './infra';
 import { inScope, scopeWhere } from './scope';
 
@@ -142,15 +143,15 @@ export class GisService {
         : (await tx<{ id: string; code: string; district_id: string | null; ward_id: string | null; active: boolean }[]>`
             SELECT c.id, c.code, c.district_id, c.ward_id, c.active FROM poles p JOIN routes r ON r.id = p.route_id JOIN cabinets c ON c.id = r.cabinet_id
             WHERE p.id = ${(op as { poleId: string }).poleId}`)[0];
-    if (!row) throw new ApiError(404, 'not_found', `Thao tác ${i + 1}: không tìm thấy đối tượng`);
-    if (!row.active || !inScope(u.scope, row.district_id, row.ward_id)) throw new ApiError(403, 'forbidden_scope', `Thao tác ${i + 1}: tủ ${row.code} ngoài khu vực của bạn`);
+    if (!row) throw new ApiError(404, 'op_target_not_found', `Thao tác ${i + 1}: không tìm thấy đối tượng`, { op: i + 1 });
+    if (!row.active || !inScope(u.scope, row.district_id, row.ward_id)) throw new ApiError(403, 'op_out_of_scope', `Thao tác ${i + 1}: tủ ${row.code} ngoài khu vực của bạn`, { op: i + 1, code: row.code });
     return { id: row.id, code: row.code };
   }
 
   /** Someone saved the same object since the editor loaded it: refuse instead of overwriting. */
   private stale(i: number, expected: string | undefined, actual: Date | undefined, what: string) {
     if (expected && actual && Math.abs(actual.getTime() - Date.parse(expected)) > 1)
-      throw new ApiError(409, 'edit_conflict', `Thao tác ${i + 1}: ${what} vừa được người khác sửa, tải lại bản đồ rồi làm lại`);
+      throw new ApiError(409, 'edit_conflict', `Thao tác ${i + 1}: ${what} vừa được người khác sửa, tải lại bản đồ rồi làm lại`, { op: i + 1, what });
   }
 
   /** Every op of the draft in one transaction: all saved or nothing. */
@@ -188,13 +189,17 @@ export class GisService {
           }
           case 'addPole': {
             const route = (await tx<{ id: string }[]>`SELECT id FROM routes WHERE cabinet_id = ${op.cabinetId} AND branch = ${op.branch} FOR UPDATE`)[0];
-            if (!route) throw new ApiError(422, 'invalid_request', `Thao tác ${i + 1}: tủ ${cab.code} chưa có tuyến N${op.branch}, vẽ tuyến trước`);
+            if (!route) throw new ApiError(422, 'op_route_missing', `Thao tác ${i + 1}: tủ ${cab.code} chưa có tuyến N${op.branch}, vẽ tuyến trước`, {
+                op: i + 1,
+                code: cab.code,
+                branch: op.branch,
+              });
             const seq = op.seq ?? ((await tx<{ m: number }[]>`SELECT coalesce(max(seq), 0)::int AS m FROM poles WHERE route_id = ${route.id}`)[0]!.m + 1);
             const code = poleCode(cab.code, op.branch, seq);
             const p = (await tx<{ id: string }[]>`
               INSERT INTO poles (route_id, code, location, lamp_count, seq) VALUES (${route.id}, ${code}, ST_SetSRID(ST_MakePoint(${op.lng}, ${op.lat}), 4326), ${op.lampCount}, ${seq})
               ON CONFLICT (code) DO NOTHING RETURNING id`)[0];
-            if (!p) throw new ApiError(409, 'edit_conflict', `Thao tác ${i + 1}: trụ ${code} đã tồn tại`);
+            if (!p) throw new ApiError(409, 'pole_code_taken', `Thao tác ${i + 1}: trụ ${code} đã tồn tại`, { op: i + 1, code });
             await this.writeLamps(tx, p.id, code, op.lampCount, op.ratedPowerW, op.lampGroup);
             break;
           }
@@ -248,7 +253,7 @@ export class GisService {
       const cab = await this.cabinetOf(tx, u, { op: 'deleteRoute', routeId: rid }, 0);
       const r = (await tx<{ branch: 1 | 2; geojson: string }[]>`SELECT branch, ST_AsGeoJSON(path) AS geojson FROM routes WHERE id = ${rid} FOR UPDATE`)[0]!;
       const pts = pointsAlong((JSON.parse(r.geojson) as { coordinates: LngLat[] }).coordinates, b.spacingM);
-      if (pts.length > 2000) throw new ApiError(422, 'invalid_request', `Sinh ${pts.length} trụ là quá nhiều, tăng khoảng cách`);
+      if (pts.length > 2000) throw new ApiError(422, 'too_many_poles', `Sinh ${pts.length} trụ là quá nhiều, tăng khoảng cách`, { count: pts.length });
       await tx`DELETE FROM poles WHERE route_id = ${rid}`;
       code = routeCode(cab.code, r.branch);
       for (const [k, [lng, lat]] of pts.entries()) {
@@ -265,25 +270,21 @@ export class GisService {
 
   // ---------------- import ----------------
 
-  async template(reply: FastifyReply) {
+  /** Import template in the user's language (S49); the import accepts both header sets. */
+  async template(reply: FastifyReply, lang: Lang = 'vi') {
+    const T = XLSX_TEXT[lang].poleTemplate;
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Trụ đèn');
-    ws.columns = IMPORT_COLUMNS.map((h) => ({ header: h, width: Math.max(12, h.length + 4) }));
+    const ws = wb.addWorksheet(T.sheet);
+    ws.columns = IMPORT_COLUMNS_I18N[lang].map((h) => ({ header: h, width: Math.max(12, h.length + 4) }));
     ws.getRow(1).font = { bold: true };
-    ws.addRow(['TL01.0001', 'N1', 1, 10.776901, 106.700981, 1, 150, 0, '']);
-    ws.addRow(['TL01.0001', 'N1', 2, 10.777150, 106.701200, 2, 150, 0, 'T-OLD-12']);
-    ws.addRow(['TL01.0001', 'N2', 1, 10.776700, 106.700700, 1, 100, 1, '']);
-    const note = wb.addWorksheet('Hướng dẫn');
-    for (const line of [
-      'Mỗi dòng là một trụ. Mã tủ phải là tủ đã đăng ký và nằm trong khu vực của bạn.',
-      'Nhánh: 1, 2, N1 hoặc N2. Thứ tự trụ: 1 = gần tủ nhất; tuyến được vẽ nối tủ → trụ theo thứ tự.',
-      'Vĩ độ / kinh độ: WGS84 (Google Maps), dấu chấm hoặc dấu phẩy thập phân.',
-      'Số đèn mặc định 1; Nhóm đèn 0 = đèn chính, 1 = giao lộ, 2 = trên cầu, 3 = mở rộng.',
-      'Nhập lại cùng tủ + nhánh sẽ THAY toàn bộ trụ của tuyến đó bằng dữ liệu trong file.',
-    ]) note.addRow([line]);
+    ws.addRow(['TL01.0001', T.branch1, 1, 10.776901, 106.700981, 1, 150, 0, '']);
+    ws.addRow(['TL01.0001', T.branch1, 2, 10.777150, 106.701200, 2, 150, 0, 'T-OLD-12']);
+    ws.addRow(['TL01.0001', T.branch2, 1, 10.776700, 106.700700, 1, 100, 1, '']);
+    const note = wb.addWorksheet(T.notesSheet);
+    for (const line of T.notes.split('\n')) note.addRow([line]);
     note.getColumn(1).width = 110;
     reply.header('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-      .header('content-disposition', `attachment; filename="mau-nhap-tru.xlsx"`);
+      .header('content-disposition', `attachment; filename="${T.file}.xlsx"`);
     return Buffer.from(await wb.xlsx.writeBuffer());
   }
 
@@ -330,8 +331,8 @@ export class GisService {
 
   async importPoles(u: SessionUser, file: Buffer, dryRun: boolean, ip?: string) {
     const rows = await this.readRows(file);
-    if (rows.length > MAX_IMPORT_ROWS) throw new ApiError(413, 'too_many_rows', `Tối đa ${MAX_IMPORT_ROWS} dòng mỗi lần nhập`);
-    const { poles, errors } = parseImportRows(rows);
+    if (rows.length > MAX_IMPORT_ROWS) throw new ApiError(413, 'too_many_rows', `Tối đa ${MAX_IMPORT_ROWS} dòng mỗi lần nhập`, { max: MAX_IMPORT_ROWS });
+    const { poles, errors } = parseImportRows(rows, u.lang);
     const codes = [...new Set(poles.map((p) => p.cabinetCode))];
     const cabs = await this.sql<{ id: string; code: string; lat: number; lng: number; district_id: string | null; ward_id: string | null; active: boolean }[]>`
       SELECT id, code, ST_Y(location) AS lat, ST_X(location) AS lng, district_id, ward_id, active FROM cabinets WHERE code = ANY(${codes})`;
@@ -387,11 +388,11 @@ async function fileOf(r: AuthedRequest, max: number): Promise<Buffer> {
   const req = r as unknown as { isMultipart?: () => boolean; file: (o?: object) => Promise<{ toBuffer: () => Promise<Buffer>; file: { truncated: boolean } } | undefined> };
   if (!req.isMultipart?.()) throw new ApiError(415, 'unsupported_media', 'Gửi file dạng multipart/form-data, trường "file"');
   const part = await req.file({ limits: { fileSize: max } });
-  if (!part) throw new ApiError(422, 'invalid_request', 'Thiếu file');
+  if (!part) throw new ApiError(422, 'file_missing', 'Thiếu file');
   const buf = await part.toBuffer().catch(() => {
-    throw new ApiError(413, 'file_too_large', `File tối đa ${max / 1024 / 1024} MB`);
+    throw new ApiError(413, 'file_too_large', `File tối đa ${max / 1024 / 1024} MB`, { mb: max / 1024 / 1024 });
   });
-  if (part.file.truncated) throw new ApiError(413, 'file_too_large', `File tối đa ${max / 1024 / 1024} MB`);
+  if (part.file.truncated) throw new ApiError(413, 'file_too_large', `File tối đa ${max / 1024 / 1024} MB`, { mb: max / 1024 / 1024 });
   return buf;
 }
 
@@ -433,8 +434,8 @@ export class GisController {
 
   @Get('gis/import/template.xlsx')
   @RequirePerm('map.edit')
-  template(@Res({ passthrough: true }) reply: FastifyReply) {
-    return this.svc.template(reply);
+  template(@Req() r: AuthedRequest, @Res({ passthrough: true }) reply: FastifyReply) {
+    return this.svc.template(reply, r.user!.lang);
   }
 
   /** ?dryRun=true checks the file and reports row errors without writing (default). */

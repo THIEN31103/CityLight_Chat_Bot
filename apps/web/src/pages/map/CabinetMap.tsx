@@ -4,6 +4,8 @@ import type { ExpressionSpecification, GeoJSONSource, Map as MlMap, MapMouseEven
 import type { CabinetStatus, CabinetSummary, GeoPoint, GpsDriftItem } from '@citylight/shared';
 import { api, type MapAssets, type PoleAsset } from '@/lib/api';
 import { useUi } from '@/stores/session';
+import { dictNow, fill, useLang } from '@/i18n';
+import { MAP } from '@/i18n/dict/map';
 import { FONT_BOLD, FONT_REGULAR, resolveBasemap, type BasemapId } from './mapStyle';
 import { addMapIcons } from './mapIcons';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
@@ -101,7 +103,10 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
   themeRef.current = theme;
   const editMarker = useRef<maplibregl.Marker | null>(null);
   const poleCache = useRef<PoleAsset[]>([]);
-  const styleKey = `${props.basemap}:${theme}`;
+  // map text (pole labels, GPS drift labels, custom basemap attribution) is baked into the style: a language
+  // change reloads the style like a theme change, and 'style.load' re-installs the overlay in the new language
+  const lang = useLang((s) => s.lang);
+  const styleKey = `${props.basemap}:${theme}:${lang}`;
 
   useImperativeHandle(ref, () => ({
     flyTo: (p, zoom = 16, padding) =>
@@ -149,6 +154,7 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
     const f = pickFonts(m);
     const halo = { 'text-halo-color': dark ? '#0b0f17' : '#ffffff', 'text-halo-width': 1.4 };
     const textColor = dark ? '#e5e7eb' : '#111827';
+    const t = dictNow(MAP).overlay;
 
     // Routes: lit = amber, off = grey, unknown = violet; casing keeps them readable on any basemap.
     m.addSource('routes', { type: 'geojson', data: EMPTY });
@@ -188,7 +194,7 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
       source: 'poles',
       minzoom: 17,
       layout: {
-        'text-field': ['concat', ['get', 'code'], ['case', ['>', ['get', 'lampCount'], 1], ['concat', ' (', ['to-string', ['get', 'lampCount']], ' đèn)'], '']],
+        'text-field': ['concat', ['get', 'code'], ['case', ['>', ['get', 'lampCount'], 1], ['concat', ' (', ['to-string', ['get', 'lampCount']], t.lamps], '']],
         'text-size': 10,
         'text-offset': [0, 0.4],
         'text-anchor': 'top',
@@ -310,11 +316,12 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
 
   function applyGpsDrift(m: MlMap) {
     const list = propsRef.current.gpsDrift ?? [];
+    const t = dictNow(MAP).overlay;
     (m.getSource('gps-drift') as GeoJSONSource | undefined)?.setData({
       type: 'FeatureCollection',
       features: list.flatMap((d) => [
         { type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: [[d.declared.lng, d.declared.lat], [d.gps.lng, d.gps.lat]] }, properties: {} },
-        { type: 'Feature' as const, geometry: { type: 'Point' as const, coordinates: [d.gps.lng, d.gps.lat] }, properties: { label: `GPS ${d.code} · lệch ${d.distanceM} m` } },
+        { type: 'Feature' as const, geometry: { type: 'Point' as const, coordinates: [d.gps.lng, d.gps.lat] }, properties: { label: fill(t.gpsDrift, { code: d.code, m: d.distanceM }) } },
       ]),
     });
   }
@@ -387,9 +394,10 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
       const f = e.features?.[0];
       if (!f) return;
       const pr = f.properties as Record<string, string>;
+      const t = dictNow(MAP).overlay;
       popup
         .setLngLat(coords(f.geometry))
-        .setHTML(`<div style="font-size:12px"><b>Trụ:</b> ${pr.code} · <b>Tủ:</b> ${pr.cabinetName} · <b>Tuyến:</b> ${pr.routeCode}</div>`)
+        .setHTML(`<div style="font-size:12px"><b>${t.popupPole}</b> ${pr.code} · <b>${t.popupCabinet}</b> ${pr.cabinetName} · <b>${t.popupRoute}</b> ${pr.routeCode}</div>`)
         .addTo(m);
     });
     m.on('mouseleave', 'poles', () => {

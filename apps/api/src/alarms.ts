@@ -1,14 +1,14 @@
 import { Controller, Get, HttpCode, Inject, Module, Param, Post, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import type { Alarm } from '@citylight/shared';
-import { ALARM_TYPE_LABELS, SEVERITY_LABELS } from '@citylight/shared';
+import { LABELS, alarmTypeLabels } from '@citylight/shared';
 import { z } from 'zod';
 import { AuthModule, AuthService, RequirePerm, type AuthedRequest } from './auth';
 import { CabinetsModule, CabinetsService } from './cabinets';
 import { ApiError } from './errors';
 import { SQL, type Sql } from './infra';
 import { scopeWhere } from './scope';
-import { DATE_TIME, EXPORT_MAX_ROWS, sendXlsx, vnTime } from './xlsx';
+import { DATE_TIME, EXPORT_MAX_ROWS, XLSX_TEXT, sendXlsx, vnTime } from './xlsx';
 
 const AlarmQuery = z.object({
   active: z.enum(['true', 'false']).optional(),
@@ -46,18 +46,23 @@ export class AlarmsController {
   async export(@Query() q: unknown, @Req() req: AuthedRequest, @Res({ passthrough: true }) reply: FastifyReply) {
     const p = AlarmQuery.parse(q);
     const rows = (await this.cabinets.alarmRows(this.where(req, p), EXPORT_MAX_ROWS, 0)) as unknown as Alarm[];
-    return sendXlsx(reply, `canh-bao-${new Date().toISOString().slice(0, 10)}.xlsx`, 'Cảnh báo', [
-      { header: 'Mã lỗi', value: (a) => a.code, width: 8 },
-      { header: 'Loại', value: (a) => ALARM_TYPE_LABELS[a.type] ?? a.type, width: 26 },
-      { header: 'Mức độ', value: (a) => SEVERITY_LABELS[a.severity], width: 12 },
-      { header: 'Tủ', value: (a) => `${a.cabinetCode} - ${a.cabinetName}`, width: 30 },
-      { header: 'Quận/huyện', value: (a) => a.districtName },
-      { header: 'Nội dung', value: (a) => a.message, width: 50 },
-      { header: 'Bắt đầu', value: (a) => vnTime(a.startedAt), numFmt: DATE_TIME, width: 18 },
-      { header: 'Kết thúc', value: (a) => vnTime(a.endedAt), numFmt: DATE_TIME, width: 18 },
-      { header: 'Đang mở', value: (a) => (a.active ? 'Có' : ''), width: 9 },
-      { header: 'Người xác nhận', value: (a) => a.ackedBy, width: 20 },
-      { header: 'Lúc xác nhận', value: (a) => vnTime(a.ackedAt), numFmt: DATE_TIME, width: 18 },
+    // S49: headers and enum values in the user's language; the alarm message stays as stored
+    const lang = req.user!.lang;
+    const X = XLSX_TEXT[lang];
+    const T = X.alarms;
+    const types = alarmTypeLabels(lang);
+    return sendXlsx(reply, `${T.file}-${new Date().toISOString().slice(0, 10)}.xlsx`, T.sheet, [
+      { header: T.code, value: (a) => a.code, width: 8 },
+      { header: T.type, value: (a) => types[a.type] ?? a.type, width: 26 },
+      { header: T.severity, value: (a) => LABELS[lang].severity[a.severity], width: 12 },
+      { header: T.cabinet, value: (a) => `${a.cabinetCode} - ${a.cabinetName}`, width: 30 },
+      { header: T.district, value: (a) => a.districtName },
+      { header: T.message, value: (a) => a.message, width: 50 },
+      { header: T.start, value: (a) => vnTime(a.startedAt), numFmt: DATE_TIME, width: 18 },
+      { header: T.end, value: (a) => vnTime(a.endedAt), numFmt: DATE_TIME, width: 18 },
+      { header: T.active, value: (a) => (a.active ? X.yes : ''), width: 9 },
+      { header: T.ackedBy, value: (a) => a.ackedBy, width: 20 },
+      { header: T.ackedAt, value: (a) => vnTime(a.ackedAt), numFmt: DATE_TIME, width: 18 },
     ], rows);
   }
 
@@ -84,7 +89,7 @@ export class AlarmsController {
       UPDATE alarms a SET acked_by = ${req.user!.id}, acked_at = now() FROM cabinets c
       WHERE a.id = ${aid} AND c.id = a.cabinet_id AND a.acked_at IS NULL
       RETURNING a.code, a.message, c.code AS cabinet_code`;
-    if (!rows[0]) throw new ApiError(404, 'not_found', 'Không tìm thấy cảnh báo chưa xác nhận');
+    if (!rows[0]) throw new ApiError(404, 'no_unacked_alarm', 'Không tìm thấy cảnh báo chưa xác nhận');
     await this.auth.log(req.user!, 'Xác nhận cảnh báo', req.ip, { type: 'alarm', id: aid, name: `${rows[0].cabinet_code} - ${rows[0].code}` }, rows[0].message);
     const items = await this.cabinets.alarmRows(this.sql`WHERE a.id = ${aid}`, 1, 0);
     return items[0];

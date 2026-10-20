@@ -3,7 +3,7 @@ import { Controller, Get, Inject, Injectable, Module, Param, Query, Req } from '
 import type { PendingQuery, Row } from 'postgres';
 import { z } from 'zod';
 import type { CabinetState, CabinetStatus, CabinetSummary, FwProfile, GpsDriftItem, GpsSuggestion, MapStats, Schedule, TelemetryPoint } from '@citylight/shared';
-import { GPS_RELOCATE_WINDOW_MIN, buildDiagnostics, capabilitiesFor, decodeRs485SelfTest, defaultSchedule, defaultThresholds, judgeGpsSuggestion, type HealthInput } from '@citylight/shared';
+import { GPS_RELOCATE_WINDOW_MIN, buildDiagnostics, capabilitiesFor, decodeRs485SelfTest, defaultSchedule, defaultThresholds, judgeGpsSuggestion, type HealthInput, type Lang } from '@citylight/shared';
 import type { AuthedRequest } from './auth';
 import { ApiError } from './errors';
 import { SQL, type Sql } from './infra';
@@ -159,11 +159,11 @@ export class CabinetsService {
   }
 
   /** Proposed position = median of the GPS fixes of the last window (shared/relocate.ts); nothing is changed here. */
-  async gpsSuggestion(scope: Scope, id: string): Promise<GpsSuggestion> {
-    return this.computeGpsSuggestion(await this.assertCabinet(scope, id));
+  async gpsSuggestion(scope: Scope, id: string, lang: Lang = 'vi'): Promise<GpsSuggestion> {
+    return this.computeGpsSuggestion(await this.assertCabinet(scope, id), lang);
   }
 
-  async computeGpsSuggestion(cid: string): Promise<GpsSuggestion> {
+  async computeGpsSuggestion(cid: string, lang: Lang = 'vi'): Promise<GpsSuggestion> {
     const r = (
       await this.sql<{ n: number; lat: number | null; lng: number | null; spread: number | null; dist: number | null; dlat: number; dlng: number }[]>`
         WITH s AS (
@@ -187,7 +187,7 @@ export class CabinetsService {
     const round = (v: number | null, f = 1) => (v === null ? null : Math.round(Number(v) * f) / f);
     const gps = r.lat !== null && r.lng !== null ? { lat: round(r.lat, 1e7)!, lng: round(r.lng, 1e7)! } : null;
     const s = { samples: r.n, spreadM: round(r.spread), distanceM: round(r.dist) };
-    return { declared: { lat: Number(r.dlat), lng: Number(r.dlng) }, gps, ...s, windowMin: GPS_RELOCATE_WINDOW_MIN, ...judgeGpsSuggestion(s) };
+    return { declared: { lat: Number(r.dlat), lng: Number(r.dlng) }, gps, ...s, windowMin: GPS_RELOCATE_WINDOW_MIN, ...judgeGpsSuggestion(s, lang) };
   }
 
   /** Cabinets with an open E802 (GPS far from the declared position), for the map overlay. */
@@ -278,13 +278,13 @@ export class CabinetsService {
     };
   }
 
-  async diagnostics(scope: Scope, id: string) {
+  async diagnostics(scope: Scope, id: string, lang: Lang = 'vi') {
     id = await this.assertCabinet(scope, id);
     const { input } = await this.health(id);
     const st = await this.sql<{ ts: Date; data: { summary?: string } }[]>`
       SELECT ts, data FROM device_events WHERE cabinet_id = ${id} AND kind = 'selftest' ORDER BY ts DESC LIMIT 1`;
-    const selfTest = st[0]?.data.summary ? { at: st[0].ts.toISOString(), summary: st[0].data.summary, ...decodeRs485SelfTest(st[0].data.summary) } : null;
-    return { items: buildDiagnostics(input), lastBootAt: input.lastBootAt, bootsLast24h: input.bootsLast24h, selfTest };
+    const selfTest = st[0]?.data.summary ? { at: st[0].ts.toISOString(), summary: st[0].data.summary, ...decodeRs485SelfTest(st[0].data.summary, lang) } : null;
+    return { items: buildDiagnostics(input, Date.now(), lang), lastBootAt: input.lastBootAt, bootsLast24h: input.bootsLast24h, selfTest };
   }
 
   /** Raw hypertable with time_bucket up to 7 days (~300 points), hourly aggregate beyond. */
@@ -373,8 +373,8 @@ export class CabinetsController {
   }
 
   @Get('cabinets/:id') detail(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.detail(r.user!.scope, id); }
-  @Get('cabinets/:id/gps-suggestion') gpsSuggestion(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.gpsSuggestion(r.user!.scope, id); }
-  @Get('cabinets/:id/diagnostics') diagnostics(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.diagnostics(r.user!.scope, id); }
+  @Get('cabinets/:id/gps-suggestion') gpsSuggestion(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.gpsSuggestion(r.user!.scope, id, r.user!.lang); }
+  @Get('cabinets/:id/diagnostics') diagnostics(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.diagnostics(r.user!.scope, id, r.user!.lang); }
 
   @Get('cabinets/:id/telemetry')
   telemetry(@Req() r: AuthedRequest, @Param('id') id: string, @Query() q: unknown) {

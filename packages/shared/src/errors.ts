@@ -7,7 +7,7 @@
 // derives faults from the fields above instead.
 
 import type { AlarmSeverity, AlarmType } from './domain';
-import type { Lang } from './i18n';
+import { defineDict, type Lang } from './i18n';
 
 export type ErrorCategory = 'Kết nối' | 'RS485' | 'PLC / LOGO' | 'Điện năng' | 'Cảm biến' | 'Tải đèn' | 'Lệnh' | 'Thiết bị';
 
@@ -180,40 +180,225 @@ export const ERROR_CATEGORY_LABELS: Record<Lang, Record<ErrorCategory, string>> 
   en: { 'Kết nối': 'Connection', RS485: 'RS485', 'PLC / LOGO': 'PLC / LOGO', 'Điện năng': 'Power', 'Cảm biến': 'Sensors', 'Tải đèn': 'Lamp load', Lệnh: 'Commands', 'Thiết bị': 'Device' },
 };
 
-/** English text of each catalog entry (S49), by code. */
-export const ERROR_CATALOG_EN: Partial<Record<string, Pick<ErrorDef, 'title' | 'source' | 'cause' | 'checks'>>> = {};
+type ErrorText = Pick<ErrorDef, 'title' | 'source' | 'cause' | 'checks'>;
+
+/** English text of each catalog entry (S49), by code. A test checks that every ERROR_CATALOG code is here. */
+export const ERROR_CATALOG_EN: Partial<Record<string, ErrorText>> = {
+  // ---------- Connection ----------
+  E101: {
+    title: 'Cabinet offline',
+    source: 'No telemetry frame for > 60 s',
+    cause: 'The cabinet has no power, no 4G signal / SIM problem, the LTE board hung, or it cannot reach the broker.',
+    checks: [
+      'Look at LED PC6 on the LTE board: 4 Hz blinking for 3 s then off = SIM fault; 0.2 Hz = 4G up but not connected to the broker; 1 Hz = normal.',
+      'Check the cabinet power supply and the circuit breaker feeding the controller.',
+      'Check the SIM (credit / data left, APN v-internet) and the 4G antenna.',
+    ],
+  },
+  E102: {
+    title: 'Controller restarted',
+    source: 'stm32/ec25/boot frame',
+    cause: 'The LTE board just started: short power loss, watchdog or manual reset.',
+    checks: ['If it happens several times a day: check the 12/24 V supply of the controller and voltage dips when the contactor closes.'],
+  },
+  E103: {
+    title: 'Unstable connection',
+    source: '≥ 3 connection drops / recoveries within 1 hour',
+    cause: 'Weak 4G signal, loose antenna, or unstable power supply.',
+    checks: ['Check the 4G antenna position and connector.', 'Compare with the controller restarts (E102).'],
+  },
+  // ---------- RS485 ----------
+  E201: {
+    title: 'PLC_KEY not responding',
+    source: 'LCLI=1 / PCON=0',
+    cause: 'The LTE board cannot read PLC_KEY (slave id 4) on RS485. Branch states are unknown and commands cannot be sent.',
+    checks: ['Check the power supply and LEDs of the PLC_KEY board.', 'Check the RS485 A/B wires to PLC_KEY and the 120 Ω termination.', 'A PLC_KEY without an activated key does not respond.'],
+  },
+  E202: {
+    title: 'PM_KEY not responding',
+    source: 'LCLI=2 / MCON=0',
+    cause: 'The LTE board cannot read PM_KEY (slave id 3). No power data.',
+    checks: ['Check the power supply and LEDs of the PM_KEY board.', 'Check the RS485 wiring to PM_KEY.'],
+  },
+  E203: {
+    title: 'CT_KEY not responding',
+    source: 'LCLI=3',
+    cause: 'The LTE board cannot read CT_KEY (slave id 2). No leakage current or cabinet temperature.',
+    checks: ['Check the power supply and LEDs of the CT_KEY board.', 'Check the RS485 wiring to CT_KEY.'],
+  },
+  E204: {
+    title: 'All 3 RS485 slaves lost',
+    source: 'LCLI=4',
+    cause: 'PLC, PM and CT all fail to respond: most likely an RS485 bus fault on the LTE side (transceiver, A/B swapped, short circuit) or loss of the common supply of the slave boards.',
+    checks: ['Run the RS485 self-test (LDIA command) and look at the RX/DE/TX results.', 'Check the common supply of the slave boards.', 'Check whether A/B are swapped or shorted.'],
+  },
+  E205: {
+    title: '2 RS485 slaves lost',
+    source: 'LCLI=X',
+    cause: 'Two of the three boards (PLC / PM / CT) do not respond — usually an open RS485 wire section or common supply.',
+    checks: ['Look at MCON / PCON to see which board still responds.', 'Check the daisy-chained RS485 wiring between the boards.'],
+  },
+  E206: {
+    title: 'RS485 self-test failed',
+    source: 'LDIA report (A?D?B?C?)',
+    cause: 'Fault in the RS485 transceiver of the LTE board: RX not driven, DE stuck high, or bus pulled low.',
+    checks: [
+      'RO=0 when idle: A/B shorted or swapped, missing bias resistors, or faulty receiver IC.',
+      'RO=Z: receiver IC dead, RE stuck high, or PB11 trace open.',
+      'B1C1 (bus always 1 while transmitting): inconclusive — check with the slave LEDs or a multimeter.',
+    ],
+  },
+  // ---------- PLC / LOGO ----------
+  E301: {
+    title: 'LOGO not responding (via ETH module)',
+    source: 'PCON=1 but PTIM unchanged for > 5 min',
+    cause: 'PLC_KEY still responds but cannot read the LOGO: EBT3001 Ethernet module stuck or lost its settings, network cable, or LOGO without power. Branch states (LQ2/LQ3) are stale values.',
+    checks: ['Look at LED PB5 on PLC_KEY: off = ETH / LOGO not confirmed.', 'Check the ETH ↔ LOGO network cable and the LOGO power supply.', 'Reset PLC_KEY to rerun the ETH configuration (it retries up to 5 times on its own).'],
+  },
+  E302: {
+    title: 'LOGO clock wrong',
+    source: '|PTIM − server time| > 5 min',
+    cause: 'The LOGO clock has drifted; the on/off schedule will run at the wrong time.',
+    checks: ['Press "Sync time with the server" (LTIM command).', 'If it happens again: check the LOGO RTC backup battery.'],
+  },
+  E303: {
+    title: 'Lights not following the schedule',
+    source: 'LQ2/LQ3 differ from the sent schedule for > 10 min (ignored while PMAN=1)',
+    cause: 'Lights on outside the schedule or off within it: the schedule in the LOGO differs from the server schedule, the LOGO clock is wrong, or the contactor does not close.',
+    checks: ['Send the schedule to the cabinet again.', 'Check the LOGO clock (E302).', 'Check the contactor and the branch fuses.'],
+  },
+  E304: {
+    title: 'Contactor fault',
+    source: 'PFLT=1 (LOGO V0.6)',
+    cause: 'The LOGO reports that the contactor does not respond correctly.',
+    checks: ['Check the contactor coil and auxiliary contacts.'],
+  },
+  E305: {
+    title: 'Cabinet door open',
+    source: 'PDOR=1 (LOGO I4)',
+    cause: 'The cabinet door is open.',
+    checks: ['Confirm a crew is working at the cabinet; if not, suspect tampering.'],
+  },
+  // ---------- Power ----------
+  E401: {
+    title: 'DH power meter not responding',
+    source: 'MCON=1 but U/I/P all = 0',
+    cause: 'PM_KEY still responds but reading the DH meter fails (PM_KEY clears the values to 0), or the whole cabinet lost mains power.',
+    checks: ['Check the power supply and the RS485 wiring between PM_KEY and the DH meter (slave id 1, 9600).', 'Check the mains input of the cabinet.'],
+  },
+  E402: {
+    title: 'Phase loss',
+    source: 'One phase U < 50 V, the other phases normal',
+    cause: 'One mains phase is missing, or the fuse / circuit breaker of that phase is blown or tripped.',
+    checks: ['Measure the input voltage of each phase.', 'Check the fuses and the main circuit breaker.'],
+  },
+  E403: { title: 'Overvoltage', source: 'Phase U > high threshold (30 s debounce)', cause: 'High mains voltage, shortens lamp life.', checks: ['Report it to the local power utility if it persists.'] },
+  E404: { title: 'Undervoltage', source: 'Phase U < low threshold (30 s debounce)', cause: 'Low mains voltage, lamps may fail to start.', checks: ['Report it to the local power utility if it persists.'] },
+  E405: { title: 'Phase imbalance', source: 'Current difference between phases > 30 %', cause: 'Uneven load distribution, or some lamps on one phase have failed.', checks: ['Check how many lamps are lit on each phase.'] },
+  E406: { title: 'Low power factor', source: 'Total cosφ < 0.85 while lights are on', cause: 'Lamp drivers / ballasts are degraded.', checks: ['Check the lamp drivers on the route.'] },
+  E407: { title: 'Voltage fluctuation', source: 'Phase U range over 5 min > fluctuation threshold', cause: 'Unstable grid or poor contact at the supply cable terminals.', checks: ['Check the lugs of the supply cable entering the cabinet.', 'Report it to the local power utility if it persists.'] },
+  // ---------- Sensors ----------
+  E501: { title: 'Leakage current', source: 'CTVL > threshold mA', cause: 'Earth leakage on the route — electric shock hazard.', checks: ['Isolate the branches one at a time to locate it.', 'Check underground cables, junction boxes and flooded poles.'] },
+  E502: { title: 'High cabinet temperature', source: 'CTTE > threshold °C', cause: 'The cabinet is overheating: poor ventilation or abnormal heat from equipment.', checks: ['Check the fan / ventilation slots.', 'Check whether the contactor terminals are hot.'] },
+  E503: { title: 'DS18B20 temperature sensor fault', source: 'CTTE=1000', cause: 'CT_KEY cannot read the DS18B20 (broken OneWire wire on PB6 or faulty sensor).', checks: ['Check the temperature sensor wiring to CT_KEY.'] },
+  // ---------- Lamp load ----------
+  E601: { title: 'No load', source: 'Branch lit but current < no-load threshold', cause: 'Many lamps burnt out, cable cut / stolen, or the contactor does not close.', checks: ['Check the lamps on the route on site.', 'Check the branch cable and contactor.'] },
+  E602: { title: 'Overcurrent', source: 'Phase I > high threshold', cause: 'Short circuit on the route or unauthorized extra load.', checks: ['Check the cable route and the connection points.'] },
+  E603: { title: 'Current fluctuation', source: 'Phase I range over 5 min > fluctuation threshold, with branch states unchanged', cause: 'Flickering lamps, faulty drivers or poor contact on the route.', checks: ['Look for flickering lamps on the route.', 'Check junction boxes and lugs.'] },
+  // ---------- Commands ----------
+  E701: { title: 'Command rejected', source: 'Ack rc=-1 (Modbus write to PLC_KEY failed) or rc=-2 (not supported by the device)', cause: 'The command could not be written to PLC_KEY, or the firmware does not support the key.', checks: ['Check the PLC_KEY state (E201).', 'Check the cabinet firmware version.'] },
+  E702: { title: 'Command had no effect', source: 'Ack rc=0 but LQ2/LQ3/PMAN unchanged within 60 s', cause: 'PLC_KEY received it but the LOGO did not act on it: LOGO not responding, LOGO program other than v17c, or faulty contactor.', checks: ['Check E301 (LOGO not responding).', 'Confirm the LOGO runs the _v2_thucong_v17c program.'] },
+  E703: { title: 'Command timed out', source: 'No ack within 30 s', cause: 'The cabinet did not receive the command (4G lost while sending, QoS 0) or the LTE board was busy.', checks: ['Send the command again once the cabinet is online.'] },
+  // ---------- Device ----------
+  E801: { title: 'No GPS fix', source: 'LGPS=X for > 10 min after boot', cause: 'GNSS antenna faulty or obstructed.', checks: ['Check the GPS antenna of the EC25 module.'] },
+  E802: { title: 'GPS position drift', source: 'Device GPS > 200 m from the registered position', cause: 'The registered coordinates are wrong, or the controller was fitted to another cabinet.', checks: ['Compare with the actual location and update the cabinet coordinates.'] },
+  E803: { title: 'Backup battery low', source: 'LBAT < threshold mV', cause: 'The backup battery of the controller is worn.', checks: ['Replace the backup battery.'] },
+  E804: { title: 'Old firmware without LTID filter', source: 'fw_profile = v2-1307ebc', cause: 'Old firmware executes every command on the shared topic — the web blocks control of this cabinet.', checks: ['Upgrade the LTE firmware to a version with the LTID filter.'] },
+  E805: {
+    title: 'Suspected cabinet spoofing (IMEI mismatch)',
+    source: "Frame carries the cabinet's LTID but an IMEI (LIME) other than the recorded one; frame ignored",
+    cause: "Someone is publishing fake data to the broker with the cabinet's LTID, or the cabinet's EC25 modem was just replaced.",
+    checks: [
+      'If the modem was just replaced: accept the new IMEI in the alarm (or relearn the IMEI).',
+      'If nothing was replaced: the data is fake, keep the IMEI; look at the IP / time in the raw frame and report it to the system administrator.',
+    ],
+  },
+};
+
+const catalogCache: Partial<Record<Lang, ErrorDef[]>> = { vi: ERROR_CATALOG };
 
 /** The catalog in one language (codes, types, severities and categories are the same; category label: ERROR_CATEGORY_LABELS). */
 export function errorCatalog(lang: Lang): ErrorDef[] {
-  return lang === 'vi' ? ERROR_CATALOG : ERROR_CATALOG.map((e) => ({ ...e, ...ERROR_CATALOG_EN[e.code] }));
+  return (catalogCache[lang] ??= ERROR_CATALOG.map((e) => ({ ...e, ...ERROR_CATALOG_EN[e.code] })));
 }
 
+/** Vietnamese entries by alarm type (server side). */
 export const ERROR_BY_TYPE: Partial<Record<AlarmType, ErrorDef>> = Object.fromEntries(ERROR_CATALOG.map((e) => [e.type, e]));
 
-export function errorOf(type: AlarmType): ErrorDef | undefined {
-  return ERROR_BY_TYPE[type];
+export function errorOf(type: AlarmType, lang: Lang = 'vi'): ErrorDef | undefined {
+  return lang === 'vi' ? ERROR_BY_TYPE[type] : errorCatalog(lang).find((e) => e.type === type);
 }
 
+/** Catalog entry by code ("E201") in one language. */
+export function errorByCode(code: string, lang: Lang = 'vi'): ErrorDef | undefined {
+  return errorCatalog(lang).find((e) => e.code === code);
+}
+
+/** Verdict texts of the LDIA RS485 self-test. */
+export const RS485_SELFTEST_TEXT = defineDict(
+  {
+    unreadable: 'Không đọc được báo cáo',
+    rxOk: 'OK — RO được lái, bus rảnh mức cao',
+    rxLow: 'LỖI — RO mức thấp lúc rảnh (A/B chập hoặc đảo, thiếu phân cực, IC thu hỏng)',
+    rxZ: 'LỖI — RO không được lái (IC thu chết, RE kẹt cao, PB11 hở)',
+    rxUnstable: 'LỖI — RO không ổn định (nhiễu hoặc IC hỏng)',
+    deUntestable: 'Không kiểm được (phía RX lỗi)',
+    deOk: 'OK — driver tắt khi DE=0',
+    deStuck: 'LỖI — bus theo DI khi DE=0 (DE kẹt cao)',
+    txOk: 'OK — echo qua chip, driver và receiver đều chạy',
+    txUntestable: 'Không kiểm được (RE nối DE) — xem LED RS485 của slave',
+    txInconclusive: 'Chưa kết luận — RO luôn 1 khi DE=1 (driver không kéo thấp, hoặc RE nối DE + pull-up). Kiểm bằng LED slave / đồng hồ',
+    txStuckLow: 'LỖI — bus kẹt thấp khi phát (DI/PB10 không tới chip hoặc driver hỏng)',
+    txOdd: 'LỖI / không rõ — echo bất thường',
+  },
+  {
+    unreadable: 'Report could not be read',
+    rxOk: 'OK — RO driven, bus idle high',
+    rxLow: 'FAIL — RO low when idle (A/B shorted or swapped, missing bias, faulty receiver IC)',
+    rxZ: 'FAIL — RO not driven (receiver IC dead, RE stuck high, PB11 open)',
+    rxUnstable: 'FAIL — RO unstable (noise or faulty IC)',
+    deUntestable: 'Not testable (RX side failed)',
+    deOk: 'OK — driver off when DE=0',
+    deStuck: 'FAIL — bus follows DI when DE=0 (DE stuck high)',
+    txOk: 'OK — echo through the chip, driver and receiver both work',
+    txUntestable: "Not testable (RE tied to DE) — check the slaves' RS485 LEDs",
+    txInconclusive: 'Inconclusive — RO always 1 when DE=1 (driver not pulling low, or RE tied to DE + pull-up). Check with the slave LEDs / a multimeter',
+    txStuckLow: 'FAIL — bus stuck low while transmitting (DI/PB10 not reaching the chip, or faulty driver)',
+    txOdd: 'FAIL / unclear — abnormal echo',
+  },
+);
+
 /** Decode the LDIA RS485 self-test summary "A?D?B?C?" (same verdicts as BOARD_LTE_KEY/Mylib/Master_modbus.c). */
-export function decodeRs485SelfTest(summary: string): { rx: string; de: string; tx: string; fail: boolean } {
+export function decodeRs485SelfTest(summary: string, lang: Lang = 'vi'): { rx: string; de: string; tx: string; fail: boolean } {
+  const T = RS485_SELFTEST_TEXT[lang];
   const m = /^A(.)D(.)B(.)C(.)$/.exec(summary);
-  if (!m) return { rx: 'Không đọc được báo cáo', de: '—', tx: '—', fail: true };
+  if (!m) return { rx: T.unreadable, de: '—', tx: '—', fail: true };
   const [, a, d, b, c] = m as unknown as [string, string, string, string, string];
   let fail = false;
   let rx: string;
-  if (a === '1') rx = 'OK — RO được lái, bus rảnh mức cao';
-  else if (a === '0') ((rx = 'LỖI — RO mức thấp lúc rảnh (A/B chập hoặc đảo, thiếu phân cực, IC thu hỏng)'), (fail = true));
-  else if (a === 'Z') ((rx = 'LỖI — RO không được lái (IC thu chết, RE kẹt cao, PB11 hở)'), (fail = true));
-  else ((rx = 'LỖI — RO không ổn định (nhiễu hoặc IC hỏng)'), (fail = true));
+  if (a === '1') rx = T.rxOk;
+  else if (a === '0') ((rx = T.rxLow), (fail = true));
+  else if (a === 'Z') ((rx = T.rxZ), (fail = true));
+  else ((rx = T.rxUnstable), (fail = true));
   let de: string;
-  if (a !== '1' && a !== '0') de = 'Không kiểm được (phía RX lỗi)';
-  else if (d === a) de = 'OK — driver tắt khi DE=0';
-  else ((de = 'LỖI — bus theo DI khi DE=0 (DE kẹt cao)'), (fail = true));
+  if (a !== '1' && a !== '0') de = T.deUntestable;
+  else if (d === a) de = T.deOk;
+  else ((de = T.deStuck), (fail = true));
   let tx: string;
-  if (b === '1' && c === '0') tx = 'OK — echo qua chip, driver và receiver đều chạy';
-  else if (b === 'Z' && c === 'Z') tx = 'Không kiểm được (RE nối DE) — xem LED RS485 của slave';
-  else if (b === '1' && c === '1') ((tx = 'Chưa kết luận — RO luôn 1 khi DE=1 (driver không kéo thấp, hoặc RE nối DE + pull-up). Kiểm bằng LED slave / đồng hồ'), (fail = true));
-  else if (b === '0' && c === '0') ((tx = 'LỖI — bus kẹt thấp khi phát (DI/PB10 không tới chip hoặc driver hỏng)'), (fail = true));
-  else ((tx = 'LỖI / không rõ — echo bất thường'), (fail = true));
+  if (b === '1' && c === '0') tx = T.txOk;
+  else if (b === 'Z' && c === 'Z') tx = T.txUntestable;
+  else if (b === '1' && c === '1') ((tx = T.txInconclusive), (fail = true));
+  else if (b === '0' && c === '0') ((tx = T.txStuckLow), (fail = true));
+  else ((tx = T.txOdd), (fail = true));
   return { rx, de, tx, fail };
 }

@@ -188,6 +188,14 @@ export const LAMP_GROUP_LABELS: Record<LampGroup, string> = {
   3: 'Nhóm mở rộng',
 };
 
+/** Default lamp group names in English (S49); LAMP_GROUP_LABELS is the Vietnamese default (also the settings seed). */
+export const LAMP_GROUP_LABELS_EN: Record<LampGroup, string> = {
+  0: 'Main lamps',
+  1: 'Intersection lamps',
+  2: 'Bridge lamps',
+  3: 'Extended group',
+};
+
 export interface DimmingSegment {
   enabled: boolean;
   startMin: number; // minutes from 00:00 of the switch-on day, may exceed 1440

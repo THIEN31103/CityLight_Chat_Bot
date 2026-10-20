@@ -1,5 +1,6 @@
 // Incident workflow (spec S7–S9, M7), shared by the API (enforced) and the web (buttons).
 import type { AlarmType, IncidentStatus } from './domain';
+import { defineDict, type Lang } from './i18n';
 import type { Permission } from './permissions';
 
 export interface IncidentTransition {
@@ -28,6 +29,33 @@ export function findTransition(from: IncidentStatus, to: IncidentStatus): Incide
   return INCIDENT_TRANSITIONS[from].find((t) => t.to === to) ?? null;
 }
 
+/** Button labels of the transitions, keyed "from>to" (INCIDENT_TRANSITIONS holds the Vietnamese ones). */
+export const INCIDENT_TRANSITION_LABELS = defineDict(
+  {
+    'new>assigned': 'Giao xử lý',
+    'new>deferred': 'Chưa cần xử lý',
+    'assigned>resolved': 'Báo đã xử lý',
+    'deferred>assigned': 'Giao xử lý',
+    'resolved>closed': 'Đóng sự cố',
+    'resolved>assigned': 'Yêu cầu xử lý lại',
+    'closed>new': 'Mở lại',
+  } as Record<string, string>,
+  {
+    'new>assigned': 'Assign',
+    'new>deferred': 'Defer',
+    'assigned>resolved': 'Report resolved',
+    'deferred>assigned': 'Assign',
+    'resolved>closed': 'Close incident',
+    'resolved>assigned': 'Reassign',
+    'closed>new': 'Reopen',
+  },
+);
+
+/** Transitions from a status with their labels in one language. */
+export function incidentTransitions(from: IncidentStatus, lang: Lang = 'vi'): IncidentTransition[] {
+  return INCIDENT_TRANSITIONS[from].map((t) => ({ ...t, label: INCIDENT_TRANSITION_LABELS[lang][`${from}>${t.to}`] ?? t.label }));
+}
+
 /** Statuses of an incident someone still has to deal with. */
 export const OPEN_INCIDENT_STATUSES: readonly IncidentStatus[] = ['new', 'assigned', 'deferred'];
 
@@ -36,7 +64,33 @@ export const INCIDENT_CATEGORIES = [
   'Mất cáp', 'Trụ nghiêng', 'Khác',
 ] as const;
 
-/** Category suggested when an incident is opened from an alarm. */
+export type IncidentCategory = (typeof INCIDENT_CATEGORIES)[number];
+
+/**
+ * Display label of a category. The Vietnamese category is the value stored in incidents.category (and sent by
+ * the API), so it stays the key; other / custom values are shown as they are.
+ */
+export const INCIDENT_CATEGORY_LABELS: Record<Lang, Record<IncidentCategory, string>> = {
+  vi: Object.fromEntries(INCIDENT_CATEGORIES.map((c) => [c, c])) as Record<IncidentCategory, string>,
+  en: {
+    'Đèn tắt': 'Lights off',
+    'Đèn sáng ban ngày': 'Lights on in daytime',
+    'Mất kết nối tủ': 'Cabinet offline',
+    'Mất điện / mất pha': 'Power outage / phase loss',
+    'Rò điện': 'Electrical leakage',
+    'Tủ hư hỏng': 'Cabinet damaged',
+    'Chập điện': 'Short circuit',
+    'Mất cáp': 'Cable missing',
+    'Trụ nghiêng': 'Leaning pole',
+    Khác: 'Other',
+  },
+};
+
+export function incidentCategoryLabel(category: string, lang: Lang = 'vi'): string {
+  return (INCIDENT_CATEGORY_LABELS[lang] as Record<string, string>)[category] ?? category;
+}
+
+/** Category suggested when an incident is opened from an alarm (a stored value, not a label: no language). */
 export function categoryForAlarm(type: AlarmType): (typeof INCIDENT_CATEGORIES)[number] {
   switch (type) {
     case 'offline':

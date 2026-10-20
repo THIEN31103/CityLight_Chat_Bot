@@ -84,7 +84,7 @@ export class CommandsService {
     }
     const n = await this.redis.incr(`cl:rl:cmd:${u.id}`);
     if (n === 1) await this.redis.expire(`cl:rl:cmd:${u.id}`, 60);
-    if (n > CMD_PER_MIN) throw new ApiError(429, 'rate_limited', `Tối đa ${CMD_PER_MIN} lệnh/phút, vui lòng đợi`);
+    if (n > CMD_PER_MIN) throw new ApiError(429, 'too_many_commands', `Tối đa ${CMD_PER_MIN} lệnh/phút, vui lòng đợi`, { max: CMD_PER_MIN });
 
     const rows = await this.sql<{ ltid: string; code: string; name: string; fw_profile: FwProfile; online: boolean | null; active: boolean }[]>`
       SELECT c.ltid, c.code, c.name, c.fw_profile, s.online, c.active FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE c.id = ${cid}`;
@@ -102,12 +102,12 @@ export class CommandsService {
     try {
       frames = buildCommandFrames(cab.ltid, type, params);
     } catch (e) {
-      if (e instanceof FrameError) throw new ApiError(422, 'invalid_params', e.message);
+      if (e instanceof FrameError) throw new ApiError(422, 'invalid_params', e.message, { reason: e.message });
       throw e;
     }
     const waiting = await this.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM commands WHERE cabinet_id = ${cid} AND status = 'queued'`;
     if ((waiting[0]?.n ?? 0) >= MAX_QUEUED_PER_CABINET)
-      throw new ApiError(429, 'cabinet_busy', `Tủ đang có ${MAX_QUEUED_PER_CABINET} lệnh chờ gửi, vui lòng đợi`);
+      throw new ApiError(429, 'cabinet_busy', `Tủ đang có ${MAX_QUEUED_PER_CABINET} lệnh chờ gửi, vui lòng đợi`, { max: MAX_QUEUED_PER_CABINET });
 
     const inserted = await this.sql<{ id: string }[]>`
       INSERT INTO commands (cabinet_id, type, params, frame, idempotency_key, requested_by)

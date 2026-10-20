@@ -17,8 +17,9 @@ import type {
   TelemetryPoint,
   Thresholds,
 } from '@citylight/shared';
-import { COMMAND_CAPABILITY, decodeRs485SelfTest, describeCommand, firmwareBlocksCommands } from '@citylight/shared';
+import { COMMAND_CAPABILITY, buildDiagnostics, decodeRs485SelfTest, describeCommand, firmwareBlocksCommands, type HealthInput } from '@citylight/shared';
 import { buildCommandFrames } from '@citylight/coreif';
+import { getLang } from '@/i18n';
 import type { CabinetDiagnostics, DiagnosticItem, Rs485SelfTest } from '@citylight/shared';
 import {
   activityLogs,
@@ -412,76 +413,30 @@ export function retryBatchFailed(id: string, user: string) {
 
 export const selfTests = new Map<string, Rs485SelfTest>();
 
-const fmtT = (iso: string | null) => (iso ? new Date(iso).toLocaleString('vi-VN', { hour12: false }) : '—');
-
+/** Mock scenario -> the telemetry the real ingest would see, then the shared rules (same table as the API, in the UI language). */
 export function diagnosticsOf(id: string): CabinetDiagnostics {
   const c = cabinetById.get(id)!;
   const s = states.get(id)!;
   const sc = scenarios.get(id);
   const boot = bootInfo.get(id) ?? { lastBootAt: null, bootsLast24h: 0 };
-  const items: DiagnosticItem[] = [];
-  const add = (subsystem: string, role: string, status: DiagnosticItem['status'], code: string | null, evidence: string, detail: string) =>
-    items.push({ subsystem, role, status, code, evidence, detail });
-
-  if (!s.online) add('Kết nối 4G / máy chủ', 'LTE ↔ broker MQTT', 'fault', 'E101', `Frame cuối ${fmtT(s.lastSeenAt)}`, 'Không nhận telemetry quá 60 s.');
-  else if (boot.bootsLast24h >= 3) add('Kết nối 4G / máy chủ', 'LTE ↔ broker MQTT', 'warn', 'E103', `${boot.bootsLast24h} lần khởi động lại / 24 h`, 'Kết nối chập chờn hoặc nguồn không ổn định.');
-  else add('Kết nối 4G / máy chủ', 'LTE ↔ broker MQTT', 'ok', null, `Frame cuối ${fmtT(s.lastSeenAt)}`, 'Đang gửi telemetry bình thường.');
-
-  const stale = !s.online;
-  const unknownIfStale = (subsystem: string, role: string) => {
-    add(subsystem, role, 'unknown', null, 'Tủ mất kết nối', 'Hiển thị lại khi tủ có kết nối.');
+  const dhLost = sc === 'dh_meter_lost';
+  const input: HealthInput = {
+    online: s.online, lastSeenAt: s.lastSeenAt, busStatus: s.busStatus, plcOnline: s.plcOnline, pmOnline: s.pmOnline,
+    branch1On: s.branch1On, branch2On: s.branch2On,
+    vL1: dhLost ? 0 : s.vL1, vL2: dhLost ? 0 : s.vL2, vL3: dhLost || sc === 'phase_loss' ? 0 : s.vL3,
+    iL1: dhLost ? 0 : s.iL1, iL2: dhLost ? 0 : s.iL2, iL3: dhLost ? 0 : s.iL3,
+    leakMa: s.leakMa, tempC: s.tempC, tempSensorFault: sc === 'temp_sensor_fault', gpsDevice: s.gpsDevice, batteryMv: s.batteryMv,
+    deviceTime: s.deviceTime,
+    // LOGO lost: PTIM stopped changing 10 min ago
+    deviceTimeChangedAt: sc === 'logo_lost' ? new Date(Date.now() - 600_000).toISOString() : new Date().toISOString(),
+    lastBootAt: boot.lastBootAt, bootsLastHour: boot.bootsLast24h >= 3 ? 3 : 0, bootsLast24h: boot.bootsLast24h, fwProfile: c.fwProfile,
   };
-
-  if (stale) unknownIfStale('Bus RS485', 'LTE ↔ PLC / PM / CT');
-  else if (s.busStatus === '4') add('Bus RS485', 'LTE ↔ PLC / PM / CT', 'fault', 'E204', 'LCLI=4', 'Cả 3 slave không trả lời — nghi lỗi bus phía LTE. Chạy tự kiểm tra RS485.');
-  else if (s.busStatus === 'X') add('Bus RS485', 'LTE ↔ PLC / PM / CT', 'fault', 'E205', 'LCLI=X', 'Hai slave không trả lời.');
-  else if (s.busStatus === '0') add('Bus RS485', 'LTE ↔ PLC / PM / CT', 'ok', null, 'LCLI=0', 'Cả 3 slave đều trả lời.');
-  else add('Bus RS485', 'LTE ↔ PLC / PM / CT', 'warn', null, `LCLI=${s.busStatus}`, 'Bus chạy nhưng có 1 slave không trả lời (xem dòng tương ứng).');
-
-  if (stale) unknownIfStale('PLC_KEY (slave 4)', 'Cầu nối LTE ↔ LOGO');
-  else if (s.plcOnline === false) add('PLC_KEY (slave 4)', 'Cầu nối LTE ↔ LOGO', 'fault', 'E201', 'PCON=0', 'Không biết trạng thái nhánh, không gửi được lệnh.');
-  else add('PLC_KEY (slave 4)', 'Cầu nối LTE ↔ LOGO', 'ok', null, 'PCON=1', 'Đang trả lời.');
-
-  if (stale || s.plcOnline === false) add('LOGO (qua module ETH)', 'PLC_KEY ↔ LOGO, Modbus TCP', 'unknown', null, 'PTIM=X', 'Cần PLC_KEY trả lời mới đánh giá được.');
-  else if (sc === 'logo_lost') add('LOGO (qua module ETH)', 'PLC_KEY ↔ LOGO, Modbus TCP', 'fault', 'E301', `PTIM đứng ở ${fmtT(s.deviceTime)}`, 'PLC_KEY không đọc được LOGO; LQ2/LQ3 là giá trị cũ.');
-  else add('LOGO (qua module ETH)', 'PLC_KEY ↔ LOGO, Modbus TCP', 'ok', null, `PTIM ${fmtT(s.deviceTime)}`, 'Giờ LOGO đang cập nhật.');
-
-  if (stale) unknownIfStale('PM_KEY (slave 3)', 'Cầu nối LTE ↔ đồng hồ DH');
-  else if (s.pmOnline === false) add('PM_KEY (slave 3)', 'Cầu nối LTE ↔ đồng hồ DH', 'fault', 'E202', 'MCON=0', 'Không có số liệu điện năng.');
-  else add('PM_KEY (slave 3)', 'Cầu nối LTE ↔ đồng hồ DH', 'ok', null, 'MCON=1', 'Đang trả lời.');
-
-  if (stale || s.pmOnline === false) add('Đồng hồ điện DH', 'Đo U / I / P 3 pha', 'unknown', null, 'MCON=0', 'Cần PM_KEY trả lời mới đánh giá được.');
-  else if (sc === 'dh_meter_lost') add('Đồng hồ điện DH', 'Đo U / I / P 3 pha', 'fault', 'E401', 'MCON=1, U=I=P=0', 'PM_KEY không đọc được đồng hồ DH hoặc mất điện lưới.');
-  else if (sc === 'phase_loss') add('Đồng hồ điện DH', 'Đo U / I / P 3 pha', 'fault', 'E402', `L1 ${s.vL1} V · L2 ${s.vL2} V · L3 0 V`, 'Mất pha L3.');
-  else add('Đồng hồ điện DH', 'Đo U / I / P 3 pha', 'ok', null, `L1 ${s.vL1} V · L2 ${s.vL2} V · L3 ${s.vL3} V`, 'Số liệu hợp lệ.');
-
-  const ctLost = s.busStatus === '3' || s.busStatus === 'X' || s.busStatus === '4';
-  if (stale) unknownIfStale('CT_KEY (slave 2)', 'Dòng rò + nhiệt độ tủ');
-  else if (ctLost) add('CT_KEY (slave 2)', 'Dòng rò + nhiệt độ tủ', 'fault', 'E203', `LCLI=${s.busStatus}`, 'Không có dòng rò và nhiệt độ tủ.');
-  else add('CT_KEY (slave 2)', 'Dòng rò + nhiệt độ tủ', 'ok', null, `CTVL=${s.leakMa} mA`, 'Đang trả lời.');
-
-  if (stale || ctLost) add('Cảm biến nhiệt DS18B20', 'Nhiệt độ trong tủ', 'unknown', null, 'CTTE=X', 'Cần CT_KEY trả lời mới đánh giá được.');
-  else if (sc === 'temp_sensor_fault') add('Cảm biến nhiệt DS18B20', 'Nhiệt độ trong tủ', 'fault', 'E503', 'CTTE=1000', 'Đứt dây OneWire hoặc cảm biến hỏng.');
-  else add('Cảm biến nhiệt DS18B20', 'Nhiệt độ trong tủ', 'ok', null, `CTTE=${s.tempC} °C`, 'Đang đọc được.');
-
-  if (stale) unknownIfStale('GPS', 'Định vị GNSS của EC25');
-  else if (!s.gpsDevice) add('GPS', 'Định vị GNSS của EC25', 'warn', 'E801', 'LGPS=X', 'Chưa có fix GNSS.');
-  else add('GPS', 'Định vị GNSS của EC25', 'ok', null, `${s.gpsDevice.lat.toFixed(5)}, ${s.gpsDevice.lng.toFixed(5)}`, 'Có fix.');
-
-  if (s.batteryMv !== null && s.batteryMv < 3600) add('Pin dự phòng', 'Nguồn dự phòng bộ điều khiển', 'warn', 'E803', `LBAT=${s.batteryMv} mV`, 'Pin yếu.');
-  else add('Pin dự phòng', 'Nguồn dự phòng bộ điều khiển', s.batteryMv === null ? 'unknown' : 'ok', null, `LBAT=${s.batteryMv ?? 'X'} mV`, 'Bình thường.');
-
-  if (c.fwProfile === 'v2-1307ebc') add('Firmware LTE', 'Phiên bản / an toàn lệnh', 'warn', 'E804', 'v2-1307ebc', 'Không lọc LTID — web chặn điều khiển.');
-  else add('Firmware LTE', 'Phiên bản / an toàn lệnh', 'ok', null, 'v2-current', 'Có lọc LTID, hỗ trợ PMAN/PLN.');
-
-  add('Cửa tủ / contactor', 'PDOR / PFLT từ LOGO', 'unsupported', null, 'TELE_SEND_DOOR_FAULT 0', 'Firmware chưa gửi — sẽ có khi bật cờ.');
-
-  return { items, lastBootAt: boot.lastBootAt, bootsLast24h: boot.bootsLast24h, selfTest: selfTests.get(id) ?? null };
+  return { items: buildDiagnostics(input, Date.now(), getLang()), lastBootAt: boot.lastBootAt, bootsLast24h: boot.bootsLast24h, selfTest: selfTests.get(id) ?? null };
 }
 
 export function runSelfTest(id: string) {
   const summary = scenarios.get(id) === 'bus_down' ? 'A0D0B1C1' : 'A1D1B1C1';
-  const d = decodeRs485SelfTest(summary);
+  const d = decodeRs485SelfTest(summary, getLang());
   selfTests.set(id, { at: new Date().toISOString(), summary, ...d });
 }
 

@@ -3,6 +3,8 @@ import type { DimmingProfile, DimmingSegment } from '@citylight/shared';
 import { estimateDimming, minutesToHhmm } from '@citylight/shared';
 import { EChart } from './EChart';
 import { Checkbox } from './ui';
+import { fill, locale, useDict } from '@/i18n';
+import { DIMMING_EDITOR } from '@/i18n/dict/dimming-editor';
 
 const MIN = 1020; // 17:00
 const MAX = 1800; // 06:00 next day
@@ -10,6 +12,7 @@ const MAX = 1800; // 06:00 next day
 /** 5 chained dimming segments: segment k starts where k-1 ends; levels 0–100 %. Shows HH:MM, never raw minutes.
  *  `estimate` (from the API) carries the real lamp power of the group; savings are recomputed here while dragging. */
 export function DimmingEditor({ segments, onChange, disabled, estimate }: { segments: DimmingSegment[]; onChange: (s: DimmingSegment[]) => void; disabled?: boolean; estimate?: DimmingProfile['estimate'] }) {
+  const t = useDict(DIMMING_EDITOR);
   const setSeg = (i: number, patch: Partial<DimmingSegment>) => {
     const next = segments.map((s) => ({ ...s }));
     Object.assign(next[i]!, patch);
@@ -48,18 +51,18 @@ export function DimmingEditor({ segments, onChange, disabled, estimate }: { segm
   }, [segments]);
 
   const est = estimate ? estimateDimming(segments, estimate.lamps, estimate.ratedW, estimate.pricePerKwh) : null;
-  const n = (v: number) => v.toLocaleString('vi-VN');
+  const n = (v: number) => v.toLocaleString(locale());
 
   return (
     <div className="space-y-4">
       <div className="space-y-3">
         {segments.map((s, i) => (
           <div key={i} className="grid items-center gap-3 rounded-md border p-3 md:grid-cols-[150px_1fr_220px]">
-            <Checkbox label={`Thời đoạn ${i + 1}`} checked={s.enabled} onChange={(v) => setSeg(i, { enabled: v })} disabled={disabled} />
+            <Checkbox label={t.segment(i + 1)} checked={s.enabled} onChange={(v) => setSeg(i, { enabled: v })} disabled={disabled} />
             <div className="space-y-1">
               <div className="flex justify-between text-xs text-subtle">
-                <span>Bắt đầu {minutesToHhmm(s.startMin)}</span>
-                <span>Kết thúc {minutesToHhmm(s.endMin)}</span>
+                <span>{fill(t.start, { time: minutesToHhmm(s.startMin) })}</span>
+                <span>{fill(t.end, { time: minutesToHhmm(s.endMin) })}</span>
               </div>
               <div className="flex gap-2">
                 <input
@@ -71,7 +74,7 @@ export function DimmingEditor({ segments, onChange, disabled, estimate }: { segm
                   disabled={disabled || i === 0}
                   onChange={(e) => setSeg(i, { startMin: Number(e.target.value) })}
                   className="w-full accent-[rgb(var(--primary))]"
-                  aria-label={`Bắt đầu thời đoạn ${i + 1}`}
+                  aria-label={t.startAria(i + 1)}
                 />
                 <input
                   type="range"
@@ -82,7 +85,7 @@ export function DimmingEditor({ segments, onChange, disabled, estimate }: { segm
                   disabled={disabled}
                   onChange={(e) => setSeg(i, { endMin: Number(e.target.value) })}
                   className="w-full accent-[rgb(var(--primary))]"
-                  aria-label={`Kết thúc thời đoạn ${i + 1}`}
+                  aria-label={t.endAria(i + 1)}
                 />
               </div>
             </div>
@@ -96,7 +99,7 @@ export function DimmingEditor({ segments, onChange, disabled, estimate }: { segm
                 disabled={disabled || !s.enabled}
                 onChange={(e) => setSeg(i, { levelPct: Number(e.target.value) })}
                 className="w-full accent-[rgb(var(--st-dimming))]"
-                aria-label={`Mức năng lượng thời đoạn ${i + 1}`}
+                aria-label={t.levelAria(i + 1)}
               />
               <span className="w-12 text-right font-semibold tabular-nums">{s.levelPct}%</span>
             </div>
@@ -104,19 +107,19 @@ export function DimmingEditor({ segments, onChange, disabled, estimate }: { segm
         ))}
       </div>
       <div className="rounded-md border p-2">
-        <div className="px-2 pt-1 text-sm font-medium">Xem trước mức sáng trong đêm</div>
+        <div className="px-2 pt-1 text-sm font-medium">{t.preview}</div>
         <EChart option={option} height={200} />
         <div className="flex flex-wrap gap-4 px-2 pb-1 text-sm">
           <span>
-            Tiết kiệm ước tính: <b className="text-st-on">{savedPct.toFixed(1)}%</b>
+            {t.saving} <b className="text-st-on">{savedPct.toFixed(1)}%</b>
           </span>
           {est && estimate && (estimate.lamps === 0 ? (
-            <span className="text-subtle">Chưa có dữ liệu đèn nhóm này (nhập trụ / đèn ở Bản đồ) — chưa ước tính được kWh</span>
+            <span className="text-subtle">{t.noLamps}</span>
           ) : (
             <span className="text-subtle">
-              {n(est.lamps)} đèn · {n(est.ratedKw)} kW → ≈ <b className="text-fg">{n(est.kwhPerNight)} kWh/đêm</b> · {n(est.kwhPerYear)} kWh/năm
-              {est.vndPerYear !== null && <> · <b className="text-fg">{n(est.vndPerYear)} đ/năm</b> (giá {n(estimate.pricePerKwh!)} đ/kWh)</>}
-              {estimate.lampsWithoutPower > 0 && <> · {n(estimate.lampsWithoutPower)} đèn chưa có công suất</>}
+              {t.lamps(est.lamps, n(est.lamps))} · {n(est.ratedKw)} kW → ≈ <b className="text-fg">{fill(t.kwhPerNight, { v: n(est.kwhPerNight) })}</b> · {fill(t.kwhPerYear, { v: n(est.kwhPerYear) })}
+              {est.vndPerYear !== null && <> · <b className="text-fg">{fill(t.moneyPerYear, { v: n(est.vndPerYear) })}</b> {fill(t.price, { v: n(estimate.pricePerKwh!) })}</>}
+              {estimate.lampsWithoutPower > 0 && <> · {t.lampsWithoutPower(estimate.lampsWithoutPower, n(estimate.lampsWithoutPower))}</>}
             </span>
           ))}
         </div>

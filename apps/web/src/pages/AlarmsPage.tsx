@@ -4,7 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Download, Check } from 'lucide-react';
 import type { Alarm } from '@citylight/shared';
-import { ALARM_TYPE_LABELS, ERROR_CATALOG, SEVERITY_LABELS, errorOf } from '@citylight/shared';
+import { ERROR_CATEGORY_LABELS, alarmTypeLabels, errorCatalog } from '@citylight/shared';
+import { fill, useDict, useLabels, useLang } from '@/i18n';
+import { ALARMS } from '@/i18n/dict/alarms';
 import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { downloadCsv } from '@/lib/exportFile';
@@ -18,6 +20,13 @@ import { ImeiButton } from './cabinet/ImeiDecision';
 export function AlarmsPage() {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const t = useDict(ALARMS);
+  const L = useLabels();
+  const lang = useLang((s) => s.lang);
+  const typeLabels = useMemo(() => alarmTypeLabels(lang), [lang]);
+  const catalog = useMemo(() => errorCatalog(lang), [lang]);
+  const defOf = (type: Alarm['type']) => catalog.find((e) => e.type === type);
+  const areaName = (n: string) => (n === ALARMS.vi.unassigned ? t.unassigned : n);
   const canAck = useSession((s) => s.can('alarm.ack'));
   const canReport = useSession((s) => s.can('incident.manage') || s.can('incident.resolve'));
   const [tab, setTab] = useState<'active' | 'all'>('active');
@@ -37,69 +46,69 @@ export function AlarmsPage() {
   const toIncident = useMutation({
     mutationFn: (alarmId: string) => api.createIncident({ alarmId }),
     onSuccess: (inc) => {
-      toast(`Đã tạo sự cố ${inc.code}`, 'success');
+      toast(fill(t.incidentCreated, { code: inc.code }), 'success');
       nav(`/incidents/${inc.id}`);
     },
-    onError: (e) => toast(e instanceof ApiError ? e.message : 'Không tạo được sự cố', 'error'),
+    onError: (e) => toast(e instanceof ApiError ? e.message : t.incidentFailed, 'error'),
   });
   const ack = useMutation({
     mutationFn: api.ackAlarm,
     onSuccess: () => {
-      toast('Đã xác nhận cảnh báo', 'success');
+      toast(t.acked, 'success');
       qc.invalidateQueries({ queryKey: ['alarms'] });
     },
   });
 
   const columns = useMemo<ColumnDef<Alarm, unknown>[]>(
     () => [
-      { header: 'Mã', cell: ({ row: r }) => <ErrorCodeBadge type={r.original.type} code={r.original.code} /> },
-      { header: 'Tủ', cell: ({ row: r }) => <div><div className="font-medium">{r.original.cabinetCode}</div><div className="text-xs text-subtle">{r.original.cabinetName}</div></div> },
-      { header: 'Khu vực', accessorKey: 'districtName' },
-      { header: 'Loại', cell: ({ row: r }) => ALARM_TYPE_LABELS[r.original.type] },
-      { header: 'Mức', cell: ({ row: r }) => <Badge tone={r.original.severity === 'critical' ? 'red' : r.original.severity === 'major' ? 'orange' : 'amber'}>{SEVERITY_LABELS[r.original.severity]}</Badge> },
-      { header: 'Nội dung', accessorKey: 'message' },
-      { header: 'Bắt đầu', cell: ({ row: r }) => <span className="whitespace-nowrap text-xs">{fmtTime(r.original.startedAt)}</span> },
-      { header: 'Kéo dài', cell: ({ row: r }) => <span className="whitespace-nowrap text-xs">{fmtDuration(r.original.startedAt, r.original.endedAt)}</span> },
-      { header: 'Trạng thái', cell: ({ row: r }) => (r.original.active ? <Badge tone="red">Hiện hữu</Badge> : <Badge>Đã kết thúc</Badge>) },
+      { header: t.col.code, cell: ({ row: r }) => <ErrorCodeBadge type={r.original.type} code={r.original.code} /> },
+      { header: t.col.cabinet, cell: ({ row: r }) => <div><div className="font-medium">{r.original.cabinetCode}</div><div className="text-xs text-subtle">{r.original.cabinetName}</div></div> },
+      { header: t.col.area, cell: ({ row: r }) => areaName(r.original.districtName) },
+      { header: t.col.type, cell: ({ row: r }) => typeLabels[r.original.type] },
+      { header: t.col.severity, cell: ({ row: r }) => <Badge tone={r.original.severity === 'critical' ? 'red' : r.original.severity === 'major' ? 'orange' : 'amber'}>{L.severity[r.original.severity]}</Badge> },
+      { header: t.col.message, accessorKey: 'message' },
+      { header: t.col.started, cell: ({ row: r }) => <span className="whitespace-nowrap text-xs">{fmtTime(r.original.startedAt)}</span> },
+      { header: t.col.duration, cell: ({ row: r }) => <span className="whitespace-nowrap text-xs">{fmtDuration(r.original.startedAt, r.original.endedAt)}</span> },
+      { header: t.col.status, cell: ({ row: r }) => (r.original.active ? <Badge tone="red">{t.active}</Badge> : <Badge>{t.ended}</Badge>) },
       {
-        header: 'Xác nhận',
+        header: t.col.ack,
         cell: ({ row: r }) =>
           r.original.ackedBy ? (
             <span className="text-xs text-subtle">{r.original.ackedBy}<br />{fmtTime(r.original.ackedAt)}</span>
           ) : canAck ? (
             <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); ack.mutate(r.original.id); }}>
-              <Check className="h-3.5 w-3.5" /> Đã biết
+              <Check className="h-3.5 w-3.5" /> {t.ackShort}
             </Button>
           ) : (
             '—'
           ),
       },
     ],
-    [ack, canAck],
+    [ack, canAck, t, L, typeLabels],
   );
 
   return (
     <div className="p-4">
       <PageHeader
-        title="Cảnh báo lỗi"
-        subtitle="Số tủ lỗi / mất kết nối trên bản đồ luôn khớp danh sách cảnh báo hiện hữu (cùng một nguồn trạng thái)"
+        title={t.title}
+        subtitle={t.subtitle}
         actions={
           <Button
             variant="outline"
             onClick={async () => {
               const { page: _p, size: _s, ...filters } = params;
               if (await api.exportAlarms(filters).catch(() => false)) return;
-              downloadCsv('canh-bao.csv', ['Mã lỗi', 'Mã tủ', 'Tên tủ', 'Khu vực', 'Loại', 'Mức', 'Nội dung', 'Bắt đầu', 'Kết thúc'], (data?.items ?? []).map((a) => [a.code, a.cabinetCode, a.cabinetName, a.districtName, ALARM_TYPE_LABELS[a.type], SEVERITY_LABELS[a.severity], a.message, fmtTime(a.startedAt), fmtTime(a.endedAt)]));
+              downloadCsv(t.csvFile, [t.csv.code, t.csv.cabinetCode, t.csv.cabinetName, t.csv.area, t.csv.type, t.csv.severity, t.csv.message, t.csv.started, t.csv.ended], (data?.items ?? []).map((a) => [a.code, a.cabinetCode, a.cabinetName, areaName(a.districtName), typeLabels[a.type], L.severity[a.severity], a.message, fmtTime(a.startedAt), fmtTime(a.endedAt)]));
             }}
           >
-            <Download className="h-4 w-4" /> Xuất Excel
+            <Download className="h-4 w-4" /> {t.export}
           </Button>
         }
       />
       <Tabs value={tab} onValueChange={(v) => { setTab(v as 'active' | 'all'); setPage(1); }}>
         <TabsList className="mb-3">
-          <TabsTrigger value="active">Cảnh báo hiện hữu</TabsTrigger>
-          <TabsTrigger value="all">Tất cả cảnh báo</TabsTrigger>
+          <TabsTrigger value="active">{t.tabActive}</TabsTrigger>
+          <TabsTrigger value="all">{t.tabAll}</TabsTrigger>
         </TabsList>
       </Tabs>
       <DataTable
@@ -115,15 +124,15 @@ export function AlarmsPage() {
         toolbar={
           <>
             <Select value={district} onChange={(e) => { setDistrict(e.target.value); setPage(1); }}>
-              <option value="">Tất cả khu vực</option>
+              <option value="">{t.allAreas}</option>
               {districts.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
-              <option value="Chưa phân khu vực">Chưa phân khu vực</option>
+              <option value={ALARMS.vi.unassigned}>{t.unassigned}</option>
             </Select>
             <Select value={type} onChange={(e) => { setType(e.target.value); setPage(1); }}>
-              <option value="">Tất cả loại</option>
-              {[...new Set(ERROR_CATALOG.map((e) => e.category))].map((cat) => (
-                <optgroup key={cat} label={cat}>
-                  {ERROR_CATALOG.filter((e) => e.category === cat).map((e) => (
+              <option value="">{t.allTypes}</option>
+              {[...new Set(catalog.map((e) => e.category))].map((cat) => (
+                <optgroup key={cat} label={ERROR_CATEGORY_LABELS[lang][cat]}>
+                  {catalog.filter((e) => e.category === cat).map((e) => (
                     <option key={e.type} value={e.type}>
                       {e.code} · {e.title}
                     </option>
@@ -132,33 +141,33 @@ export function AlarmsPage() {
               ))}
             </Select>
             <Select value={severity} onChange={(e) => { setSeverity(e.target.value); setPage(1); }}>
-              <option value="">Mọi mức</option>
-              {Object.entries(SEVERITY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              <option value="">{t.allSeverities}</option>
+              {Object.entries(L.severity).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </Select>
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" aria-label="Từ ngày" />
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" aria-label="Đến ngày" />
+            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" aria-label={t.from} />
+            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" aria-label={t.to} />
           </>
         }
       />
       <Modal
         open={!!open}
         onOpenChange={(v) => !v && setOpen(null)}
-        title={open ? `${open.code} · ${ALARM_TYPE_LABELS[open.type]}` : ''}
+        title={open ? `${open.code} · ${typeLabels[open.type]}` : ''}
         className="w-[min(680px,calc(100vw-32px))]"
         footer={
           open && (
             <>
               {canAck && !open.ackedBy && (
                 <Button variant="outline" onClick={() => { ack.mutate(open.id); setOpen(null); }}>
-                  Xác nhận đã biết
+                  {t.ackLong}
                 </Button>
               )}
               {canReport && (
                 <Button variant="outline" loading={toIncident.isPending} onClick={() => toIncident.mutate(open.id)}>
-                  Tạo sự cố
+                  {t.createIncident}
                 </Button>
               )}
-              <Button onClick={() => nav(`/?cabinet=${open.cabinetId}`)}>Mở tủ trên bản đồ</Button>
+              <Button onClick={() => nav(`/?cabinet=${open.cabinetId}`)}>{t.openOnMap}</Button>
             </>
           )
         }
@@ -166,12 +175,12 @@ export function AlarmsPage() {
         {open && (
           <div className="space-y-4">
             <div>
-              <KV label="Tủ" value={`${open.cabinetCode} · ${open.cabinetName}`} />
-              <KV label="Khu vực" value={open.districtName} />
-              <KV label="Chi tiết" value={open.message} />
-              <KV label="Bắt đầu" value={fmtTime(open.startedAt)} />
-              <KV label="Kéo dài" value={`${fmtDuration(open.startedAt, open.endedAt)}${open.active ? ' (đang diễn ra)' : ''}`} />
-              <KV label="Xác nhận" value={open.ackedBy ? `${open.ackedBy} · ${fmtTime(open.ackedAt)}` : 'Chưa'} />
+              <KV label={t.kv.cabinet} value={`${open.cabinetCode} · ${open.cabinetName}`} />
+              <KV label={t.kv.area} value={areaName(open.districtName)} />
+              <KV label={t.kv.detail} value={open.message} />
+              <KV label={t.kv.started} value={fmtTime(open.startedAt)} />
+              <KV label={t.kv.duration} value={`${fmtDuration(open.startedAt, open.endedAt)}${open.active ? t.ongoing : ''}`} />
+              <KV label={t.kv.ack} value={open.ackedBy ? `${open.ackedBy} · ${fmtTime(open.ackedAt)}` : t.notAcked} />
             </div>
             {open.type === 'spoof_suspect' && open.active && (
               <div className="flex justify-end">
@@ -183,9 +192,9 @@ export function AlarmsPage() {
                 <RelocateGpsButton cabinetId={open.cabinetId} label={`${open.cabinetCode} · ${open.cabinetName}`} onDone={() => setOpen(null)} />
               </div>
             )}
-            {errorOf(open.type) && (
+            {defOf(open.type) && (
               <div className="rounded-md border bg-muted/40 p-3">
-                <ErrorGuide def={errorOf(open.type)!} />
+                <ErrorGuide def={defOf(open.type)!} />
               </div>
             )}
           </div>

@@ -6,8 +6,10 @@ import {
   Crosshair, Layers, LocateFixed, PanelLeftClose, PanelLeftOpen, Pencil, Ruler, Satellite, Search, Star, Trash2, X, Map as MapIcon,
 } from 'lucide-react';
 import type { CabinetStatus, GeoPoint } from '@citylight/shared';
-import { STATUS_LABELS } from '@citylight/shared';
 import { api, ApiError, type MapAssets, type MapEditOp, type PoleAsset } from '@/lib/api';
+import { fill, locale, useDict, useLabels } from '@/i18n';
+import { COMMON } from '@/i18n/dict/common';
+import { MAP } from '@/i18n/dict/map';
 import { EditToolbar, GeneratePolesModal, ImportPolesModal, PolePanel } from './MapEditor';
 import { useSession } from '@/stores/session';
 import { cn } from '@/lib/utils';
@@ -15,7 +17,7 @@ import { Button, Checkbox, Input, Modal, STATUS_ICON, StatusBadge, confirm, toas
 import { CabinetMap, type CabinetMapHandle, type MapLayers, type EditTool, type MapDraft } from './CabinetMap';
 import { LeftPanel } from './LeftPanel';
 import { CabinetDrawer } from '../cabinet/CabinetDrawer';
-import { BASEMAPS, type BasemapId } from './mapStyle';
+import { BASEMAPS, BASEMAP_GROUPS, type BasemapId } from './mapStyle';
 
 const KPI_ORDER: CabinetStatus[] = ['offline', 'fault', 'on', 'off', 'dimming', 'unknown'];
 const KPI_COLOR: Record<CabinetStatus, string> = {
@@ -55,6 +57,8 @@ export function MapPage() {
   const selectedId = params.get('cabinet');
   const qc = useQueryClient();
   const can = useSession((s) => s.can);
+  const t = useDict(MAP);
+  const L = useLabels();
   const mapRef = useRef<CabinetMapHandle>(null);
 
   const [panelOpen, setPanelOpen] = useState(true);
@@ -146,13 +150,13 @@ export function MapPage() {
   const saveEdits = useMutation({
     mutationFn: () => api.saveMapEdits(ops),
     onSuccess: (r) => {
-      toast(`Đã lưu ${r.saved} thay đổi`, 'success');
+      toast(t.edit.saved(r.saved), 'success');
       setOps([]);
       setDrawing(null);
       setAssetsVersion((v) => v + 1);
       void qc.invalidateQueries({ queryKey: ['map-cabinets'] });
     },
-    onError: (e) => toast(e instanceof ApiError ? e.message : 'Không lưu được', 'error'),
+    onError: (e) => toast(e instanceof ApiError ? e.message : t.edit.saveFailed, 'error'),
   });
 
   const select = (id: string | null) => {
@@ -196,9 +200,9 @@ export function MapPage() {
               >
                 <div className={cn('flex items-center gap-1 text-[11px]', KPI_COLOR[s])}>
                   <Icon className="h-3.5 w-3.5" />
-                  <span className="truncate">{STATUS_LABELS[s]}</span>
+                  <span className="truncate">{L.status[s]}</span>
                 </div>
-                <div className="text-lg font-semibold tabular-nums">{stats.data ? stats.data.cabinets[s].toLocaleString('vi-VN') : '…'}</div>
+                <div className="text-lg font-semibold tabular-nums">{stats.data ? stats.data.cabinets[s].toLocaleString(locale()) : '…'}</div>
               </button>
             );
           })}
@@ -206,22 +210,22 @@ export function MapPage() {
         <div className="grid grid-cols-3 gap-1.5 border-b p-2 text-center text-[11px] text-subtle">
           <div>
             <div className="text-base font-semibold text-fg">{stats.data ? `${stats.data.onlinePct.toFixed(1)}%` : '…'}</div>
-            Tủ online
+            {t.kpi.online}
           </div>
           <div>
             <div className="text-base font-semibold text-fg">{stats.data?.energyTodayKwh ?? '—'}</div>
-            kWh hôm nay
+            {t.kpi.energyToday}
           </div>
           <div>
             <div className="text-base font-semibold text-fg">{stats.data?.overdueIncidents ?? '…'}</div>
-            Sự cố quá hạn
+            {t.kpi.overdue}
           </div>
         </div>
         {statusFilter.size > 0 && (
           <div className="flex items-center justify-between border-b px-3 py-1.5 text-xs">
-            <span className="text-subtle">Đang lọc: {[...statusFilter].map((s) => STATUS_LABELS[s]).join(', ')}</span>
+            <span className="text-subtle">{fill(t.kpi.filtering, { list: [...statusFilter].map((s) => L.status[s]).join(', ') })}</span>
             <button className="text-primary" onClick={() => setStatusFilter(new Set())}>
-              Bỏ lọc
+              {t.kpi.clearFilter}
             </button>
           </div>
         )}
@@ -244,7 +248,7 @@ export function MapPage() {
           onAssets={setAssets}
           onMapClick={(pt) => {
             const c = cabinets.find((x) => x.id === editCabinetId);
-            if (!c) return toast('Chọn tủ trước', 'error');
+            if (!c) return toast(t.edit.pickCabinetFirst, 'error');
             if (tool === 'route') setDrawing((d) => (d ? [...d, [pt.lng, pt.lat]] : [[c.location.lng, c.location.lat], [pt.lng, pt.lat]]));
             if (tool === 'pole') pushOp({ op: 'addPole', cabinetId: c.id, branch, lat: pt.lat, lng: pt.lng, lampCount: 1 });
           }}
@@ -262,7 +266,7 @@ export function MapPage() {
 
         {/* Toolbar */}
         <div className="absolute left-3 top-3 z-10 flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="icon" onClick={() => setPanelOpen((v) => !v)} aria-label={panelOpen ? 'Ẩn danh sách' : 'Hiện danh sách'} className="shadow">
+          <Button variant="outline" size="icon" onClick={() => setPanelOpen((v) => !v)} aria-label={panelOpen ? t.toolbar.hideList : t.toolbar.showList} className="shadow">
             {panelOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
           </Button>
           <SearchBox onPick={flyToCabinet} />
@@ -272,7 +276,7 @@ export function MapPage() {
             variant={measureMode ? 'primary' : 'outline'}
             size="icon"
             className="shadow"
-            aria-label="Đo khoảng cách"
+            aria-label={t.toolbar.measure}
             onClick={() => {
               setMeasureMode((v) => !v);
               setMeasurePts([]);
@@ -284,22 +288,22 @@ export function MapPage() {
             variant="outline"
             size="icon"
             className="shadow"
-            aria-label="Vị trí hiện tại"
+            aria-label={t.toolbar.myLocation}
             onClick={() =>
               navigator.geolocation?.getCurrentPosition(
                 (p) => mapRef.current?.flyTo({ lat: p.coords.latitude, lng: p.coords.longitude }, 15),
-                () => toast('Không lấy được vị trí hiện tại', 'error'),
+                () => toast(t.toolbar.noLocation, 'error'),
               )
             }
           >
             <LocateFixed className="h-4 w-4" />
           </Button>
-          <Button variant="outline" size="icon" className="shadow" aria-label="Vệ tinh / bản đồ thường" onClick={() => setBasemap(basemap === 'hybrid' || basemap === 'satellite' ? 'auto' : 'hybrid')}>
+          <Button variant="outline" size="icon" className="shadow" aria-label={t.toolbar.satellite} onClick={() => setBasemap(basemap === 'hybrid' || basemap === 'satellite' ? 'auto' : 'hybrid')}>
             {basemap === 'hybrid' || basemap === 'satellite' ? <MapIcon className="h-4 w-4" /> : <Satellite className="h-4 w-4" />}
           </Button>
           {can('map.edit') && (
             <Button variant={editMode ? 'primary' : 'outline'} size="sm" className="shadow" onClick={() => (editMode ? undefined : (select(null), setEditMode(true)))}>
-              <Pencil className="h-4 w-4" /> Chỉnh sửa
+              <Pencil className="h-4 w-4" /> {t.toolbar.edit}
             </Button>
           )}
         </div>
@@ -307,9 +311,9 @@ export function MapPage() {
         {measureMode && (
           <div className="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-3 rounded-md border bg-panel px-3 py-1.5 text-sm shadow">
             <Crosshair className="h-4 w-4 text-st-offline" />
-            Bấm lên bản đồ để thêm điểm · Tổng: <b>{Math.round(measureTotal).toLocaleString('vi-VN')} m</b>
+            {t.toolbar.measureHint} <b>{Math.round(measureTotal).toLocaleString(locale())} m</b>
             <Button size="sm" variant="ghost" onClick={() => setMeasurePts([])}>
-              Xóa
+              {t.toolbar.measureClear}
             </Button>
           </div>
         )}
@@ -329,7 +333,7 @@ export function MapPage() {
             onFinishRoute={finishRoute}
             onUndo={() => setOps((l) => l.slice(0, -1))}
             onCancel={async () => {
-              if (ops.length && !(await confirm({ title: 'Bỏ các thay đổi?', body: `${ops.length} thay đổi chưa lưu sẽ bị bỏ.`, danger: true, confirmLabel: 'Bỏ thay đổi' }))) return;
+              if (ops.length && !(await confirm({ title: t.edit.discardTitle, body: t.edit.discardBody(ops.length), danger: true, confirmLabel: t.edit.discard }))) return;
               leaveEdit();
             }}
             onSave={() => saveEdits.mutate()}
@@ -363,6 +367,7 @@ export function MapPage() {
 }
 
 function SearchBox({ onPick }: { onPick: (id: string) => void }) {
+  const t = useDict(MAP).search;
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const { data } = useQuery({ queryKey: ['search', q], queryFn: () => api.search(q), enabled: q.trim().length >= 2 });
@@ -377,9 +382,9 @@ function SearchBox({ onPick }: { onPick: (id: string) => void }) {
         }}
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
-        placeholder="Tìm tủ theo mã, tên, địa chỉ…"
+        placeholder={t.placeholder}
         className="w-72 pl-8 shadow"
-        aria-label="Tìm tủ"
+        aria-label={t.label}
       />
       {open && q.trim().length >= 2 && (
         <div className="absolute mt-1 w-full overflow-hidden rounded-md border bg-panel shadow-lg">
@@ -400,7 +405,7 @@ function SearchBox({ onPick }: { onPick: (id: string) => void }) {
               </button>
             ))
           ) : (
-            <div className="px-3 py-2 text-sm text-subtle">Không tìm thấy</div>
+            <div className="px-3 py-2 text-sm text-subtle">{t.none}</div>
           )}
         </div>
       )}
@@ -409,50 +414,53 @@ function SearchBox({ onPick }: { onPick: (id: string) => void }) {
 }
 
 function LayersPopover({ layers, setLayers, basemap, setBasemap }: { layers: MapLayers; setLayers: (l: MapLayers) => void; basemap: BasemapId; setBasemap: (b: BasemapId) => void }) {
+  const m = useDict(MAP);
+  const t = m.layers;
   const set = (k: keyof MapLayers) => (v: boolean) => setLayers({ ...layers, [k]: v });
+  const note = BASEMAPS.find((b) => b.id === basemap)?.note;
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <Button variant="outline" size="icon" className="shadow" aria-label="Lớp hiển thị">
+        <Button variant="outline" size="icon" className="shadow" aria-label={t.button}>
           <Layers className="h-4 w-4" />
         </Button>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content align="start" sideOffset={6} className="z-50 w-64 space-y-3 rounded-lg border bg-panel p-3 shadow-xl">
           <div>
-            <div className="mb-1 text-xs font-semibold uppercase text-subtle">Lớp đối tượng</div>
+            <div className="mb-1 text-xs font-semibold uppercase text-subtle">{t.objects}</div>
             <div className="space-y-1">
-              <Checkbox label="Tủ chiếu sáng" checked={layers.cabinets} onChange={set('cabinets')} />
-              <Checkbox label="Tuyến chiếu sáng" checked={layers.routes} onChange={set('routes')} />
-              <Checkbox label="Trụ / đèn chiếu sáng" checked={layers.poles} onChange={set('poles')} />
-              <Checkbox label="Camera giám sát (giai đoạn 2)" checked={false} onChange={() => undefined} disabled />
-              <Checkbox label="Cây xanh (giai đoạn 2)" checked={false} onChange={() => undefined} disabled />
+              <Checkbox label={t.cabinets} checked={layers.cabinets} onChange={set('cabinets')} />
+              <Checkbox label={t.routes} checked={layers.routes} onChange={set('routes')} />
+              <Checkbox label={t.poles} checked={layers.poles} onChange={set('poles')} />
+              <Checkbox label={t.cameras} checked={false} onChange={() => undefined} disabled />
+              <Checkbox label={t.trees} checked={false} onChange={() => undefined} disabled />
             </div>
           </div>
           <div>
-            <div className="mb-1 text-xs font-semibold uppercase text-subtle">Nhãn</div>
+            <div className="mb-1 text-xs font-semibold uppercase text-subtle">{t.labels}</div>
             <div className="space-y-1">
-              <Checkbox label="Hiện tên đối tượng" checked={layers.labels} onChange={set('labels')} />
-              <Checkbox label="Hiện mã đối tượng" checked={layers.codes} onChange={set('codes')} />
+              <Checkbox label={t.showNames} checked={layers.labels} onChange={set('labels')} />
+              <Checkbox label={t.showCodes} checked={layers.codes} onChange={set('codes')} />
             </div>
           </div>
           <div>
-            <div className="mb-1 text-xs font-semibold uppercase text-subtle">Bản đồ nền</div>
+            <div className="mb-1 text-xs font-semibold uppercase text-subtle">{t.basemap}</div>
             <Select value={basemap} onChange={(e) => setBasemap(e.target.value as BasemapId)} className="w-full">
-              <option value="auto">Tự động theo giao diện sáng/tối</option>
-              {(['Sáng', 'Tối', 'Ảnh vệ tinh', 'Khác'] as const).map((g) => (
-                <optgroup key={g} label={g}>
+              <option value="auto">{t.auto}</option>
+              {BASEMAP_GROUPS.map((g) => (
+                <optgroup key={g} label={m.basemapGroup[g]}>
                   {BASEMAPS.filter((b) => b.group === g).map((b) => (
                     <option key={b.id} value={b.id}>
-                      {b.label}
+                      {m.basemap[b.id]}
                     </option>
                   ))}
                 </optgroup>
               ))}
             </Select>
-            {BASEMAPS.find((b) => b.id === basemap)?.note && <div className="mt-1 text-[11px] text-subtle">{BASEMAPS.find((b) => b.id === basemap)?.note}</div>}
+            {note && <div className="mt-1 text-[11px] text-subtle">{m.basemapNote[note]}</div>}
           </div>
-          <div className="text-[11px] text-subtle">Trụ và tuyến hiện khi phóng to (zoom ≥ 14)</div>
+          <div className="text-[11px] text-subtle">{t.zoomHint}</div>
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
@@ -461,10 +469,12 @@ function LayersPopover({ layers, setLayers, basemap, setBasemap }: { layers: Map
 
 function FavoritesPopover({ getView, flyTo }: { getView: () => { center: GeoPoint; zoom: number }; flyTo: (p: GeoPoint, z: number) => void }) {
   const qc = useQueryClient();
+  const t = useDict(MAP).favorites;
+  const c = useDict(COMMON);
   const { data } = useQuery({ queryKey: ['favorites'], queryFn: api.favorites });
   const [name, setName] = useState('');
   const add = useMutation({
-    mutationFn: () => api.addFavorite({ name: name || 'Vị trí mới', ...getView() }),
+    mutationFn: () => api.addFavorite({ name: name || t.newName, ...getView() }),
     onSuccess: () => {
       setName('');
       qc.invalidateQueries({ queryKey: ['favorites'] });
@@ -474,30 +484,30 @@ function FavoritesPopover({ getView, flyTo }: { getView: () => { center: GeoPoin
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <Button variant="outline" size="icon" className="shadow" aria-label="Vị trí ưa thích">
+        <Button variant="outline" size="icon" className="shadow" aria-label={t.button}>
           <Star className="h-4 w-4" />
         </Button>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content align="start" sideOffset={6} className="z-50 w-72 rounded-lg border bg-panel p-3 shadow-xl">
-          <div className="mb-2 text-xs font-semibold uppercase text-subtle">Vị trí ưa thích</div>
+          <div className="mb-2 text-xs font-semibold uppercase text-subtle">{t.button}</div>
           <div className="mb-2 max-h-48 space-y-1 overflow-auto">
             {data?.map((f) => (
               <div key={f.id} className="flex items-center justify-between rounded px-2 py-1 hover:bg-muted">
                 <button className="truncate text-left text-sm" onClick={() => flyTo(f.center, f.zoom)}>
                   {f.name}
                 </button>
-                <button className="text-subtle hover:text-st-offline" onClick={() => del.mutate(f.id)} aria-label={`Xóa ${f.name}`}>
+                <button className="text-subtle hover:text-st-offline" onClick={() => del.mutate(f.id)} aria-label={fill(t.remove, { name: f.name })}>
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
             ))}
-            {!data?.length && <div className="text-sm text-subtle">Chưa có vị trí nào</div>}
+            {!data?.length && <div className="text-sm text-subtle">{t.empty}</div>}
           </div>
           <div className="flex gap-2">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Tên vị trí hiện tại" className="h-8" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t.namePlaceholder} className="h-8" />
             <Button size="sm" onClick={() => add.mutate()} loading={add.isPending}>
-              Lưu
+              {c.save}
             </Button>
           </div>
         </Popover.Content>

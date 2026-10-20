@@ -1,0 +1,56 @@
+// Bulk sync page (BatchesPage) and the batch progress bar (also used by the sync log).
+import { defineDict, plural } from '@citylight/shared';
+
+export const BATCHES = defineDict(
+  {
+    /** CommandBatch['kind'] */
+    kind: { schedule: 'Lịch chiếu sáng', dimming: 'Tiết giảm', time: 'Đồng bộ giờ' },
+    progress: {
+      succeeded: (n: number) => `${n} thành công`,
+      failed: (n: number) => `${n} lỗi`,
+      offline: (n: number) => `${n} mất kết nối`,
+      pending: (n: number) => `${n} đang chờ`,
+    },
+    retryFailed: 'Không gửi lại được',
+    retrying: 'Đang gửi lại các tủ lỗi / offline',
+    title: 'Đồng bộ hàng loạt',
+    subtitle: 'Lệnh gửi qua hàng đợi, giới hạn tốc độ, theo dõi kết quả từng tủ',
+    syncTime: 'Đồng bộ giờ theo vùng',
+    runs: 'Các lần đồng bộ',
+    noRuns: 'Chưa có lần đồng bộ nào. Thử “Đồng bộ xuống tủ” ở trang Lịch chiếu sáng.',
+    done: 'Xong',
+    running: 'Đang chạy',
+    cabinets: (n: number) => `${n} tủ`,
+    pickRun: 'Chọn một lần đồng bộ để xem kết quả từng tủ',
+    requestedBy: 'Người thực hiện {by} · {at}',
+    otp: 'Mã 2FA',
+    retry: 'Gửi lại tủ lỗi',
+    col: { cabinet: 'Tủ', result: 'Kết quả', detail: 'Chi tiết' },
+    result: { ok: 'Thành công', failed: 'Lỗi', offline: 'Mất kết nối', pending: 'Đang chờ' },
+  },
+  {
+    kind: { schedule: 'Lighting schedule', dimming: 'Dimming', time: 'Time sync' },
+    progress: {
+      succeeded: (n: number) => `${n} succeeded`,
+      failed: (n: number) => `${n} failed`,
+      offline: (n: number) => `${n} offline`,
+      pending: (n: number) => `${n} pending`,
+    },
+    retryFailed: 'Could not resend',
+    retrying: 'Resending to failed / offline cabinets',
+    title: 'Bulk sync',
+    subtitle: 'Commands go through a rate-limited queue; results are tracked per cabinet',
+    syncTime: 'Sync time by zone',
+    runs: 'Sync runs',
+    noRuns: 'No sync runs yet. Try “Sync to cabinets” on the Lighting schedules page.',
+    done: 'Done',
+    running: 'Running',
+    cabinets: (n: number) => plural(n, 'cabinet', 'cabinets'),
+    pickRun: 'Select a sync run to see the result for each cabinet',
+    requestedBy: 'Run by {by} · {at}',
+    otp: '2FA code',
+    retry: 'Resend failed cabinets',
+    col: { cabinet: 'Cabinet', result: 'Result', detail: 'Details' },
+    result: { ok: 'Succeeded', failed: 'Failed', offline: 'Offline', pending: 'Pending' },
+  },
+);

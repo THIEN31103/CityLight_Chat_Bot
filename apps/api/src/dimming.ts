@@ -25,7 +25,7 @@ export class DimmingService {
 
   private validate(segments: DimmingSegment[]) {
     const errors = validateDimming(segments);
-    if (errors.length) throw new ApiError(422, 'invalid_profile', errors.join('; '));
+    if (errors.length) throw new ApiError(422, 'invalid_profile', errors.join('; '), { errors: errors.join('; '), errorsEn: validateDimming(segments, 'en').join('; ') });
   }
 
   private async price(): Promise<number | null> {
@@ -114,7 +114,7 @@ export class DimmingService {
     if (!u.scope.all) throw new ApiError(403, 'forbidden_scope', 'Cần quyền toàn hệ thống');
     const z0 = await this.zone(zoneId);
     const r = await this.sql`DELETE FROM dimming_profiles WHERE zone_id = ${zoneId} AND cabinet_id IS NULL AND lamp_group = ${group} RETURNING id`;
-    if (!r.length) throw new ApiError(404, 'not_found', 'Vùng không có hồ sơ riêng cho nhóm đèn này');
+    if (!r.length) throw new ApiError(404, 'no_zone_profile', 'Vùng không có hồ sơ riêng cho nhóm đèn này');
     await this.log(u, 'Bỏ hồ sơ tiết giảm riêng', 'zone', zoneId, `Vùng ${z0.name} · ${LAMP_GROUP_LABELS[group]}`, 'Theo hệ thống', ip);
   }
 
@@ -147,7 +147,7 @@ export class DimmingService {
   async dropCabinet(u: SessionUser, id: string, group: LampGroup, ip?: string) {
     const c = await this.cab(u, id);
     const r = await this.sql`DELETE FROM dimming_profiles WHERE cabinet_id = ${c.id} AND lamp_group = ${group} RETURNING id`;
-    if (!r.length) throw new ApiError(404, 'not_found', 'Tủ không có hồ sơ riêng cho nhóm đèn này');
+    if (!r.length) throw new ApiError(404, 'no_cabinet_profile', 'Tủ không có hồ sơ riêng cho nhóm đèn này');
     await this.log(u, 'Bỏ hồ sơ tiết giảm riêng', 'cabinet', c.id, `${c.code} · ${LAMP_GROUP_LABELS[group]}`, 'Theo vùng / hệ thống', ip);
   }
 }

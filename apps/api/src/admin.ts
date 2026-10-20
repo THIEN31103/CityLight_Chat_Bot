@@ -4,7 +4,7 @@
 import { Body, Controller, Delete, Get, HttpCode, Inject, Injectable, Module, Param, Patch, Post, Put, Req } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
-import { DEFAULT_FIELD_MAP, GPS_RELOCATE_STALE_M, LAMP_GROUP_LABELS, OFFLINE_AFTER_MS, distanceM } from '@citylight/shared';
+import { GPS_RELOCATE_STALE_M, LAMP_GROUP_LABELS, OFFLINE_AFTER_MS, defaultFieldMap, distanceM, judgeGpsSuggestion, type Lang } from '@citylight/shared';
 import { SCHEDULES_CHANNEL } from '@citylight/db/batches';
 import { CONFIG_CHANNEL } from '@citylight/db/notify';
 import { RequirePerm, RequireReauth, type AuthedRequest, type SessionUser } from './auth';
@@ -68,9 +68,11 @@ export class AdminService {
     const b = z.object({ kind: z.enum(['district', 'ward']), name: Name, parentId: uuid }).parse(body);
     const parent = (await this.sql<{ kind: string }[]>`SELECT kind FROM areas WHERE id = ${b.parentId} AND organization_id = ${u.organizationId}`)[0];
     if (!parent || parent.kind !== (b.kind === 'district' ? 'unit' : 'district'))
-      throw new ApiError(422, 'invalid_parent', b.kind === 'district' ? 'Quận phải nằm dưới một đơn vị' : 'Phường phải nằm dưới một quận');
+      throw b.kind === 'district'
+        ? new ApiError(422, 'invalid_parent_district', 'Quận phải nằm dưới một đơn vị')
+        : new ApiError(422, 'invalid_parent_ward', 'Phường phải nằm dưới một quận');
     const dup = await this.sql`SELECT 1 FROM areas WHERE parent_id = ${b.parentId} AND lower(name) = lower(${b.name})`;
-    if (dup.length) throw new ApiError(409, 'duplicate', `"${b.name}" đã có`);
+    if (dup.length) throw new ApiError(409, 'duplicate', `"${b.name}" đã có`, { name: b.name });
     const row = (await this.sql<{ id: string }[]>`
       INSERT INTO areas (organization_id, parent_id, kind, name) VALUES (${u.organizationId}, ${b.parentId}, ${b.kind}, ${b.name}) RETURNING id`)[0]!;
     await this.log(u, 'Thêm khu vực', 'area', row.id, b.name, b.kind, ip);
@@ -89,13 +91,18 @@ export class AdminService {
     const aid = uuid.parse(id);
     const a = (await this.sql<{ name: string; kind: string }[]>`SELECT name, kind FROM areas WHERE id = ${aid} AND organization_id = ${u.organizationId}`)[0];
     if (!a) throw new ApiError(404, 'not_found', 'Không tìm thấy khu vực');
-    if (a.kind === 'unit') throw new ApiError(409, 'in_use', 'Không xóa đơn vị gốc');
+    if (a.kind === 'unit') throw new ApiError(409, 'root_area_protected', 'Không xóa đơn vị gốc');
     const use = (await this.sql<{ cab: number; child: number; scopes: number }[]>`
       SELECT (SELECT count(*)::int FROM cabinets WHERE district_id = ${aid} OR ward_id = ${aid}) AS cab,
              (SELECT count(*)::int FROM areas WHERE parent_id = ${aid}) AS child,
              (SELECT count(*)::int FROM user_scopes WHERE area_id = ${aid}) AS scopes`)[0]!;
     if (use.cab || use.child || use.scopes)
-      throw new ApiError(409, 'in_use', `Còn ${use.cab} tủ, ${use.child} khu vực con, ${use.scopes} người dùng được phân quyền ở "${a.name}"`);
+      throw new ApiError(409, 'in_use', `Còn ${use.cab} tủ, ${use.child} khu vực con, ${use.scopes} người dùng được phân quyền ở "${a.name}"`, {
+        cabinets: use.cab,
+        children: use.child,
+        users: use.scopes,
+        name: a.name,
+      });
     await this.sql`DELETE FROM areas WHERE id = ${aid}`;
     await this.log(u, 'Xóa khu vực', 'area', aid, a.name, null, ip);
   }
@@ -118,7 +125,7 @@ export class AdminService {
   async deleteUnit(u: SessionUser, id: string, ip?: string) {
     const mid = uuid.parse(id);
     const n = (await this.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM cabinets WHERE management_unit_id = ${mid}`)[0]!.n;
-    if (n) throw new ApiError(409, 'in_use', `Còn ${n} tủ thuộc khu quản lý này`);
+    if (n) throw new ApiError(409, 'mgmt_unit_in_use', `Còn ${n} tủ thuộc khu quản lý này`, { count: n });
     const r = await this.sql`DELETE FROM management_units WHERE id = ${mid} AND organization_id = ${u.organizationId} RETURNING name`;
     if (!r.length) throw new ApiError(404, 'not_found', 'Không tìm thấy khu quản lý');
     await this.log(u, 'Xóa khu quản lý', 'management_unit', mid, String(r[0]!.name), null, ip);
@@ -148,7 +155,7 @@ export class AdminService {
     const zid = uuid.parse(id);
     const n = (await this.sql<{ c: number; s: number }[]>`
       SELECT (SELECT count(*)::int FROM cabinets WHERE zone1_id = ${zid} OR zone2_id = ${zid}) AS c, (SELECT count(*)::int FROM schedules WHERE zone_id = ${zid}) AS s`)[0]!;
-    if (n.c) throw new ApiError(409, 'in_use', `Còn ${n.c} tủ trong vùng này, chuyển tủ sang vùng khác trước`);
+    if (n.c) throw new ApiError(409, 'zone_in_use', `Còn ${n.c} tủ trong vùng này, chuyển tủ sang vùng khác trước`, { count: n.c });
     await this.sql.begin(async (tx) => {
       await tx`DELETE FROM schedules WHERE zone_id = ${zid}`;
       await tx`DELETE FROM thresholds WHERE zone_id = ${zid}`;
@@ -182,7 +189,7 @@ export class AdminService {
     if (b.wardId) {
       const w = (await this.sql<{ parent_id: string }[]>`SELECT parent_id FROM areas WHERE id = ${b.wardId} AND kind = 'ward' AND organization_id = ${u.organizationId}`)[0];
       if (!w) throw new ApiError(422, 'invalid_request', 'Phường không tồn tại');
-      if (b.districtId && w.parent_id !== b.districtId) throw new ApiError(422, 'invalid_request', 'Phường không thuộc quận đã chọn');
+      if (b.districtId && w.parent_id !== b.districtId) throw new ApiError(422, 'ward_not_in_district', 'Phường không thuộc quận đã chọn');
     }
     if (b.districtId && !(await this.sql`SELECT 1 FROM areas WHERE id = ${b.districtId} AND kind = 'district' AND organization_id = ${u.organizationId}`).length)
       throw new ApiError(422, 'invalid_request', 'Quận không tồn tại');
@@ -199,12 +206,19 @@ export class AdminService {
     const districtId = b.districtId ?? (b.wardId ? (await this.sql<{ p: string }[]>`SELECT parent_id AS p FROM areas WHERE id = ${b.wardId}`)[0]?.p ?? null : null);
     await this.checkPlaces(u, { ...b, districtId });
     const dup = (await this.sql<{ ltid: string; code: string }[]>`SELECT ltid, code FROM cabinets WHERE upper(ltid) = ${b.ltid} OR code = ${b.code}`)[0];
-    if (dup) throw new ApiError(409, 'duplicate', dup.ltid.toUpperCase() === b.ltid ? `LTID ${b.ltid} đã được đăng ký` : `Mã tủ ${b.code} đã có`);
+    if (dup)
+      throw dup.ltid.toUpperCase() === b.ltid
+        ? new ApiError(409, 'ltid_taken', `LTID ${b.ltid} đã được đăng ký`, { ltid: b.ltid })
+        : new ApiError(409, 'cabinet_code_taken', `Mã tủ ${b.code} đã có`, { code: b.code });
     // S42: the IMEI becomes the cabinet's identity on the anonymous broker. Two IMEIs under one unknown LTID
     // means someone else uses it too: the admin must say which one is the real cabinet.
     const unk = (await this.sql<{ imei: string | null; other_imei: string | null }[]>`SELECT imei, other_imei FROM unknown_devices WHERE upper(ltid) = ${b.ltid}`)[0];
     if (unk?.other_imei && !b.imei)
-      throw new ApiError(409, 'imei_conflict', `LTID ${b.ltid} đã gửi frame với 2 IMEI khác nhau (${unk.imei} và ${unk.other_imei}): chọn IMEI của tủ thật`);
+      throw new ApiError(409, 'imei_conflict', `LTID ${b.ltid} đã gửi frame với 2 IMEI khác nhau (${unk.imei} và ${unk.other_imei}): chọn IMEI của tủ thật`, {
+        ltid: b.ltid,
+        imei: unk.imei ?? '',
+        other: unk.other_imei,
+      });
     const imei = b.imei ?? unk?.imei ?? null;
     const id = await this.sql.begin(async (tx) => {
       const r = (await tx<{ id: string }[]>`
@@ -229,9 +243,9 @@ export class AdminService {
     if (!cur) throw new ApiError(404, 'not_found', 'Không tìm thấy tủ');
     await this.checkPlaces(u, { districtId: b.districtId === undefined ? cur.district_id : b.districtId, wardId: b.wardId, zone1Id: b.zone1Id, managementUnitId: b.managementUnitId });
     if (b.ltid && b.ltid !== cur.ltid.toUpperCase() && (await this.sql`SELECT 1 FROM cabinets WHERE upper(ltid) = ${b.ltid} AND id <> ${cid}`).length)
-      throw new ApiError(409, 'duplicate', `LTID ${b.ltid} đã được đăng ký`);
+      throw new ApiError(409, 'ltid_taken', `LTID ${b.ltid} đã được đăng ký`, { ltid: b.ltid });
     if (b.code && b.code !== cur.code && (await this.sql`SELECT 1 FROM cabinets WHERE code = ${b.code} AND id <> ${cid}`).length)
-      throw new ApiError(409, 'duplicate', `Mã tủ ${b.code} đã có`);
+      throw new ApiError(409, 'cabinet_code_taken', `Mã tủ ${b.code} đã có`, { code: b.code });
     const set = (k: keyof typeof b) => b[k] !== undefined;
     await this.sql`
       UPDATE cabinets SET
@@ -266,7 +280,11 @@ export class AdminService {
     const cur = (await this.sql<{ code: string }[]>`SELECT code FROM cabinets WHERE id = ${cid} AND organization_id = ${u.organizationId}`)[0];
     if (!cur) throw new ApiError(404, 'not_found', 'Không tìm thấy tủ');
     const s = await this.cabinets.computeGpsSuggestion(cid);
-    if (!s.ok || !s.gps) throw new ApiError(409, 'gps_not_ready', s.reason ?? 'GPS chưa đủ tin cậy để cập nhật vị trí');
+    if (!s.ok || !s.gps) {
+      const reason = s.reason ?? 'GPS chưa đủ tin cậy để cập nhật vị trí';
+      const reasonEn = judgeGpsSuggestion(s, 'en').reason ?? 'GPS is not reliable enough yet to update the position';
+      throw new ApiError(409, 'gps_not_ready', reason, { reason, reasonEn });
+    }
     if (b.expected && distanceM(b.expected, s.gps) > GPS_RELOCATE_STALE_M)
       throw new ApiError(409, 'gps_changed', 'Vị trí GPS vừa thay đổi, mở lại hộp thoại để xem số mới');
     await this.sql`UPDATE cabinets SET location = ST_SetSRID(ST_MakePoint(${s.gps.lng}, ${s.gps.lat}), 4326), updated_at = now() WHERE id = ${cid}`;
@@ -300,7 +318,7 @@ export class AdminService {
     const cur = (await this.sql<{ code: string; imei: string | null }[]>`SELECT code, imei FROM cabinets WHERE id = ${cid} AND organization_id = ${u.organizationId}`)[0];
     if (!cur) throw new ApiError(404, 'not_found', 'Không tìm thấy tủ');
     if (b.imei && (await this.sql`SELECT 1 FROM cabinets WHERE imei = ${b.imei} AND id <> ${cid}`).length)
-      throw new ApiError(409, 'duplicate', `IMEI ${b.imei} đang thuộc một tủ khác`);
+      throw new ApiError(409, 'imei_taken', `IMEI ${b.imei} đang thuộc một tủ khác`, { imei: b.imei });
     await this.sql`UPDATE cabinets SET imei = ${b.imei}, updated_at = now() WHERE id = ${cid}`;
     await this.sql`INSERT INTO activity_logs (user_id, user_email, action, target_type, target_id, target_name, old_value, new_value, ip)
                    VALUES (${u.id}, ${u.email}, ${b.imei ? 'Đổi IMEI tủ' : 'Học lại IMEI tủ'}, 'cabinet', ${cid}, ${cur.code}, ${cur.imei}, ${b.imei ?? '(học từ frame tiếp theo)'}, ${ip ?? null})`;
@@ -314,7 +332,7 @@ export class AdminService {
     const r = (await this.sql<{ code: string }[]>`
       UPDATE cabinets SET active = ${active}, decommissioned_at = CASE WHEN ${active} THEN NULL ELSE now() END, updated_at = now()
       WHERE id = ${cid} AND organization_id = ${u.organizationId} AND active <> ${active} RETURNING code`)[0];
-    if (!r) throw new ApiError(409, 'no_change', active ? 'Tủ đang hoạt động' : 'Tủ đã ngừng sử dụng');
+    if (!r) throw active ? new ApiError(409, 'cabinet_active', 'Tủ đang hoạt động') : new ApiError(409, 'cabinet_decommissioned', 'Tủ đã ngừng sử dụng');
     if (!active) {
       await this.sql`UPDATE alarms SET active = false, ended_at = now() WHERE cabinet_id = ${cid} AND active`;
       await this.sql`UPDATE cabinet_state SET online = false, status = 'offline', updated_at = now() WHERE cabinet_id = ${cid}`;
@@ -327,12 +345,12 @@ export class AdminService {
   // ---------------- field map + settings ----------------
 
   /** Mapping in use (code) + keys cabinets send that nothing maps yet (cabinet_state.extra). */
-  async fieldMap() {
+  async fieldMap(lang: Lang = 'vi') {
     const unknown = await this.sql<{ key: string; cabinets: number; sample: string }[]>`
       SELECT k AS key, count(*)::int AS cabinets, min(v) AS sample
       FROM cabinet_state s, jsonb_each_text(coalesce(s.extra, '{}'::jsonb)) AS e(k, v)
       GROUP BY k ORDER BY count(*) DESC LIMIT 100`;
-    return { entries: DEFAULT_FIELD_MAP, unknownKeys: unknown };
+    return { entries: defaultFieldMap(lang), unknownKeys: unknown };
   }
 
   async settings() {
@@ -406,7 +424,7 @@ export class AdminController {
   reactivate(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.setActive(r.user!, id, true, r.ip); }
 
   @Get('field-map') @RequirePerm('device.identity')
-  fieldMap() { return this.svc.fieldMap(); }
+  fieldMap(@Req() r: AuthedRequest) { return this.svc.fieldMap(r.user!.lang); }
 
   @Get('settings') @RequirePerm('admin.catalog')
   settings() { return this.svc.settings(); }

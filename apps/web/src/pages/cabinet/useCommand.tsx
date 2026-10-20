@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { Command, CommandType } from '@citylight/shared';
-import { COMMAND_TYPE_LABELS, CONFIRMED_BY_TELEMETRY } from '@citylight/shared';
+import { CONFIRMED_BY_TELEMETRY, LABELS } from '@citylight/shared';
 import { api, ApiError } from '@/lib/api';
 import { subscribe } from '@/lib/realtime';
 import { confirm, toast } from '@/components/ui';
+import { dictNow, fill, getLang } from '@/i18n';
+import { CABINET } from '@/i18n/dict/cabinet';
 
 /** Sends a command after a confirm dialog and tracks its lifecycle via realtime events (spec 12). */
 export function useCommand(cabinetId: string, cabinetLabel: string) {
@@ -13,36 +15,39 @@ export function useCommand(cabinetId: string, cabinetLabel: string) {
     return subscribe<Command>('command.updated', (c) => {
       setActive((cur) => (cur && cur.id === c.id ? c : cur));
       if (c.cabinetId !== cabinetId) return;
-      if (c.status === 'confirmed') toast(`${COMMAND_TYPE_LABELS[c.type]}: tủ đã xác nhận`, 'success');
+      const t = dictNow(CABINET).command;
+      const type = LABELS[getLang()].commandType[c.type];
+      if (c.status === 'confirmed') toast(fill(t.confirmed, { type }), 'success');
       // these types have nothing in telemetry to confirm: "acked" is their final state
-      if (c.status === 'acked' && !CONFIRMED_BY_TELEMETRY.includes(c.type)) toast(`${COMMAND_TYPE_LABELS[c.type]}: tủ đã nhận lệnh`, 'success');
-      if (c.status === 'acked_unconfirmed') toast(`${COMMAND_TYPE_LABELS[c.type]}: tủ đã nhận nhưng trạng thái chưa đổi`, 'info');
-      if (c.status === 'failed' || c.status === 'timeout') toast(`${COMMAND_TYPE_LABELS[c.type]}: ${c.error ?? c.status}`, 'error');
+      if (c.status === 'acked' && !CONFIRMED_BY_TELEMETRY.includes(c.type)) toast(fill(t.acked, { type }), 'success');
+      if (c.status === 'acked_unconfirmed') toast(fill(t.ackedUnconfirmed, { type }), 'info');
+      if (c.status === 'failed' || c.status === 'timeout') toast(`${type}: ${c.error ?? c.status}`, 'error');
     });
   }, [cabinetId]);
 
   async function send(type: CommandType, params: Record<string, unknown>, actionText: string, danger = false) {
+    const t = dictNow(CABINET).command;
     const ok = await confirm({
-      title: 'Xác nhận gửi lệnh',
+      title: t.title,
       body: (
         <div className="space-y-1">
           <div>
-            Tủ: <b>{cabinetLabel}</b>
+            {t.cabinet} <b>{cabinetLabel}</b>
           </div>
           <div>
-            Hành động: <b>{actionText}</b>
+            {t.action} <b>{actionText}</b>
           </div>
         </div>
       ),
       danger,
-      confirmLabel: 'Gửi lệnh',
+      confirmLabel: t.send,
     });
     if (!ok) return;
     try {
       const cmd = await api.sendCommand(cabinetId, type, params);
       setActive(cmd);
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : 'Gửi lệnh thất bại', 'error');
+      toast(e instanceof ApiError ? e.message : t.failed, 'error');
     }
   }
 

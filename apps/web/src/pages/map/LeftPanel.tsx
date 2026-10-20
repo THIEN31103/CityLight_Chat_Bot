@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Eye, EyeOff } from 'lucide-react';
 import type { Area, CabinetStatus, CabinetSummary, GeoPoint } from '@citylight/shared';
 import { api } from '@/lib/api';
+import { fill, useDict, useLabels } from '@/i18n';
+import { MAP } from '@/i18n/dict/map';
 import { cn } from '@/lib/utils';
 import { STATUS_ICON, STATUS_TONE, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 
@@ -16,8 +18,9 @@ const TONE_TEXT: Record<string, string> = {
 };
 
 function StatusDot({ status }: { status: CabinetStatus }) {
+  const L = useLabels();
   const Icon = STATUS_ICON[status];
-  return <Icon className={cn('h-4 w-4 shrink-0', TONE_TEXT[STATUS_TONE[status]])} aria-label={status} />;
+  return <Icon className={cn('h-4 w-4 shrink-0', TONE_TEXT[STATUS_TONE[status]])} aria-label={L.status[status]} />;
 }
 
 export function LeftPanel({
@@ -33,11 +36,12 @@ export function LeftPanel({
   selectedId: string | null;
   onPick: (id: string) => void;
 }) {
+  const t = useDict(MAP).left;
   return (
     <Tabs defaultValue="near" className="flex min-h-0 flex-1 flex-col">
       <TabsList>
-        <TabsTrigger value="near">Gần tâm bản đồ (2 km)</TabsTrigger>
-        <TabsTrigger value="tree">Cây phân cấp</TabsTrigger>
+        <TabsTrigger value="near">{t.near}</TabsTrigger>
+        <TabsTrigger value="tree">{t.tree}</TabsTrigger>
       </TabsList>
       <TabsContent value="near" className="min-h-0 flex-1 overflow-auto">
         <NearbyList center={center} statusFilter={statusFilter} selectedId={selectedId} onPick={onPick} />
@@ -50,6 +54,7 @@ export function LeftPanel({
 }
 
 function NearbyList({ center, statusFilter, selectedId, onPick }: { center: GeoPoint; statusFilter: Set<CabinetStatus>; selectedId: string | null; onPick: (id: string) => void }) {
+  const t = useDict(MAP).left;
   const key = [center.lat.toFixed(3), center.lng.toFixed(3)];
   const { data, isLoading } = useQuery({ queryKey: ['nearby', ...key], queryFn: () => api.nearby(center), placeholderData: (p) => p });
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -61,7 +66,7 @@ function NearbyList({ center, statusFilter, selectedId, onPick }: { center: GeoP
         <Spinner />
       </div>
     );
-  if (!list.length) return <div className="p-6 text-center text-sm text-subtle">Không có tủ trong bán kính 2 km</div>;
+  if (!list.length) return <div className="p-6 text-center text-sm text-subtle">{t.noneNear}</div>;
   return (
     <ul className="divide-y">
       {list.map((c) => (
@@ -69,7 +74,7 @@ function NearbyList({ center, statusFilter, selectedId, onPick }: { center: GeoP
           <div className={cn('flex items-center gap-2 px-2 py-1.5 hover:bg-muted/60', selectedId === c.id && 'bg-primary/10')}>
             <button
               className="text-subtle"
-              aria-label={hidden.has(c.id) ? 'Hiện trên bản đồ' : 'Ẩn trên bản đồ'}
+              aria-label={hidden.has(c.id) ? t.showOnMap : t.hideOnMap}
               onClick={() =>
                 setHidden((h) => {
                   const n = new Set(h);
@@ -88,14 +93,14 @@ function NearbyList({ center, statusFilter, selectedId, onPick }: { center: GeoP
                 {c.code} · {c.distanceM} m
               </div>
             </button>
-            <button className="text-subtle" onClick={() => setExpanded(expanded === c.id ? null : c.id)} aria-label="Xem tuyến">
+            <button className="text-subtle" onClick={() => setExpanded(expanded === c.id ? null : c.id)} aria-label={t.showRoutes}>
               {expanded === c.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
           </div>
           {expanded === c.id && (
             <div className="bg-muted/40 px-9 py-1.5 text-xs text-subtle">
-              <div>Tuyến {c.code}_N1 · nhánh 1 · {c.branch1On === null ? '—' : c.branch1On ? 'đang sáng' : 'tắt'}</div>
-              <div>Tuyến {c.code}_N2 · nhánh 2 · {c.branch2On === null ? '—' : c.branch2On ? 'đang sáng' : 'tắt'}</div>
+              <div>{fill(t.route, { code: `${c.code}_N1`, branch: 1, state: c.branch1On === null ? '—' : c.branch1On ? t.lit : t.off })}</div>
+              <div>{fill(t.route, { code: `${c.code}_N2`, branch: 2, state: c.branch2On === null ? '—' : c.branch2On ? t.lit : t.off })}</div>
             </div>
           )}
         </li>
@@ -105,6 +110,7 @@ function NearbyList({ center, statusFilter, selectedId, onPick }: { center: GeoP
 }
 
 function AreaTree({ cabinets, selectedId, onPick }: { cabinets: CabinetSummary[]; selectedId: string | null; onPick: (id: string) => void }) {
+  const t = useDict(MAP).left;
   const { data } = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
   const [open, setOpen] = useState<Set<string>>(new Set(['org']));
   const children = useMemo(() => {
@@ -170,7 +176,7 @@ function AreaTree({ cabinets, selectedId, onPick }: { cabinets: CabinetSummary[]
       <div>
         <button className="flex w-full items-center gap-1 py-1 pl-1 pr-2 text-left text-sm hover:bg-muted/60" onClick={() => toggle('unassigned')}>
           {open.has('unassigned') ? <ChevronDown className="h-4 w-4 text-subtle" /> : <ChevronRight className="h-4 w-4 text-subtle" />}
-          <span className="font-medium text-st-fault">Chưa phân khu vực</span>
+          <span className="font-medium text-st-fault">{t.unassigned}</span>
           <span className="ml-1 text-xs text-subtle">({data.unassigned})</span>
         </button>
         {open.has('unassigned') && renderCabinets('unassigned', 1)}

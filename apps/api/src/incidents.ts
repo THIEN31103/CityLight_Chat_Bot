@@ -11,8 +11,8 @@ import { Redis } from 'ioredis';
 import { z } from 'zod';
 import type { AlarmType, Incident, IncidentPhoto, IncidentStatus, Page, RoleKey } from '@citylight/shared';
 import {
-  INCIDENT_CATEGORIES, INCIDENT_STATUS_LABELS, OPEN_INCIDENT_STATUSES, ROLE_PERMISSIONS, categoryForAlarm, findTransition, hasPermission,
-  incidentOverdue,
+  INCIDENT_CATEGORIES, INCIDENT_STATUS_LABELS, LABELS, OPEN_INCIDENT_STATUSES, ROLE_PERMISSIONS, categoryForAlarm, findTransition, hasPermission,
+  incidentCategoryLabel, incidentOverdue,
 } from '@citylight/shared';
 import { EVENTS_CHANNEL } from '@citylight/db/commands';
 import { RequirePerm, type AuthedRequest, type SessionUser } from './auth';
@@ -20,7 +20,7 @@ import { CabinetsModule, CabinetsService } from './cabinets';
 import { ApiError } from './errors';
 import { REDIS, SQL, type Sql } from './infra';
 import { scopeWhere } from './scope';
-import { DATE_TIME, EXPORT_MAX_ROWS, sendXlsx, vnTime } from './xlsx';
+import { DATE_TIME, EXPORT_MAX_ROWS, XLSX_TEXT, sendXlsx, vnTime } from './xlsx';
 
 const UPLOAD_DIR = resolve(process.env.UPLOAD_DIR ?? './data/uploads');
 const MAX_PHOTOS = 10;
@@ -167,15 +167,15 @@ export class IncidentsService {
       const a = (await this.sql<{ cabinet_id: string; type: AlarmType; code: string; message: string }[]>`
         SELECT cabinet_id, type, code, message FROM alarms WHERE id = ${b.alarmId}`)[0];
       if (!a) throw new ApiError(404, 'not_found', 'Không tìm thấy cảnh báo');
-      if (cabinetId && cabinetId !== a.cabinet_id) throw new ApiError(422, 'invalid_request', 'Cảnh báo thuộc tủ khác');
+      if (cabinetId && cabinetId !== a.cabinet_id) throw new ApiError(422, 'alarm_other_cabinet', 'Cảnh báo thuộc tủ khác');
       cabinetId = a.cabinet_id;
       category ??= categoryForAlarm(a.type);
       content ??= `${a.code}: ${a.message}`;
       const open = (await this.sql<{ id: string; code: string }[]>`
         SELECT id, code FROM incidents WHERE alarm_id = ${b.alarmId} AND status::text = ANY(${[...OPEN_INCIDENT_STATUSES]}::text[])`)[0];
-      if (open) throw new ApiError(409, 'incident_exists', `Cảnh báo này đã có sự cố ${open.code} đang mở`);
+      if (open) throw new ApiError(409, 'incident_exists', `Cảnh báo này đã có sự cố ${open.code} đang mở`, { code: open.code });
     }
-    if (!category || !content) throw new ApiError(422, 'invalid_request', 'Cần phân loại và nội dung');
+    if (!category || !content) throw new ApiError(422, 'incident_fields_required', 'Cần phân loại và nội dung');
     const cid = await this.cabinets.assertCabinet(u.scope, cabinetId!);
     const rows = await this.sql<{ id: string; code: string }[]>`
       INSERT INTO incidents (code, cabinet_id, alarm_id, source, category, content, location, reported_by)
@@ -184,7 +184,7 @@ export class IncidentsService {
       FROM cabinets c WHERE c.id = ${cid}
       ON CONFLICT DO NOTHING
       RETURNING id, code`;
-    if (!rows[0]) throw new ApiError(409, 'incident_exists', 'Cảnh báo này đã có sự cố đang mở');
+    if (!rows[0]) throw new ApiError(409, 'incident_exists_concurrent', 'Cảnh báo này đã có sự cố đang mở');
     await this.event(rows[0].id, u, b.alarmId ? 'Tạo từ cảnh báo' : 'Tạo sự cố', content);
     await this.log(u, 'Tạo sự cố', rows[0], `${category}: ${content}`, ip);
     return this.one(u, rows[0].id);
@@ -208,19 +208,25 @@ export class IncidentsService {
     const b = TransitionBody.parse(body);
     const inc = await this.load(u, id);
     const t = findTransition(inc.status, b.to);
-    if (!t) throw new ApiError(409, 'invalid_transition', `Không chuyển được từ "${INCIDENT_STATUS_LABELS[inc.status]}" sang "${INCIDENT_STATUS_LABELS[b.to]}"`);
+    if (!t)
+      throw new ApiError(409, 'invalid_transition', `Không chuyển được từ "${INCIDENT_STATUS_LABELS[inc.status]}" sang "${INCIDENT_STATUS_LABELS[b.to]}"`, {
+        from: INCIDENT_STATUS_LABELS[inc.status],
+        to: INCIDENT_STATUS_LABELS[b.to],
+        fromEn: LABELS.en.incidentStatus[inc.status],
+        toEn: LABELS.en.incidentStatus[b.to],
+      });
     if (!hasPermission(u.role, t.perm)) throw new ApiError(403, 'forbidden', 'Không đủ quyền');
     let assignee: { id: string; fullName: string } | null = null;
     if (t.needs === 'assign') {
-      if (!b.assigneeId) throw new ApiError(422, 'invalid_request', 'Chọn người xử lý');
-      if (!b.deadline || b.deadline.getTime() < Date.now()) throw new ApiError(422, 'invalid_request', 'Hạn xử lý phải ở tương lai');
+      if (!b.assigneeId) throw new ApiError(422, 'assignee_required', 'Chọn người xử lý');
+      if (!b.deadline || b.deadline.getTime() < Date.now()) throw new ApiError(422, 'deadline_not_future', 'Hạn xử lý phải ở tương lai');
       assignee = (await this.assignees(u, inc.cabinetId)).find((x) => x.id === b.assigneeId) ?? null;
       if (!assignee) throw new ApiError(422, 'invalid_assignee', 'Người này không xử lý được sự cố ở khu vực của tủ');
     }
     if (t.needs === 'resolve') {
       // field staff report only their own tasks; a manager may close it on their behalf
       if (inc.assigneeId !== u.id && !hasPermission(u.role, 'incident.manage')) throw new ApiError(403, 'not_assignee', 'Sự cố này không giao cho bạn');
-      if (!(b.resolution ?? b.note)) throw new ApiError(422, 'invalid_request', 'Nhập nội dung xử lý');
+      if (!(b.resolution ?? b.note)) throw new ApiError(422, 'resolution_required', 'Nhập nội dung xử lý');
     }
     const done = await this.sql`
       UPDATE incidents SET status = ${b.to},
@@ -253,9 +259,9 @@ export class IncidentsService {
     const inc = await this.load(u, id);
     if (kind !== 'report' && kind !== 'resolution') throw new ApiError(422, 'invalid_request', 'kind = report | resolution');
     const type = sniffImage(file);
-    if (!type) throw new ApiError(415, 'unsupported_media', 'Chỉ nhận ảnh JPG, PNG hoặc WebP');
+    if (!type) throw new ApiError(415, 'unsupported_image_type', 'Chỉ nhận ảnh JPG, PNG hoặc WebP');
     const n = (await this.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM incident_photos WHERE incident_id = ${inc.id}`)[0]!.n;
-    if (n >= MAX_PHOTOS) throw new ApiError(409, 'too_many_photos', `Tối đa ${MAX_PHOTOS} ảnh mỗi sự cố`);
+    if (n >= MAX_PHOTOS) throw new ApiError(409, 'too_many_photos', `Tối đa ${MAX_PHOTOS} ảnh mỗi sự cố`, { max: MAX_PHOTOS });
     const row = (await this.sql<{ id: string }[]>`
       INSERT INTO incident_photos (incident_id, kind, mime, size, path, uploaded_by) VALUES (${inc.id}, ${kind}, ${type.mime}, ${file.length}, '', ${u.fullName})
       RETURNING id`)[0]!;
@@ -345,22 +351,26 @@ export class IncidentsController {
   @RequirePerm('incident.view')
   async export(@Req() r: AuthedRequest, @Query() q: unknown, @Res({ passthrough: true }) reply: FastifyReply) {
     const rows = await this.svc.exportRows(r.user!, q);
-    return sendXlsx(reply, `su-co-${new Date().toISOString().slice(0, 10)}.xlsx`, 'Sự cố', [
-      { header: 'Mã', value: (i) => i.code, width: 10 },
-      { header: 'Tủ điều khiển', value: (i) => i.cabinetName, width: 30 },
-      { header: 'Quận/huyện', value: (i) => i.districtName },
-      { header: 'Phường/xã', value: (i) => i.wardName },
-      { header: 'Thời điểm ghi nhận', value: (i) => vnTime(i.reportedAt), numFmt: DATE_TIME, width: 18 },
-      { header: 'Người báo', value: (i) => i.reportedBy, width: 20 },
-      { header: 'Nguồn', value: (i) => (i.source === 'alarm' ? 'Cảnh báo' : 'Thủ công'), width: 10 },
-      { header: 'Phân loại', value: (i) => i.category, width: 18 },
-      { header: 'Nội dung', value: (i) => i.content, width: 50 },
-      { header: 'Trạng thái', value: (i) => INCIDENT_STATUS_LABELS[i.status] },
-      { header: 'Người xử lý', value: (i) => i.assignee, width: 20 },
-      { header: 'Hạn xử lý', value: (i) => vnTime(i.deadline), numFmt: DATE_TIME, width: 18 },
-      { header: 'Quá hạn', value: (i) => (i.overdue ? 'Có' : ''), width: 9 },
-      { header: 'Thời điểm xử lý', value: (i) => vnTime(i.resolvedAt), numFmt: DATE_TIME, width: 18 },
-      { header: 'Nội dung xử lý', value: (i) => i.resolution, width: 40 },
+    // S49: headers and enum values in the user's language; content / resolution stay as entered
+    const lang = r.user!.lang;
+    const X = XLSX_TEXT[lang];
+    const T = X.incidents;
+    return sendXlsx(reply, `${T.file}-${new Date().toISOString().slice(0, 10)}.xlsx`, T.sheet, [
+      { header: T.code, value: (i) => i.code, width: 10 },
+      { header: T.cabinet, value: (i) => i.cabinetName, width: 30 },
+      { header: T.district, value: (i) => i.districtName },
+      { header: T.ward, value: (i) => i.wardName },
+      { header: T.reportedAt, value: (i) => vnTime(i.reportedAt), numFmt: DATE_TIME, width: 18 },
+      { header: T.reportedBy, value: (i) => i.reportedBy, width: 20 },
+      { header: T.source, value: (i) => (i.source === 'alarm' ? T.fromAlarm : T.manual), width: 10 },
+      { header: T.category, value: (i) => incidentCategoryLabel(i.category, lang), width: 18 },
+      { header: T.content, value: (i) => i.content, width: 50 },
+      { header: T.status, value: (i) => LABELS[lang].incidentStatus[i.status] },
+      { header: T.assignee, value: (i) => i.assignee, width: 20 },
+      { header: T.deadline, value: (i) => vnTime(i.deadline), numFmt: DATE_TIME, width: 18 },
+      { header: T.overdue, value: (i) => (i.overdue ? X.yes : ''), width: 9 },
+      { header: T.resolvedAt, value: (i) => vnTime(i.resolvedAt), numFmt: DATE_TIME, width: 18 },
+      { header: T.resolution, value: (i) => i.resolution, width: 40 },
     ], rows);
   }
 
@@ -407,11 +417,11 @@ export class IncidentsController {
     const req = r as unknown as { isMultipart?: () => boolean; file: () => Promise<{ toBuffer: () => Promise<Buffer>; file: { truncated: boolean } } | undefined> };
     if (!req.isMultipart?.()) throw new ApiError(415, 'unsupported_media', 'Gửi ảnh dạng multipart/form-data, trường "file"');
     const part = await req.file();
-    if (!part) throw new ApiError(422, 'invalid_request', 'Thiếu file ảnh');
+    if (!part) throw new ApiError(422, 'file_missing', 'Thiếu file ảnh');
     const buf = await part.toBuffer().catch(() => {
-      throw new ApiError(413, 'file_too_large', `Ảnh tối đa ${MAX_PHOTO_BYTES / 1024 / 1024} MB`);
+      throw new ApiError(413, 'file_too_large', `Ảnh tối đa ${MAX_PHOTO_BYTES / 1024 / 1024} MB`, { mb: MAX_PHOTO_BYTES / 1024 / 1024 });
     });
-    if (part.file.truncated) throw new ApiError(413, 'file_too_large', `Ảnh tối đa ${MAX_PHOTO_BYTES / 1024 / 1024} MB`);
+    if (part.file.truncated) throw new ApiError(413, 'file_too_large', `Ảnh tối đa ${MAX_PHOTO_BYTES / 1024 / 1024} MB`, { mb: MAX_PHOTO_BYTES / 1024 / 1024 });
     return this.svc.addPhoto(r.user!, id, kind, buf, r.ip);
   }
 

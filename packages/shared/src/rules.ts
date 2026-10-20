@@ -4,6 +4,7 @@
 // Device-health rules (offline, RS485, LOGO…) stay in health.ts and are not debounced.
 import type { AlarmType, GeoPoint, Schedule, Thresholds } from './domain';
 import { dhMeterLost, phaseLoss, ptimStale, type HealthInput } from './health';
+import { LOCALE, defineDict, type Lang } from './i18n';
 
 export interface MeasureInput extends HealthInput {
   manualMode: boolean | null;
@@ -48,8 +49,35 @@ export const HOLD_MS: Record<string, { open: number; close: number }> = {
 };
 export const holdFor = (t: AlarmType) => HOLD_MS[t] ?? HOLD_MS.default!;
 
-const f1 = (v: number) => (Math.round(v * 10) / 10).toLocaleString('vi-VN');
 const PH = ['L1', 'L2', 'L3'];
+
+/** Messages of measurementAlarms (the ingest worker stores the Vietnamese ones in alarms.message). */
+export const MEASUREMENT_TEXT = defineDict(
+  {
+    voltageSwing: (bad: string, limit: number) => `Biên độ 5 phút ${bad} > ${limit} V`,
+    currentSwing: (bad: string, limit: number) => `Biên độ 5 phút ${bad} > ${limit} A`,
+    unbalance: (l1: string, l2: string, l3: string, pct: number) => `Dòng L1 ${l1} · L2 ${l2} · L3 ${l3} A, lệch ${pct} %`,
+    leak: (ma: number, limit: number) => `Rò ${ma} mA > ${limit} mA`,
+    temp: (c: number, limit: number) => `Nhiệt độ tủ ${c} °C > ${limit} °C`,
+    battery: (mv: number, limit: number) => `Pin ${mv} mV < ${limit} mV`,
+    clock: (ahead: boolean, min: number) => `Giờ LOGO ${ahead ? 'nhanh' : 'chậm'} ${min} phút so với máy chủ`,
+    branch: (b: number, on: boolean) => `nhánh ${b} ${on ? 'sáng ngoài lịch' : 'tắt trong lịch'}`,
+    schedule: (diff: string, mode: number) => `${diff} (lịch Chế độ ${mode})`,
+    gps: (m: number) => `GPS cách vị trí khai báo ${m} m`,
+  },
+  {
+    voltageSwing: (bad: string, limit: number) => `5-min range ${bad} > ${limit} V`,
+    currentSwing: (bad: string, limit: number) => `5-min range ${bad} > ${limit} A`,
+    unbalance: (l1: string, l2: string, l3: string, pct: number) => `Current L1 ${l1} · L2 ${l2} · L3 ${l3} A, imbalance ${pct} %`,
+    leak: (ma: number, limit: number) => `Leakage ${ma} mA > ${limit} mA`,
+    temp: (c: number, limit: number) => `Cabinet temperature ${c} °C > ${limit} °C`,
+    battery: (mv: number, limit: number) => `Battery ${mv} mV < ${limit} mV`,
+    clock: (ahead: boolean, min: number) => `LOGO clock ${min} min ${ahead ? 'ahead of' : 'behind'} the server`,
+    branch: (b: number, on: boolean) => `branch ${b} ${on ? 'on outside the schedule' : 'off within the schedule'}`,
+    schedule: (diff: string, mode: number) => `${diff} (Mode ${mode} schedule)`,
+    gps: (m: number) => `GPS ${m} m from the registered position`,
+  },
+);
 
 /** Minutes since local midnight in Asia/Ho_Chi_Minh (UTC+7, no DST). */
 export function localMinutes(now: number): number {
@@ -105,7 +133,10 @@ export function measurementAlarms(
   h: MeasureInput,
   t: Thresholds,
   opts: { samples: MeasureSample[]; schedule: ScheduleWindow | null; now: number },
+  lang: Lang = 'vi',
 ): Map<AlarmType, string> {
+  const T = MEASUREMENT_TEXT[lang];
+  const f1 = (v: number) => (Math.round(v * 10) / 10).toLocaleString(LOCALE[lang]);
   const out = new Map<AlarmType, string>();
   if (!h.online) return out; // stale data: no measurement alarms while offline
   const now = opts.now;
@@ -134,21 +165,21 @@ export function measurementAlarms(
     if (fullWindow && t.voltageSwing.enabled) {
       const sw = [0, 1, 2].map((k) => swing(win.map((s) => s.v[k] ?? null)));
       const bad = sw.map((x, k) => (x > t.voltageSwing.value ? `${PH[k]} ${f1(x)} V` : null)).filter(Boolean);
-      if (bad.length) out.set('voltage_swing', `Biên độ 5 phút ${bad.join(', ')} > ${t.voltageSwing.value} V`);
+      if (bad.length) out.set('voltage_swing', T.voltageSwing(bad.join(', '), t.voltageSwing.value));
     }
     // switching a branch moves the current by design: only judge a window with constant branch states
     const steady = win.every((s) => s.b1 === win[0]?.b1 && s.b2 === win[0]?.b2);
     if (fullWindow && steady && t.currentSwing.enabled) {
       const sw = [0, 1, 2].map((k) => swing(win.map((s) => s.i[k] ?? null)));
       const bad = sw.map((x, k) => (x > t.currentSwing.value ? `${PH[k]} ${f1(x)} A` : null)).filter(Boolean);
-      if (bad.length) out.set('current_swing', `Biên độ 5 phút ${bad.join(', ')} > ${t.currentSwing.value} A`);
+      if (bad.length) out.set('current_swing', T.currentSwing(bad.join(', '), t.currentSwing.value));
     }
     if (lit) {
       const cur = i.filter((x): x is number => x !== null);
       const max = Math.max(0, ...cur);
       if (cur.length === 3 && max > 1) {
         const ratio = (max - Math.min(...cur)) / max;
-        if (ratio > UNBALANCE_RATIO) out.set('phase_unbalance', `Dòng L1 ${f1(cur[0]!)} · L2 ${f1(cur[1]!)} · L3 ${f1(cur[2]!)} A, lệch ${Math.round(ratio * 100)} %`);
+        if (ratio > UNBALANCE_RATIO) out.set('phase_unbalance', T.unbalance(f1(cur[0]!), f1(cur[1]!), f1(cur[2]!), Math.round(ratio * 100)));
       }
       // the firmware sends cosφ as an unsigned value: anything outside 0..1 is not trusted
       if (h.pfTotal !== null && h.pfTotal > 0 && h.pfTotal <= 1 && h.pfTotal < LOW_PF) out.set('low_pf', `cosφ ${h.pfTotal.toFixed(2)} < ${LOW_PF}`);
@@ -156,30 +187,30 @@ export function measurementAlarms(
   }
 
   // ----- CT_KEY sensors -----
-  if (t.leakMa.enabled && h.leakMa !== null && h.leakMa > t.leakMa.value) out.set('leak_current', `Rò ${h.leakMa} mA > ${t.leakMa.value} mA`);
-  if (t.tempC.enabled && !h.tempSensorFault && h.tempC !== null && h.tempC > t.tempC.value) out.set('over_temp', `Nhiệt độ tủ ${h.tempC} °C > ${t.tempC.value} °C`);
+  if (t.leakMa.enabled && h.leakMa !== null && h.leakMa > t.leakMa.value) out.set('leak_current', T.leak(h.leakMa, t.leakMa.value));
+  if (t.tempC.enabled && !h.tempSensorFault && h.tempC !== null && h.tempC > t.tempC.value) out.set('over_temp', T.temp(h.tempC, t.tempC.value));
   if (t.batteryLowMv.enabled && h.batteryMv !== null && h.batteryMv > 0 && h.batteryMv < t.batteryLowMv.value)
-    out.set('battery_low', `Pin ${h.batteryMv} mV < ${t.batteryLowMv.value} mV`);
+    out.set('battery_low', T.battery(h.batteryMv, t.batteryLowMv.value));
 
   // ----- LOGO clock: only while PTIM is live (a frozen PTIM is logo_lost) -----
   if (h.plcOnline === true && h.deviceTime && !ptimStale(h, now)) {
     const drift = Date.parse(h.deviceTime) - now;
-    if (Math.abs(drift) > CLOCK_DRIFT_MS) out.set('clock_drift', `Giờ LOGO ${drift > 0 ? 'nhanh' : 'chậm'} ${Math.round(Math.abs(drift) / 60_000)} phút so với máy chủ`);
+    if (Math.abs(drift) > CLOCK_DRIFT_MS) out.set('clock_drift', T.clock(drift > 0, Math.round(Math.abs(drift) / 60_000)));
   }
 
   // ----- schedule: branch state vs the schedule the server applied -----
   if (opts.schedule && h.manualMode === false && h.plcOnline === true && h.branch1On !== null && h.branch2On !== null) {
     const [e1, e2] = expectedBranches(opts.schedule, now);
     const diff: string[] = [];
-    if (h.branch1On !== e1) diff.push(`nhánh 1 ${h.branch1On ? 'sáng ngoài lịch' : 'tắt trong lịch'}`);
-    if (h.branch2On !== e2) diff.push(`nhánh 2 ${h.branch2On ? 'sáng ngoài lịch' : 'tắt trong lịch'}`);
-    if (diff.length) out.set('schedule_mismatch', `${diff.join(', ')} (lịch Chế độ ${opts.schedule.mode})`);
+    if (h.branch1On !== e1) diff.push(T.branch(1, h.branch1On));
+    if (h.branch2On !== e2) diff.push(T.branch(2, h.branch2On));
+    if (diff.length) out.set('schedule_mismatch', T.schedule(diff.join(', '), opts.schedule.mode));
   }
 
   // ----- GPS vs registered position -----
   if (h.gpsDevice && h.declaredLocation) {
     const d = distanceM(h.gpsDevice, h.declaredLocation);
-    if (d > GPS_DRIFT_M) out.set('gps_drift', `GPS cách vị trí khai báo ${Math.round(d)} m`);
+    if (d > GPS_DRIFT_M) out.set('gps_drift', T.gps(Math.round(d)));
   }
   return out;
 }
