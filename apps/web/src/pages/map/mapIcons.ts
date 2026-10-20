@@ -4,32 +4,44 @@ import type { CabinetStatus } from '@citylight/shared';
 import { CABINET_STATUSES } from '@citylight/shared';
 import { statusColors } from './mapStyle';
 
-// Status glyph inside the white cabinet body (centre 32,30). Shape + colour, never colour alone.
-function glyph(status: CabinetStatus, c: string): string {
+// Status glyph centred on (x,y), drawn for a ±8 box then scaled by k. Shape + colour, never colour alone.
+function glyph(status: CabinetStatus, c: string, x: number, y: number, k: number): string {
+  const t = `transform="translate(${x} ${y}) scale(${k})"`;
   switch (status) {
     case 'on':
-      return `<circle cx="32" cy="27" r="7" fill="${c}"/><rect x="28.5" y="34" width="7" height="4.5" rx="1.2" fill="${c}"/>`;
+      return `<g ${t}><circle cy="-1.5" r="5.5" fill="${c}"/><rect x="-2.6" y="4.6" width="5.2" height="3.2" rx="1" fill="${c}"/></g>`;
     case 'off':
-      return `<path d="M32 20.5v8" stroke="${c}" stroke-width="3.6" stroke-linecap="round"/><path d="M26 24.2a8.6 8.6 0 1 0 12 0" fill="none" stroke="${c}" stroke-width="3.6" stroke-linecap="round"/>`;
+      return `<g ${t} fill="none" stroke="${c}" stroke-width="3" stroke-linecap="round"><path d="M0 -7.5v6.5"/><path d="M-5 -4.2a7 7 0 1 0 10 0"/></g>`;
     case 'offline':
-      return `<path d="M25.5 23.5l13 13M38.5 23.5l-13 13" stroke="${c}" stroke-width="4.2" stroke-linecap="round"/>`;
+      return `<g ${t} stroke="${c}" stroke-width="3.6" stroke-linecap="round"><path d="M-5 -5l10 10M5 -5l-10 10"/></g>`;
     case 'fault':
-      return `<rect x="30" y="20" width="4" height="12" rx="2" fill="${c}"/><circle cx="32" cy="37.5" r="2.5" fill="${c}"/>`;
+      return `<g ${t} fill="${c}"><rect x="-1.9" y="-7.5" width="3.8" height="9.5" rx="1.9"/><circle cy="5.6" r="2.1"/></g>`;
     case 'dimming':
-      return `<circle cx="32" cy="30" r="8" fill="none" stroke="${c}" stroke-width="3"/><path d="M32 22a8 8 0 0 1 0 16z" fill="${c}"/>`;
+      return `<g ${t}><circle r="6" fill="none" stroke="${c}" stroke-width="2.4"/><path d="M0 -6a6 6 0 0 1 0 12z" fill="${c}"/></g>`;
     default:
-      return `<text x="32" y="37" text-anchor="middle" font-size="19" font-weight="700" font-family="Arial, sans-serif" fill="${c}">?</text>`;
+      return `<g ${t}><text y="5.5" text-anchor="middle" font-size="16" font-weight="700" font-family="Arial, sans-serif" fill="${c}">?</text></g>`;
   }
 }
 
-/** Teardrop pin, status colour, white cabinet body with status glyph. 64x80 @2x = 32x40 px. */
+/** Dark glyph on light status colours (the dark theme's amber / green), white otherwise. */
+function glyphColor(c: string): string {
+  const [r, g, b] = (c.match(/\d+/g) ?? ['0', '0', '0']).map(Number) as [number, number, number];
+  return 0.299 * r + 0.587 * g + 0.114 * b > 170 ? '#1f2937' : '#fff';
+}
+
+/**
+ * Cabinet with a roof (S48, Bảo picked design A, like the cabinet diagram): body in the status colour, status glyph,
+ * door handle, base; white outline + ground shadow for contrast on any tile. 64x80 @2x = 32x40 px, anchor bottom.
+ */
 function cabinetSvg(status: CabinetStatus, c: string): string {
+  const fg = glyphColor(c);
   return `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="80" viewBox="0 0 64 80">
-<defs><filter id="s" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="2.5" stdDeviation="2.5" flood-color="#000" flood-opacity="0.35"/></filter></defs>
-<path filter="url(#s)" d="M32 77C32 77 7 51 7 31a25 25 0 1 1 50 0c0 20-25 46-25 46z" fill="${c}" stroke="#fff" stroke-width="3.5"/>
-<rect x="18.5" y="14.5" width="27" height="31" rx="5" fill="#fff"/>
-<rect x="18.5" y="14.5" width="27" height="31" rx="5" fill="none" stroke="${c}" stroke-opacity="0.25" stroke-width="1.5"/>
-${glyph(status, c)}
+<ellipse cx="32" cy="76" rx="19" ry="3.5" fill="#000" opacity="0.22"/>
+<rect x="16" y="66" width="32" height="8" rx="1.5" fill="#374151" stroke="#fff" stroke-width="1.5"/>
+<path d="M9 19L55 19L50 9L14 9Z" fill="#374151" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+<rect x="13" y="19" width="38" height="48" rx="3" fill="${c}" stroke="#fff" stroke-width="2.5"/>
+<rect x="43" y="36" width="3.2" height="12" rx="1.6" fill="${fg}" opacity="0.85"/>
+${glyph(status, fg, 29, 42, 1.45)}
 </svg>`;
 }
 
