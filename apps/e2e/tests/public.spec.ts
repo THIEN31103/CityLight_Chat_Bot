@@ -13,6 +13,18 @@ test('site is served over HTTPS with the security headers', async ({ request, ba
   expect(h['cache-control']).toContain('no-cache');
 });
 
+test('CSP + Permissions-Policy are served and the login page runs under them', async ({ page, request }) => {
+  const h = (await request.get('/')).headers();
+  expect(h['content-security-policy']).toContain("script-src 'self'");
+  expect(h['content-security-policy']).toContain("frame-ancestors 'none'");
+  expect(h['permissions-policy']).toContain('microphone=()');
+  const violations: string[] = [];
+  page.on('console', (m) => m.type() === 'error' && /Content Security Policy/i.test(m.text()) && violations.push(m.text()));
+  await page.goto('/login');
+  await expect(page.getByLabel('Email')).toBeVisible();
+  expect(violations).toEqual([]);
+});
+
 test('plain HTTP redirects to HTTPS', async ({ request, baseURL }) => {
   const r = await request.get(baseURL!.replace('https:', 'http:') + '/', { maxRedirects: 0 });
   expect([301, 302, 307, 308]).toContain(r.status());

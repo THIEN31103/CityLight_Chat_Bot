@@ -74,6 +74,7 @@ dc up -d --build
 ```
 
 Sau đó: mục 2 + `npm run e2e:vps`. Chỉ đổi một file cấu hình: chép riêng file đó, `dc config` để kiểm, rồi `dc up -d --no-deps <service>`.
+**Đổi `infra/Caddyfile`** (hoặc file nào được mount từng file vào container): `docker restart citylight-caddy`. `caddy reload` không đủ, vì `tar` thay file bằng file mới nên container vẫn đọc bản cũ (gặp 2026-10-20 khi thêm CSP).
 Tạo lại `db` làm DB gián đoạn ~7 s; ingest giữ frame trong bộ đệm nên không mất (đã thử 2026-10-19).
 
 ## 6. Sự cố thường gặp
