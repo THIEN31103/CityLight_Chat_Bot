@@ -1,5 +1,8 @@
 // Text of one notification message (Telegram plain text): a few alarms one by one, a burst as a summary.
-import { ALARM_TYPE_LABELS, directionsUrl, type AlarmSeverity, type AlarmType, type GeoPoint } from '@citylight/shared';
+import {
+  ALARM_TYPE_LABELS, SECURITY_KIND_LABELS, SECURITY_SELF_KINDS, directionsUrl, shortUserAgent,
+  type AlarmSeverity, type AlarmType, type GeoPoint, type SecurityEvent, type SecurityKind,
+} from '@citylight/shared';
 
 export interface AlarmEvent {
   id: string; code: string; type: AlarmType; severity: AlarmSeverity; cabinetId: string; cabinetCode: string; cabinetName: string;
@@ -44,4 +47,25 @@ export function formatBatch(
   if (byType.length) text += `\n\nTheo loại:\n${byType.slice(0, 8).map(([k, n]) => `${k}: ${n}`).join('\n')}`;
   if (byArea.length) text += `\n\nTheo khu vực:\n${byArea.slice(0, 5).map(([k, n]) => `${k}: ${n}`).join('\n')}${byArea.length > 5 ? `\n… và ${byArea.length - 5} khu vực khác` : ''}`;
   return text + link;
+}
+
+const SECURITY_ICON: Record<SecurityKind, string> = {
+  new_ip: '🔐', locked: '🔒', recovery_login: '🆘', user_created: '👤', role_changed: '👤', user_disabled: '⛔', password_reset: '🔑', totp_reset: '🔑',
+};
+/** "16:05 20/10" in Vietnam time (Intl gives "20-10" for vi-VN). */
+export function vnDateTime(iso: string): string {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
+  return `${p.hour}:${p.minute} ${p.day}/${p.month}`;
+}
+
+/** One security alert (A6): what, which account, from where, when; who did it for user administration. */
+export function formatSecurity(e: SecurityEvent, webUrl = ''): string {
+  const lines = [`CityLight · Bảo mật`, `${SECURITY_ICON[e.kind]} ${SECURITY_KIND_LABELS[e.kind]}`, `   Tài khoản: ${e.email}`];
+  if (e.detail) lines.push(`   ${e.detail}`);
+  if (e.by) lines.push(`   Bởi: ${e.by}`);
+  const where = [e.ip && `IP ${e.ip}`, (e.ua || !e.by) && shortUserAgent(e.ua)].filter(Boolean).join(' · ');
+  lines.push(`   ${where ? `${where} · ` : ''}${vnDateTime(e.at)}`);
+  if (SECURITY_SELF_KINDS.includes(e.kind)) lines.push('   Không phải chủ tài khoản đăng nhập? Đổi mật khẩu và báo quản trị ngay.');
+  if (webUrl) lines.push(`Xem: ${webUrl.replace(/\/$/, '')}/logs/activity`);
+  return lines.join('\n');
 }

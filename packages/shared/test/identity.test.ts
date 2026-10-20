@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FrameBudget, checkImei, normImei } from '../src';
+import { FrameBudget, checkImei, normImei, shortUserAgent } from '../src';
 
 const A = '861553070006339';
 const B = '861234567890123';
@@ -41,5 +41,15 @@ describe('FrameBudget', () => {
     const b = new FrameBudget(5, 1, 100);
     for (let i = 0; i < 1000; i++) b.take(`R${i}`, i * 10_000);
     expect((b as unknown as { buckets: Map<string, unknown> }).buckets.size).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('shortUserAgent', () => {
+  it('names browser and OS without versions', () => {
+    expect(shortUserAgent('Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/141.0 Mobile Safari/537.36')).toBe('Chrome / Android');
+    expect(shortUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1')).toBe('Safari / iOS');
+    expect(shortUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/141.0 Safari/537.36 Edg/141.0')).toBe('Edge / Windows');
+    expect(shortUserAgent('curl/8.5.0')).toBe('công cụ dòng lệnh');
+    expect(shortUserAgent(null)).toBe('không rõ trình duyệt');
   });
 });

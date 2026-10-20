@@ -35,6 +35,7 @@ Từ laptop: `npm run e2e:vps` (Playwright, 6 kiểm tra không cần đăng nh�
 - **Không tự báo được khi cả VPS chết.** Cần monitor bên ngoài (chưa có, cần tài khoản của Bảo):
   - UptimeRobot (miễn phí, 5 phút): monitor *Keyword* `https://13-55-91-187.sslip.io/api/v1/health` chứa `"status":"ok"`, + monitor *Port* `13.55.91.187:1883`; báo qua email / Telegram.
   - Lightsail console → instance → Metrics → thêm alarm "Status check failed" + "CPU" gửi email.
+- Cảnh báo bảo mật (S45: đăng nhập IP mới, khóa do sai 5 lần, mã khôi phục, quản trị user) cũng do `notify-worker` gửi cho mọi admin đã liên kết Telegram + chính chủ tài khoản.
 - Cảnh báo nghiệp vụ (tủ mất kết nối, quá áp, lệch lịch…) do `notify-worker` gửi qua bot `@Citylight_Team_Bot`. Bot chỉ chạy **một nơi** (Telegram chỉ cho một `getUpdates`): hiện là VPS; token trong `.env` local đã để trống.
 
 ## 4. Backup và khôi phục

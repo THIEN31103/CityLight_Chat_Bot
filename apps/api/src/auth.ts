@@ -11,7 +11,8 @@ import { hash, verify } from '@node-rs/argon2';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
-import type { RoleKey, User } from '@citylight/shared';
+import { EVENTS_CHANNEL } from '@citylight/db/commands';
+import type { RoleKey, SecurityEvent, SecurityKind, User } from '@citylight/shared';
 import { hasPermission, roleRequires2fa, type Permission } from '@citylight/shared';
 import { ApiError } from './errors';
 import { REDIS, SQL, type Sql } from './infra';
@@ -34,6 +35,11 @@ const RATE_PER_MIN = 20;
 export const PASSWORD_MIN = 10;
 /** Redis channel: session revocations, so every API instance drops caches and sockets. */
 export const AUTH_CHANNEL = 'cl:auth';
+/** activity_logs.action of a sign-in; also the history the new-IP alert looks at. */
+const LOGIN_ACTION = 'Đăng nhập';
+/** Alerts raised by a sign-in attempt (repeat attempts from one IP give one alert per 10 min); the user is told too. */
+const SIGNIN_KINDS = new Set<SecurityKind>(['new_ip', 'locked', 'recovery_login']);
+const ALERT_DEDUPE_S = 600;
 
 export const PUBLIC = 'cl:public';
 export const Public = () => SetMetadata(PUBLIC, true);
@@ -127,11 +133,39 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     if (n > RATE_PER_MIN) throw new ApiError(429, 'rate_limited', 'Quá nhiều lần thử, vui lòng đợi 1 phút');
   }
 
-  private async registerFailure(u: { id: string; failed_logins: number }) {
+  private async registerFailure(u: { id: string; email: string; failed_logins: number }, ip?: string, ua?: string) {
     const failed = u.failed_logins + 1;
     const lock = failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null;
     await this.sql`UPDATE users SET failed_logins = ${lock ? 0 : failed}, locked_until = ${lock} WHERE id = ${u.id}`;
+    if (lock) await this.securityAlert('locked', u, { ip, ua });
     return lock;
+  }
+
+  // ---------- security alerts (A6) ----------
+
+  /**
+   * Telegram alert to admins (and, for sign-in events, the user): published on the events channel, sent by the
+   * notify-worker. Sign-in events are de-duplicated per user + IP for 10 min. Never fails the request.
+   */
+  async securityAlert(kind: SecurityKind, target: { id: string; email: string }, o: { ip?: string; ua?: string; by?: string; detail?: string } = {}) {
+    try {
+      if (SIGNIN_KINDS.has(kind) && (await this.redis.set(`cl:secalert:${kind}:${target.id}:${o.ip ?? ''}`, '1', 'EX', ALERT_DEDUPE_S, 'NX')) !== 'OK') return;
+      const security: SecurityEvent = {
+        kind, userId: target.id, email: target.email, ip: o.ip ?? null, ua: o.ua ?? null, by: o.by ?? null, detail: o.detail ?? null, at: new Date().toISOString(),
+      };
+      await this.redis.publish(EVENTS_CHANNEL, JSON.stringify({ type: 'security', security }));
+    } catch (e) {
+      console.error('[auth] security alert', kind, (e as Error).message);
+    }
+  }
+
+  /** A successful sign-in from an IP this user has not signed in from in 90 days (not on the very first sign-in). */
+  private async alertIfNewIp(u: { id: string; email: string }, ip?: string, ua?: string) {
+    if (!ip) return;
+    const [r] = await this.sql<{ seen: boolean; before: boolean }[]>`
+      SELECT EXISTS (SELECT 1 FROM activity_logs WHERE user_id = ${u.id} AND action = ${LOGIN_ACTION} AND ip = ${ip} AND ts > now() - interval '90 days') AS seen,
+             EXISTS (SELECT 1 FROM activity_logs WHERE user_id = ${u.id} AND action = ${LOGIN_ACTION}) AS before`;
+    if (r && r.before && !r.seen) await this.securityAlert('new_ip', u, { ip, ua });
   }
 
   private async authRow(where: { email?: string; id?: string }) {
@@ -156,7 +190,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     if (!u) throw invalid;
     this.assertUsable(u);
     if (!(await verify(u.password_hash, password))) {
-      await this.registerFailure(u);
+      await this.registerFailure(u, ip, ua);
       throw invalid;
     }
     if (u.totp_enabled && u.totp_secret) {
@@ -209,13 +243,16 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       ok = await this.useRecoveryCode(u.id, recoveryCode);
     }
     if (!ok) {
-      const lock = await this.registerFailure(u);
+      const lock = await this.registerFailure(u, ip, ua);
       if (lock) await this.redis.del(`cl:2fa:${challenge}`);
       throw new ApiError(401, 'invalid_totp', 'Mã xác thực không đúng');
     }
     await this.redis.del(`cl:2fa:${challenge}`);
     const s = await this.startSession(u, remember, ip, ua);
-    if (recoveryCode) await this.log(s.user, 'Đăng nhập bằng mã khôi phục 2FA', ip);
+    if (recoveryCode) {
+      await this.log(s.user, 'Đăng nhập bằng mã khôi phục 2FA', ip);
+      await this.securityAlert('recovery_login', u, { ip, ua });
+    }
     return s;
   }
 
@@ -238,7 +275,8 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const expires = new Date(Date.now() + (remember ? REMEMBER_DAYS * 24 : SESSION_HOURS) * 3_600_000);
     await this.sql`INSERT INTO sessions (id, user_id, expires_at, ip, user_agent) VALUES (${sid}, ${u.id}, ${expires}, ${ip ?? null}, ${ua ?? null})`;
     const user = await this.userById(u.id);
-    await this.log(user, 'Đăng nhập', ip);
+    await this.alertIfNewIp(u, ip, ua); // before this sign-in is logged
+    await this.log(user, LOGIN_ACTION, ip);
     return { sid, expires, user };
   }
 

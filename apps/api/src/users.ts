@@ -90,7 +90,9 @@ export class UsersService {
       for (const a of new Set(b.scopeAreaIds)) await tx`INSERT INTO user_scopes (user_id, area_id) VALUES (${r[0]!.id}, ${a})`;
       return r[0]!.id;
     });
-    await this.auth.log(admin, 'Tạo người dùng', ip, { type: 'user', id, name: b.email }, `${b.role}${b.scopeAll ? ', toàn hệ thống' : `, ${b.scopeAreaIds.length} khu vực`}`);
+    const summary = `${b.role}${b.scopeAll ? ', toàn hệ thống' : `, ${b.scopeAreaIds.length} khu vực`}`;
+    await this.auth.log(admin, 'Tạo người dùng', ip, { type: 'user', id, name: b.email }, summary);
+    await this.auth.securityAlert('user_created', { id, email: b.email }, { ip, by: admin.email, detail: summary });
     return { user: await this.one(admin.organizationId, id), tempPassword: pw };
   }
 
@@ -131,6 +133,8 @@ export class UsersService {
       !sameScope && (after.scopeAll ? 'phạm vi: toàn hệ thống' : `phạm vi: ${after.scopeAreaIds.length} khu vực`),
     ].filter(Boolean).join('; ');
     if (changes) await this.auth.log(admin, 'Sửa người dùng', ip, { type: 'user', id: uid, name: after.email }, changes);
+    if (before.role !== after.role) await this.auth.securityAlert('role_changed', after, { ip, by: admin.email, detail: `${before.role} → ${after.role}` });
+    if (before.active && !after.active) await this.auth.securityAlert('user_disabled', after, { ip, by: admin.email });
     return after;
   }
 
@@ -141,6 +145,7 @@ export class UsersService {
     await this.sql`UPDATE users SET password_hash = ${await hash(pw)}, password_change_required = true, failed_logins = 0, locked_until = NULL WHERE id = ${u.id}`;
     await this.auth.revokeUser(u.id);
     await this.auth.log(admin, 'Đặt lại mật khẩu', ip, { type: 'user', id: u.id, name: u.email });
+    await this.auth.securityAlert('password_reset', u, { ip, by: admin.email });
     return { user: await this.one(admin.organizationId, u.id), tempPassword: pw };
   }
 
@@ -157,6 +162,7 @@ export class UsersService {
     await this.auth.clear2fa(u.id);
     await this.auth.revokeUser(u.id);
     await this.auth.log(admin, 'Đặt lại 2FA', ip, { type: 'user', id: u.id, name: u.email });
+    await this.auth.securityAlert('totp_reset', u, { ip, by: admin.email });
     return this.one(admin.organizationId, u.id);
   }
 }

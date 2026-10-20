@@ -12,8 +12,8 @@ import { Redis } from 'ioredis';
 import { createSql } from '@citylight/db';
 import { EVENTS_CHANNEL } from '@citylight/db/commands';
 import { NOTIFY_CHANGED_CHANNEL, TG_BOT_KEY, TG_LINK_PREFIX } from '@citylight/db/notify';
-import type { AlarmSeverity, GeoPoint } from '@citylight/shared';
-import { directionsLine, formatBatch, type AlarmEvent, type Item } from './notify-format';
+import { SECURITY_SELF_KINDS, type AlarmSeverity, type GeoPoint, type SecurityEvent } from '@citylight/shared';
+import { directionsLine, formatBatch, formatSecurity, vnDateTime, type AlarmEvent, type Item } from './notify-format';
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? '';
 const TG_API = (process.env.TELEGRAM_API_URL ?? 'https://api.telegram.org').replace(/\/$/, '');
@@ -65,7 +65,7 @@ const channels: Partial<Record<string, NotificationChannel>> = telegram ? { tele
 
 // ---------------- recipients ----------------
 
-interface Sub { userId: string; email: string; channel: string; address: string; min: AlarmSeverity; all: boolean; areas: Set<string> }
+interface Sub { userId: string; email: string; role: string; channel: string; address: string; min: AlarmSeverity; all: boolean; areas: Set<string> }
 let subs: Sub[] = [];
 let cabinetAreas = new Map<string, { district: string | null; ward: string | null; districtName: string | null; location: GeoPoint }>();
 
@@ -81,7 +81,7 @@ async function refresh() {
   const byUser = new Map<string, Set<string>>();
   for (const a of areas) (byUser.get(a.user_id) ?? byUser.set(a.user_id, new Set()).get(a.user_id)!).add(a.id);
   subs = rows.map((r) => ({
-    userId: r.user_id, email: r.email, channel: r.channel, address: r.address, min: r.min_severity,
+    userId: r.user_id, email: r.email, role: r.role, channel: r.channel, address: r.address, min: r.min_severity,
     all: r.role === 'admin' || r.scope_all, areas: byUser.get(r.user_id) ?? new Set(),
   }));
   const cabs = await sql<{ id: string; district_id: string | null; ward_id: string | null; district: string | null; lat: number; lng: number }[]>`
@@ -154,7 +154,7 @@ interface IncidentEvent {
   id: string; code: string; cabinetName: string; districtName: string; category: string; content: string; deadline: string; assigneeId: string; by?: string;
 }
 
-const vnTimeText = (iso: string) => new Date(iso).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+const vnTimeText = vnDateTime;
 
 async function notifyAssignee(kind: 'assigned' | 'overdue', i: IncidentEvent) {
   const link = WEB_URL ? `\nXem: ${WEB_URL.replace(/\/$/, '')}/incidents/${i.id}` : '';
@@ -175,11 +175,38 @@ async function notifyAssignee(kind: 'assigned' | 'overdue', i: IncidentEvent) {
   }
 }
 
+// ---------------- security alerts (A6): admins + the account owner for sign-in events, not batched, any severity ----------------
+
+async function notifySecurity(e: SecurityEvent) {
+  const text = formatSecurity(e, WEB_URL);
+  const self = SECURITY_SELF_KINDS.includes(e.kind);
+  const seen = new Set<string>();
+  for (const s of subs) {
+    const ch = channels[s.channel];
+    if (!ch || !(s.role === 'admin' || (self && s.userId === e.userId))) continue;
+    const key = `${s.userId}:${s.channel}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      await ch.send(s.address, text);
+      stats.messages++;
+    } catch (err) {
+      stats.failed++;
+      console.error(`[notify] security ${e.kind} -> ${s.email}: ${(err as Error).message}`);
+    }
+  }
+}
+
 function onEvent(raw: string) {
-  let ev: { type: string; alarm?: AlarmEvent; incident?: IncidentEvent };
+  let ev: { type: string; alarm?: AlarmEvent; incident?: IncidentEvent; security?: SecurityEvent };
   try {
     ev = JSON.parse(raw);
   } catch {
+    return;
+  }
+  if (ev.type === 'security' && ev.security) {
+    stats.events++;
+    void notifySecurity(ev.security);
     return;
   }
   if (ev.incident && (ev.type === 'incident.assigned' || ev.type === 'incident.overdue')) {

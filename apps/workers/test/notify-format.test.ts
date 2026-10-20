@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBatch, type Item } from '../src/notify-format';
+import { formatBatch, formatSecurity, type Item } from '../src/notify-format';
 
 const alarm = (n: number, over: Partial<Item['a']> = {}): Item['a'] => ({
   id: `a${n}`, code: 'E101', type: 'offline', severity: 'critical', cabinetId: `c${n}`, cabinetCode: `TL01.${n}`, cabinetName: `Tủ ${n}`,
@@ -34,5 +34,26 @@ describe('formatBatch', () => {
     expect(t).toContain('E501 Rò dòng: 1');
     expect(t).toMatch(/Quận 1: 1[89]/);
     expect(t.length).toBeLessThan(4000);
+  });
+});
+
+describe('formatSecurity', () => {
+  const base = { userId: 'u1', email: 'op@citylight.local', ip: '203.0.113.7', by: null, detail: null, at: '2026-10-20T09:05:00Z' };
+  it('sign-in alert: account, IP, browser, local time and a hint for the owner', () => {
+    const t = formatSecurity({ ...base, kind: 'new_ip', ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36' }, 'https://cl.example');
+    expect(t).toContain('🔐 Đăng nhập từ IP mới');
+    expect(t).toContain('Tài khoản: op@citylight.local');
+    expect(t).toContain('IP 203.0.113.7 · Chrome / Windows · ');
+    expect(t).toContain('16:05 20/10');
+    expect(t).toContain('Không phải chủ tài khoản');
+    expect(t).toContain('https://cl.example/logs/activity');
+  });
+  it('user administration: who did it and what, no owner hint', () => {
+    const t = formatSecurity({ ...base, kind: 'role_changed', ua: null, by: 'admin@citylight.local', detail: 'viewer → admin' });
+    expect(t).toContain('Đổi vai trò người dùng');
+    expect(t).toContain('viewer → admin');
+    expect(t).toContain('Bởi: admin@citylight.local');
+    expect(t).not.toContain('trình duyệt');
+    expect(t).not.toContain('Không phải chủ tài khoản');
   });
 });
