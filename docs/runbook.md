@@ -78,21 +78,37 @@ dc up -d
 
 ## 5. Cập nhật phiên bản
 
-Từ laptop (repo Server, đã commit):
+Thứ tự (đã dùng 2026-10-20, migration 0015/0016): **backup → chép code → build → migrate → up → web**. Code nằm *trong* image
+(`COPY . .`), nên migration phải chạy bằng image **mới** build; chạy `dc run … migrate` trước khi build sẽ dùng image cũ, không có file migration mới.
+Migration phải chỉ *thêm* (code cũ vẫn chạy được trong lúc build/migrate); web lên **sau** backend để không gọi vào API cũ.
+
+1. Trên VPS, backup + diễn tập (bỏ qua nếu không có migration):
+
+```sh
+sh infra/scripts/backup-db.sh && sh infra/scripts/restore-drill.sh backups/db-<ts>.sql.gz
+```
+
+2. Từ laptop (repo Server, đã commit + push):
 
 ```sh
 git archive HEAD | ssh -i ~/.ssh/citylight_aws ubuntu@13.55.91.187 'tar -x -C /opt/citylight'
+```
+
+3. Trên VPS: build (container cũ vẫn chạy), migrate bằng image mới (nếu có file mới trong `packages/db/migrations`), rồi thay container (~20 s):
+
+```sh
+dc build
+dc run --rm --no-deps -w /app/packages/db api node --import tsx src/migrate.ts
+dc up -d
+```
+
+4. Từ laptop: web.
+
+```sh
 cd apps/web && VITE_API_MODE=real npx vite build && scp -r -i ~/.ssh/citylight_aws dist/* ubuntu@13.55.91.187:/opt/citylight/web-dist/
 ```
 
-Trên VPS: chạy migration nếu có file mới trong `packages/db/migrations`, rồi `dc up -d --build`:
-
-```sh
-dc run --rm --no-deps -w /app/packages/db api node --import tsx src/migrate.ts
-dc up -d --build
-```
-
-Sau đó: mục 2 + `npm run e2e:vps`. Chỉ đổi một file cấu hình: chép riêng file đó, `dc config` để kiểm, rồi `dc up -d --no-deps <service>`.
+Sau đó: mục 2 + `npm run e2e:vps`. Rollback: `git archive <commit cũ>` → `dc build` → `dc up -d` (migration chỉ thêm nên không phải khôi phục DB). Chỉ đổi một file cấu hình: chép riêng file đó, `dc config` để kiểm, rồi `dc up -d --no-deps <service>`.
 **Đổi `infra/Caddyfile`** (hoặc file nào được mount từng file vào container): `docker restart citylight-caddy`. `caddy reload` không đủ, vì `tar` thay file bằng file mới nên container vẫn đọc bản cũ (gặp 2026-10-20 khi thêm CSP).
 Tạo lại `db` làm DB gián đoạn ~7 s; ingest giữ frame trong bộ đệm nên không mất (đã thử 2026-10-19).
 
