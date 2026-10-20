@@ -7,13 +7,23 @@ services:
     container_name: citylight-emqx
     restart: unless-stopped
     ports:
-      - "1883:1883"      # MQTT for cabinets (EC25: plain TCP, anonymous in phase 1)
+      - "1883:1883"      # MQTT, anonymous: cabinets on current firmware + the backend (secret username, see ACL)
+      - "1884:1884"      # MQTT with user/pass (S43): cabinets on firmware that sends MQTT_DEVICE_USERNAME / PASSWORD
       - "18083:18083"    # dashboard: never expose publicly on the VPS
     environment:
       EMQX_NODE__NAME: emqx@127.0.0.1
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:?set in infra/.env}
-      # Phase 1: no authenticator (EC25 cabinets connect anonymously). The backend is identified by a
-      # secret username in the rendered ACL (see emqx/acl.conf.tmpl). M1: HTTP authn/authz via apps/api.
+      # S43 (2026-10-20): one authenticator (EMQX built-in database, accounts bootstrapped from
+      # emqx/device-users.csv rendered from infra/.env), switched OFF on 1883 so current cabinets and the
+      # backend keep working, ON for the new device listener 1884. Moving every cabinet to 1884 then closing
+      # 1883 to the Internet ends anonymous access. Authorization (ACL) is the same file for both ports.
+      EMQX_AUTHENTICATION: '[{mechanism = password_based, backend = built_in_database, user_id_type = username, password_hash_algorithm = {name = sha256, salt_position = suffix}, bootstrap_file = "/opt/emqx/etc/device-users.csv", bootstrap_type = plain}]'
+      EMQX_LISTENERS__TCP__DEFAULT__ENABLE_AUTHN: "false"
+      EMQX_LISTENERS__TCP__DEVICE__BIND: "0.0.0.0:1884"
+      EMQX_LISTENERS__TCP__DEVICE__ENABLE_AUTHN: "true"
+      EMQX_LISTENERS__TCP__DEVICE__MAX_CONN_RATE: 500/s
+      EMQX_LISTENERS__TCP__DEVICE__MAX_CONNECTIONS: "30000"
+      # The backend is identified by a secret username in the rendered ACL (see emqx/acl.conf.tmpl).
       EMQX_AUTHORIZATION__NO_MATCH: deny
       EMQX_AUTHORIZATION__DENY_ACTION: ignore
       EMQX_AUTHORIZATION__CACHE__ENABLE: "true"
@@ -34,6 +44,7 @@ services:
       EMQX_BROKER__SHARED_SUBSCRIPTION_STRATEGY: hash_clientid
     volumes:
       - ./emqx/acl.conf:/opt/emqx/etc/acl.conf:ro
+      - ./emqx/device-users.csv:/opt/emqx/etc/device-users.csv:ro
       - emqx-data:/opt/emqx/data
     healthcheck:
       test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]

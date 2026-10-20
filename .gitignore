@@ -13,6 +13,7 @@ coverage/
 playwright-report/
 test-results/
 infra/emqx/acl.conf
+infra/emqx/device-users.csv
 .tmp/
 # incident photos when the API runs from source (UPLOAD_DIR default)
 data/

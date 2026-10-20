@@ -8,6 +8,8 @@ services:
   emqx:
     ports: !override
       - "1883:1883"
+      # S43 device port with user/pass (also open TCP 1884 in the Lightsail firewall)
+      - "1884:1884"
 
   db:
     ports: !override
