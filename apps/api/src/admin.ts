@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { DEFAULT_FIELD_MAP, GPS_RELOCATE_STALE_M, LAMP_GROUP_LABELS, OFFLINE_AFTER_MS, distanceM } from '@citylight/shared';
 import { SCHEDULES_CHANNEL } from '@citylight/db/batches';
 import { CONFIG_CHANNEL } from '@citylight/db/notify';
-import { RequirePerm, type AuthedRequest, type SessionUser } from './auth';
+import { RequirePerm, RequireReauth, type AuthedRequest, type SessionUser } from './auth';
 import { CabinetsModule, CabinetsService } from './cabinets';
 import { ApiError } from './errors';
 import { REDIS, SQL, type Sql } from './infra';
@@ -398,9 +398,9 @@ export class AdminController {
   relocate(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.relocateFromGps(r.user!, id, b, r.ip); }
   @Get('cabinets/:id/imei-candidates') @RequirePerm('admin.devices')
   imeiCandidates(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.imeiCandidates(r.user!, id); }
-  @Put('cabinets/:id/imei') @RequirePerm('admin.devices')
+  @Put('cabinets/:id/imei') @RequirePerm('admin.devices') @RequireReauth()
   setImei(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.setImei(r.user!, id, b, r.ip); }
-  @Post('cabinets/:id/decommission') @HttpCode(204) @RequirePerm('admin.devices')
+  @Post('cabinets/:id/decommission') @HttpCode(204) @RequirePerm('admin.devices') @RequireReauth()
   decommission(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.setActive(r.user!, id, false, r.ip); }
   @Post('cabinets/:id/reactivate') @HttpCode(204) @RequirePerm('admin.devices')
   reactivate(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.setActive(r.user!, id, true, r.ip); }

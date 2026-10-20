@@ -48,6 +48,13 @@ export const RequirePerm = (p: Permission) => SetMetadata(PERM, p);
 /** Reachable while a forced step (2FA setup / password change) is pending. */
 export const ALLOW_PENDING = 'cl:allow-pending';
 export const AllowPending = () => SetMetadata(ALLOW_PENDING, true);
+/**
+ * A4 (S45): the current 2FA code must have been entered on this session within REAUTH_TTL_S (POST /auth/reauth),
+ * for actions that hand out access or change a cabinet's identity. 403 reauth_required otherwise.
+ */
+export const REAUTH = 'cl:reauth';
+export const RequireReauth = () => SetMetadata(REAUTH, true);
+const REAUTH_TTL_S = 300;
 
 export type SessionUser = User & { organizationId: string; scope: Scope };
 
@@ -219,6 +226,38 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     if (step === null) throw bad;
     const r = await this.sql`UPDATE users SET totp_last_step = ${step} WHERE id = ${u.id} AND (totp_last_step IS NULL OR totp_last_step < ${step}) RETURNING id`;
     if (r.length !== 1) throw bad;
+  }
+
+  /**
+   * Step-up for @RequireReauth actions: the current TOTP code opens a REAUTH_TTL_S window on this session.
+   * Wrong codes count toward the account lock; a lock also ends every session (a stolen session cannot keep guessing).
+   */
+  async reauth(user: SessionUser, sid: string, code: string, ip?: string, ua?: string) {
+    const u = await this.authRow({ id: user.id });
+    if (!u) throw new ApiError(401, 'unauthenticated', 'Phiên đăng nhập không hợp lệ');
+    this.assertUsable(u);
+    if (!u.totp_enabled || !u.totp_secret) {
+      if (require2faEnforced()) throw new ApiError(403, 'totp_setup_required', 'Cần bật xác thực 2 lớp');
+    } else {
+      const step = verifyTotp(decryptSecret(u.totp_secret, this.encKey), code, u.totp_last_step);
+      const ok = step !== null
+        && (await this.sql`UPDATE users SET totp_last_step = ${step}, failed_logins = 0 WHERE id = ${u.id} AND (totp_last_step IS NULL OR totp_last_step < ${step}) RETURNING id`).length === 1;
+      if (!ok) {
+        if (await this.registerFailure(u, ip, ua)) {
+          await this.revokeUser(u.id);
+          throw new ApiError(423, 'account_locked', `Nhập sai ${MAX_FAILED} lần: tài khoản tạm khóa ${LOCK_MINUTES} phút và đã đăng xuất mọi nơi`);
+        }
+        throw new ApiError(422, 'invalid_otp', 'Mã xác thực không đúng hoặc đã dùng');
+      }
+    }
+    await this.redis.set(`cl:reauth:${sid}`, '1', 'EX', REAUTH_TTL_S);
+    await this.log(user, 'Xác thực lại 2FA', ip);
+    return { validForS: REAUTH_TTL_S };
+  }
+
+  async hasRecentReauth(user: SessionUser, sid: string) {
+    if (!user.totpEnabled && !require2faEnforced()) return true; // test setups without 2FA
+    return (await this.redis.exists(`cl:reauth:${sid}`)) === 1;
   }
 
   async verify2fa(challenge: string | undefined, code: string | undefined, recoveryCode: string | undefined, ip?: string, ua?: string) {
@@ -444,6 +483,8 @@ export class AuthGuard implements CanActivate {
 
     const perm = this.reflector.getAllAndOverride<Permission | undefined>(PERM, targets);
     if (perm && !hasPermission(user.role, perm)) throw new ApiError(403, 'forbidden', 'Không đủ quyền');
+    if (this.reflector.getAllAndOverride<boolean>(REAUTH, targets) && !(await this.auth.hasRecentReauth(user, sid)))
+      throw new ApiError(403, 'reauth_required', 'Nhập mã xác thực 2 lớp để tiếp tục');
     return true;
   }
 }
@@ -519,8 +560,16 @@ export class AuthController {
     return this.auth.enable2fa(req.user!, CodeBody.parse(body).code, req.ip);
   }
 
+  @Post('reauth')
+  @HttpCode(200)
+  async reauth(@Body() body: unknown, @Req() req: AuthedRequest) {
+    await this.auth.rateLimit('reauth', req.ip);
+    return this.auth.reauth(req.user!, req.sid!, CodeBody.parse(body).code, req.ip, req.headers['user-agent']);
+  }
+
   @Post('2fa/disable')
   @HttpCode(200)
+  @RequireReauth()
   disable(@Body() body: unknown, @Req() req: AuthedRequest) {
     return this.auth.disable2fa(req.user!, PasswordBody.parse(body).password, req.ip);
   }

@@ -50,7 +50,25 @@ function csrfToken() {
 /** Fired when the session is gone (expired, revoked by an admin) or a forced step appears; the session store listens. */
 export const AUTH_EVENT = 'cl:auth';
 
+/**
+ * A4 (S45): asks the user for the current 2FA code (ReauthHost dialog, which calls api.reauth itself).
+ * true = re-authenticated, the blocked request is sent once more; false = cancelled.
+ */
+let reauthPrompt: (() => Promise<boolean>) | null = null;
+export function setReauthPrompt(p: (() => Promise<boolean>) | null) {
+  reauthPrompt = p;
+}
+
 async function req<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+  try {
+    return await send<T>(method, path, body, headers);
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'reauth_required' && reauthPrompt && (await reauthPrompt())) return send<T>(method, path, body, headers);
+    throw e;
+  }
+}
+
+async function send<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
   const csrf = method !== 'GET' ? csrfToken() : null;
   const request = new Request(new URL(`/api/v1${path}`, window.location.origin), {
     method,
@@ -288,6 +306,7 @@ export const api = {
   me: () => req<User>('GET', '/auth/me'),
   changePassword: (oldPassword: string, newPassword: string) => req<void>('POST', '/me/password', { oldPassword, newPassword }),
   setup2fa: () => req<{ otpauthUrl: string; secret: string }>('POST', '/auth/2fa/setup'),
+  reauth: (code: string) => send<{ validForS: number }>('POST', '/auth/reauth', { code }),
   enable2fa: (code: string) => req<{ user: User; recoveryCodes: string[] }>('POST', '/auth/2fa/enable', { code }),
   disable2fa: (password: string) => req<User>('POST', '/auth/2fa/disable', { password }),
   serverTime: () => req<{ now: string }>('GET', '/server-time'),

@@ -1,15 +1,15 @@
 // Security alerts end-to-end (A6): the API publishes `security` events on cl:events for a sign-in from a new IP
 // (not the first sign-in), an account lock after 5 failures, a recovery-code sign-in, and user administration
 // (create / role change / disable / password reset / 2FA reset). The notify-worker turns them into Telegram
-// messages (formatting: apps/workers/test/notify-format.test.ts). Needs api + Redis. Users *@e2e-sec.citylight.test,
+// messages (formatting: apps/workers/test/notify-format.test.ts). Also A4 re-auth lockout. Needs api + Redis. Users *@e2e-sec.citylight.test,
 // removed at the end. ~20 s. Run: npm run e2e:security
 import { hash } from '@node-rs/argon2';
 import { Redis } from 'ioredis';
 import { createSql } from '@citylight/db';
 import { EVENTS_CHANNEL } from '@citylight/db/commands';
 import type { SecurityEvent } from '@citylight/shared';
-import { base32Decode } from '../src/totp';
-import { login, nextCode } from './client';
+import { base32Decode, hotp, totpStep } from '../src/totp';
+import { login, nextCode, reauth } from './client';
 
 const DOMAIN = 'e2e-sec.citylight.test';
 const sql = createSql(process.env.DATABASE_URL, 2);
@@ -87,7 +87,8 @@ async function main() {
     const rec = await viaCode.post('/auth/2fa/verify', { recoveryCode: recovery });
     check('Đăng nhập bằng mã khôi phục: cảnh báo recovery_login', rec.status === 200 && (await got('recovery_login', adminEmail, n)).length === 1);
 
-    // ---------- user administration: who did what ----------
+    // ---------- user administration: who did what (A4: after re-entering the 2FA code) ----------
+    await reauth(admin, secret, totp);
     const vid = (await sql<{ id: string }[]>`SELECT id FROM users WHERE email = ${userEmail}`)[0]!.id;
     await admin.post(`/users/${vid}/unlock`);
     n = events.length;
@@ -110,6 +111,15 @@ async function main() {
     n = events.length;
     await admin.patch(`/users/${vid}`, { active: false });
     check('Khóa tài khoản: user_disabled', (await got('user_disabled', userEmail, n)).length === 1);
+
+    // ---------- A4: guessing re-auth codes on a (stolen) session locks the account and ends every session ----------
+    const wrong = () => ('000000' === hotp(secret, totpStep(Date.now())) ? '111111' : '000000');
+    n = events.length;
+    const tries: number[] = [];
+    for (let i = 0; i < 5; i++) tries.push((await viaCode.post('/auth/reauth', { code: wrong() })).status);
+    check('Nhập lại 2FA sai 5 lần → 422×4 rồi 423', tries.join() === '422,422,422,422,423', tries.join());
+    check('… và mọi phiên của tài khoản bị đăng xuất', (await admin.get('/auth/me')).status === 401 && (await viaCode.get('/auth/me')).status === 401);
+    check('… và có cảnh báo locked', (await got('locked', adminEmail, n)).length === 1);
   } finally {
     await wipe();
     await sub.quit();

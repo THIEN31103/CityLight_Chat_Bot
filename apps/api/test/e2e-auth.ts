@@ -8,7 +8,7 @@ import { Redis } from 'ioredis';
 import { io, type Socket } from 'socket.io-client';
 import { createSql } from '@citylight/db';
 import { base32Decode, hotp, totpStep } from '../src/totp';
-import { BASE, Client, login, nextCode } from './client';
+import { BASE, Client, freshCode, login, nextCode } from './client';
 
 const DOMAIN = 'e2e.citylight.test';
 const sql = createSql(process.env.DATABASE_URL, 2);
@@ -94,6 +94,19 @@ async function main() {
   check('Mã TOTP mới → đăng nhập được', ok2.status === 200);
   const adm = r.c;
   await sql`UPDATE users SET failed_logins = 0 WHERE email = ${'admin@' + DOMAIN}`;
+
+  // ---------- A4: user administration needs the 2FA code again (5-minute window per session) ----------
+  const noReauth = await adm.post('/users', { email: `early@${DOMAIN}`, fullName: 'early', role: 'viewer' });
+  check('Tạo user khi chưa nhập lại 2FA → 403 reauth_required', noReauth.status === 403 && noReauth.data.code === 'reauth_required');
+  const badReauth = await adm.post('/auth/reauth', { code: '000000' === hotp(secret, totpStep(Date.now())) ? '111111' : '000000' });
+  check('Nhập lại 2FA mã sai → 422 invalid_otp', badReauth.status === 422 && badReauth.data.code === 'invalid_otp');
+  const okReauth = await adm.post('/auth/reauth', { code: await freshCode(secret, last) });
+  check('Nhập lại 2FA mã đúng → mở 300 s', okReauth.status === 200 && okReauth.data.validForS === 300);
+  const other = (await login(`admin@${DOMAIN}`, adminPw)).c;
+  await other.post('/auth/2fa/verify', { recoveryCode: recovery[1] }); // no fresh TOTP step left in this 30 s
+  const notShared = await other.post('/users', { email: `early@${DOMAIN}`, fullName: 'early', role: 'viewer' });
+  check('Cửa sổ xác thực lại chỉ cho đúng phiên đó (phiên khác vẫn 403)', notShared.status === 403 && notShared.data.code === 'reauth_required');
+  await other.post('/auth/logout');
 
   // ---------- admin creates users ----------
   const mk = async (email: string, role: string, scopeAll: boolean, scopeAreaIds: string[]) => {

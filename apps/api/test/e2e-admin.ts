@@ -9,7 +9,7 @@ import { CONFIG_CHANNEL } from '@citylight/db/notify';
 import { createSql } from '@citylight/db';
 import { SimCabinet } from '../../simulator/src/cabinet';
 import { base32Decode } from '../src/totp';
-import { login, nextCode } from './client';
+import { login, nextCode, reauth } from './client';
 
 const DOMAIN = 'e2e-adm.citylight.test';
 const LTID = 'E2EADM01';
@@ -59,7 +59,8 @@ async function main() {
   const { c: admin } = await login(`admin@${DOMAIN}`, pw);
   const setup = await admin.post('/auth/2fa/setup');
   const secret = base32Decode(setup.data.secret);
-  await admin.post('/auth/2fa/enable', { code: nextCode(secret, { step: 0 }) });
+  const adminStep = { step: 0 };
+  await admin.post('/auth/2fa/enable', { code: nextCode(secret, adminStep) });
   const { c: op } = await login(`op@${DOMAIN}`, pw);
   const sop = await op.post('/auth/2fa/setup');
   await op.post('/auth/2fa/enable', { code: nextCode(base32Decode(sop.data.secret), { step: 0 }) });
@@ -111,6 +112,8 @@ async function main() {
 
     // ---------- decommission ----------
     const before = (await admin.get('/map/stats')).data.cabinets.total;
+    check('Ngừng dùng tủ khi chưa nhập lại 2FA → 403 reauth_required', (await admin.post(`/cabinets/${cid}/decommission`)).data?.code === 'reauth_required');
+    await reauth(admin, secret, adminStep);
     const dc = await admin.post(`/cabinets/${cid}/decommission`);
     const statsAfter = (await admin.get('/map/stats')).data.cabinets.total;
     const cmd = await op.post(`/cabinets/${cid}/commands`, { type: 'AUTO', params: {} }, { 'Idempotency-Key': crypto.randomUUID() });

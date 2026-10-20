@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import QRCode from 'qrcode';
-import { ChevronDown, ChevronRight, Copy } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, ShieldCheck } from 'lucide-react';
 import type { Area, User } from '@citylight/shared';
-import { api, ApiError } from '@/lib/api';
-import { Button, Checkbox, Field, Input, Spinner, toast } from '@/components/ui';
+import { api, ApiError, setReauthPrompt } from '@/lib/api';
+import { Button, Checkbox, Field, Input, Modal, Spinner, toast } from '@/components/ui';
 
 export const PASSWORD_MIN = 10;
 
@@ -180,5 +180,81 @@ export function ScopePicker({ value, onChange, disabled }: { value: ScopeValue; 
       )}
       {!value.scopeAll && !value.scopeAreaIds.length && <p className="text-xs text-st-fault">Chưa chọn khu vực: người dùng sẽ không thấy tủ nào.</p>}
     </div>
+  );
+}
+
+/**
+ * A4 (S45): global "enter your 2FA code" dialog. Any API call answered 403 reauth_required waits on it (lib/api.ts),
+ * then is sent again; one code covers 5 minutes of such actions on this session. Mounted once in AppShell.
+ */
+export function ReauthHost() {
+  const [pending, setPending] = useState<((ok: boolean) => void) | null>(null);
+  const [code, setCode] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setReauthPrompt(
+      () =>
+        new Promise<boolean>((resolve) => {
+          setCode('');
+          setError(null);
+          setPending(() => resolve);
+        }),
+    );
+    return () => setReauthPrompt(null);
+  }, []);
+
+  const close = (ok: boolean) => {
+    pending?.(ok);
+    setPending(null);
+  };
+  const submit = async () => {
+    if (!/^\d{6}$/.test(code)) return setError('Nhập đủ 6 số');
+    setBusy(true);
+    try {
+      await api.reauth(code);
+      close(true);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'invalid_otp') {
+        setError(e.message);
+        setCode('');
+      } else {
+        toast(errText(e), 'error');
+        close(false);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={!!pending}
+      onOpenChange={(v) => !v && close(false)}
+      title={<span className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> Xác thực lại</span>}
+      footer={
+        <>
+          <Button variant="outline" onClick={() => close(false)}>Hủy</Button>
+          <Button loading={busy} onClick={() => void submit()}>Xác nhận</Button>
+        </>
+      }
+    >
+      <form onSubmit={(e) => { e.preventDefault(); void submit(); }} className="space-y-3">
+        <p className="text-sm text-subtle">Thao tác này cần mã xác thực 2 lớp hiện tại trên điện thoại. Mã có hiệu lực cho các thao tác tương tự trong 5 phút.</p>
+        <Field label="Mã 6 số">
+          <Input
+            autoFocus
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={6}
+            className="font-mono tracking-widest"
+            value={code}
+            onChange={(e) => { setCode(e.target.value.replace(/\D/g, '')); setError(null); }}
+          />
+        </Field>
+        {error && <p className="text-sm text-st-offline">{error}</p>}
+      </form>
+    </Modal>
   );
 }

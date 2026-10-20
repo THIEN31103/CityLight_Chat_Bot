@@ -50,3 +50,15 @@ export function nextCode(secret: Buffer, last: { step: number }) {
   return hotp(secret, step);
 }
 
+
+/** A4 (S45): open the 5-minute re-auth window on this session (user administration, IMEI, decommission). */
+export async function reauth(c: Client, secret: Buffer, last: { step: number }) {
+  const r = await c.post('/auth/reauth', { code: await freshCode(secret, last) });
+  if (r.status !== 200) throw new Error(`reauth failed: ${r.status} ${JSON.stringify(r.data)}`);
+}
+
+/** nextCode, waiting (≤ 30 s) when this 30 s window has no unused step left. */
+export async function freshCode(secret: Buffer, last: { step: number }) {
+  while (last.step + 1 > totpStep(Date.now()) + 1) await new Promise((r) => setTimeout(r, 1000));
+  return nextCode(secret, last);
+}

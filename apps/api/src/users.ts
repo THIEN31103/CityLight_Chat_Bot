@@ -6,7 +6,7 @@ import { hash } from '@node-rs/argon2';
 import { z } from 'zod';
 import type { RoleKey, User } from '@citylight/shared';
 import { roleRequires2fa } from '@citylight/shared';
-import { AuthModule, AuthService, RequirePerm, require2faEnforced, type AuthedRequest, type SessionUser } from './auth';
+import { AuthModule, AuthService, RequirePerm, RequireReauth, require2faEnforced, type AuthedRequest, type SessionUser } from './auth';
 import { ApiError } from './errors';
 import { SQL, type Sql } from './infra';
 
@@ -174,19 +174,19 @@ export class UsersController {
   @Get() @RequirePerm('admin.users')
   list(@Req() r: AuthedRequest) { return this.svc.list(r.user!.organizationId); }
 
-  @Post() @RequirePerm('admin.users')
+  @Post() @RequirePerm('admin.users') @RequireReauth()
   create(@Req() r: AuthedRequest, @Body() body: unknown) { return this.svc.create(r.user!, body, r.ip); }
 
-  @Patch(':id') @RequirePerm('admin.users')
+  @Patch(':id') @RequirePerm('admin.users') @RequireReauth()
   update(@Req() r: AuthedRequest, @Param('id') id: string, @Body() body: unknown) { return this.svc.update(r.user!, id, body, r.ip); }
 
-  @Post(':id/reset-password') @HttpCode(200) @RequirePerm('admin.users')
+  @Post(':id/reset-password') @HttpCode(200) @RequirePerm('admin.users') @RequireReauth()
   resetPassword(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.resetPassword(r.user!, id, r.ip); }
 
   @Post(':id/unlock') @HttpCode(200) @RequirePerm('admin.users')
   unlock(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.unlock(r.user!, id, r.ip); }
 
-  @Post(':id/reset-2fa') @HttpCode(200) @RequirePerm('admin.users')
+  @Post(':id/reset-2fa') @HttpCode(200) @RequirePerm('admin.users') @RequireReauth()
   reset2fa(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.reset2fa(r.user!, id, r.ip); }
 }
 

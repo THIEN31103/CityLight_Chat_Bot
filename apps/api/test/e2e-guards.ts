@@ -10,7 +10,7 @@ import { CONFIG_CHANNEL } from '@citylight/db/notify';
 import { createSql } from '@citylight/db';
 import { SimCabinet } from '../../simulator/src/cabinet';
 import { base32Decode } from '../src/totp';
-import { login, nextCode } from './client';
+import { login, nextCode, reauth } from './client';
 
 const DOMAIN = 'e2e-grd.citylight.test';
 const LTID = 'E2EGRD01';
@@ -59,7 +59,9 @@ async function main() {
   await sql`INSERT INTO users (organization_id, email, full_name, password_hash, role, scope_all) VALUES
     (${org}, ${'admin@' + DOMAIN}, 'E2E admin', ${h}, 'admin', true), (${org}, ${'op@' + DOMAIN}, 'E2E operator', ${h}, 'operator', true)`;
   const { c: admin } = await login(`admin@${DOMAIN}`, pw);
-  await admin.post('/auth/2fa/enable', { code: nextCode(base32Decode((await admin.post('/auth/2fa/setup')).data.secret), { step: 0 }) });
+  const adminSecret = base32Decode((await admin.post('/auth/2fa/setup')).data.secret);
+  const adminStep = { step: 0 };
+  await admin.post('/auth/2fa/enable', { code: nextCode(adminSecret, adminStep) });
   const { c: op } = await login(`op@${DOMAIN}`, pw);
   await op.post('/auth/2fa/enable', { code: nextCode(base32Decode((await op.post('/auth/2fa/setup')).data.secret), { step: 0 }) });
 
@@ -99,6 +101,8 @@ async function main() {
     check('Danh sách IMEI 24 h: IMEI thật (đang dùng) + IMEI lạ', cand.data.registered === imei && cand.data.seen.some((s: { imei: string; registered: boolean }) => s.imei === FAKE_IMEI && !s.registered)
       && cand.data.seen.some((s: { imei: string; registered: boolean }) => s.imei === imei && s.registered));
     check('Điều hành không đổi được IMEI → 403', (await op.call('PUT', `/cabinets/${cid}/imei`, { imei: FAKE_IMEI })).status === 403);
+    check('Đổi IMEI khi chưa nhập lại 2FA → 403 reauth_required', (await admin.call('PUT', `/cabinets/${cid}/imei`, { imei: FAKE_IMEI })).data?.code === 'reauth_required');
+    await reauth(admin, adminSecret, adminStep);
     check('IMEI sai định dạng → 422', (await admin.call('PUT', `/cabinets/${cid}/imei`, { imei: '12ab' })).status === 422);
 
     // ---------- modem replaced: accept the new IMEI (the old modem is gone: stop the simulator first) ----------

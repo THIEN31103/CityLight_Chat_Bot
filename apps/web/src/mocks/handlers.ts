@@ -101,6 +101,12 @@ function requireUser() {
   return sessionRef.current;
 }
 
+let reauthUntil = 0;
+/** A4 (S45), like the API: user administration, IMEI and decommission need the 2FA code (mock: 123456) within 5 min. */
+function requireReauth() {
+  if (Date.now() > reauthUntil) throw new MockApiError(403, 'reauth_required', 'Nhập mã xác thực 2 lớp để tiếp tục');
+}
+
 type Info = { request: Request; params: Record<string, string> };
 
 function wrap(fn: (info: Info) => Response | Promise<Response>) {
@@ -168,7 +174,15 @@ export const handlers = [
   })),
   http.post(`${API}/auth/logout`, wrap(() => {
     sessionRef.current = null;
+    reauthUntil = 0;
     return new HttpResponse(null, { status: 204 });
+  })),
+  http.post(`${API}/auth/reauth`, wrap(async ({ request }: { request: Request }) => {
+    requireUser();
+    const body = (await request.json()) as { code: string };
+    if (body.code !== '123456') return problem(422, 'invalid_otp', 'Mã xác thực không đúng (mock: 123456)');
+    reauthUntil = Date.now() + 300_000;
+    return HttpResponse.json({ validForS: 300 });
   })),
   http.get(`${API}/auth/me`, wrap(() => HttpResponse.json(requireUser()))),
   http.post(`${API}/me/password`, wrap(() => {
@@ -341,6 +355,7 @@ export const handlers = [
     return HttpResponse.json({ registered: reg, seen });
   })),
   http.put(`${API}/cabinets/:id/imei`, wrap(async ({ params, request }: { params: Record<string, string>; request: Request }) => {
+    requireReauth();
     const u = requireUser();
     if (u.role !== 'admin') return problem(403, 'forbidden', 'Bạn không có quyền thực hiện thao tác này');
     const c = cabinetById.get(params.id!)! as { id: string; code: string; name: string; imei?: string | null };
@@ -638,6 +653,7 @@ export const handlers = [
   // ---------- Admin ----------
   http.get(`${API}/users`, wrap(() => HttpResponse.json(users))),
   http.post(`${API}/users`, wrap(async ({ request }: { request: Request }) => {
+    requireReauth();
     const u = requireUser();
     const body = (await request.json()) as Partial<User>;
     const role = body.role ?? 'viewer';
@@ -650,6 +666,7 @@ export const handlers = [
     return HttpResponse.json({ user: nu, tempPassword: 'demo' }, { status: 201 });
   })),
   http.patch(`${API}/users/:id`, wrap(async ({ params, request }: { params: Record<string, string>; request: Request }) => {
+    requireReauth();
     const u = requireUser();
     const target = users.find((x) => x.id === params.id)!;
     const body = (await request.json()) as Partial<User>;
@@ -659,12 +676,14 @@ export const handlers = [
     return HttpResponse.json(target);
   })),
   http.post(`${API}/users/:id/reset-password`, wrap(({ params }: { params: Record<string, string> }) => {
+    requireReauth();
     const target = users.find((x) => x.id === params.id)!;
     target.passwordChangeRequired = true;
     return HttpResponse.json({ user: target, tempPassword: 'demo' });
   })),
   http.post(`${API}/users/:id/unlock`, wrap(({ params }: { params: Record<string, string> }) => HttpResponse.json(users.find((x) => x.id === params.id)))),
   http.post(`${API}/users/:id/reset-2fa`, wrap(({ params }: { params: Record<string, string> }) => {
+    requireReauth();
     const target = users.find((x) => x.id === params.id)!;
     target.totpEnabled = false;
     return HttpResponse.json(target);

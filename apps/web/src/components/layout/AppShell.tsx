@@ -11,6 +11,7 @@ import { subscribe } from '@/lib/realtime';
 import { useSession, useUi } from '@/stores/session';
 import { cn, fmtTime } from '@/lib/utils';
 import { Badge, ConfirmHost, ThemeIcon, ToastHost } from '../ui';
+import { ReauthHost } from '../security';
 
 function ServerClock() {
   const { data } = useQuery({ queryKey: ['server-time'], queryFn: api.serverTime, staleTime: Infinity });
@@ -247,6 +248,7 @@ export function AppShell() {
       </main>
       <RealtimeBridge />
       <ConfirmHost />
+      <ReauthHost />
       <ToastHost />
     </div>
   );
