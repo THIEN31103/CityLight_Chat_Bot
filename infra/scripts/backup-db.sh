@@ -1,6 +1,6 @@
 #!/bin/sh
 # Daily VPS backup (M11): database dump + incident photos, kept KEEP_DAYS days in BACKUP_DIR.
-# cron: 15 2 * * * /opt/citylight/infra/scripts/backup-db.sh >> /opt/citylight/backups/backup.log 2>&1
+# cron: 15 2 * * * sh /opt/citylight/infra/scripts/backup-db.sh >> /opt/citylight/backups/backup.log 2>&1
 # Restore (TimescaleDB: into an empty database, wrapped in pre/post restore; drill: restore-drill.sh, full steps docs/runbook.md):
 #   docker exec citylight-db psql -U citylight -d citylight -c 'SELECT timescaledb_pre_restore()'
 #   gunzip -c db-<ts>.sql.gz | docker exec -i citylight-db psql -U citylight -d citylight

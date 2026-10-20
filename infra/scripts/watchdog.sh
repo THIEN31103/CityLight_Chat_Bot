@@ -2,7 +2,7 @@
 # VPS watchdog (M11): checks the stack every 5 min and tells the admins on Telegram when something breaks,
 # again every REPEAT_MIN while it stays broken, and once when it recovers. Cannot report the VPS itself being
 # down: that is the external uptime monitor's job (see README, VPS line).
-# cron: */5 * * * * /opt/citylight/infra/scripts/watchdog.sh >> /opt/citylight/backups/watchdog.log 2>&1
+# cron: */5 * * * * sh /opt/citylight/infra/scripts/watchdog.sh >> /opt/citylight/backups/watchdog.log 2>&1
 #   watchdog.sh --test   send a test message and print the checks
 set -u
 ROOT=${ROOT:-/opt/citylight}

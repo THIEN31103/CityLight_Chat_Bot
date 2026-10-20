@@ -39,7 +39,7 @@ Từ laptop: `npm run e2e:vps` (Playwright, 6 kiểm tra không cần đăng nh�
 
 ## 4. Backup và khôi phục
 
-- Hằng ngày 02:15 (cron user `ubuntu`): `infra/scripts/backup-db.sh` → `/opt/citylight/backups/db-*.sql.gz` + `uploads-*.tar.gz`, giữ 14 ngày. Kiểm: `crontab -l`, `tail backups/backup.log`.
+- Hằng ngày 02:15 (cron user `ubuntu`): `infra/scripts/backup-db.sh` → `/opt/citylight/backups/db-*.sql.gz` + `uploads-*.tar.gz`, giữ 14 ngày. Kiểm: `crontab -l`, `tail backups/backup.log`. Cron gọi script qua `sh …` (2026-10-20: deploy bằng `git archive` từng làm mất quyền thực thi → backup 02:15 và watchdog lỗi "Permission denied" suốt 17 h; script giờ lưu mode 755 trong git).
 - Bản ngoài VPS: Task Scheduler laptop **"CityLight backup pull"** (08:30 hằng ngày + khi đăng nhập, chạy bù) → `D:\CityLightBackups\vps`, giữ 60 ngày, log `pull.log`. Chạy tay: `powershell -ExecutionPolicy Bypass -File infra\scripts\pull-backups.ps1`.
 - Không chép `.env`: mất VPS thì khôi phục được dữ liệu, nhưng `TOTP_ENC_KEY` mới làm mọi user phải cài lại 2FA, và phải đặt lại mật khẩu DB/Redis/EMQX mới.
 - **Diễn tập** (không đụng DB thật): `infra/scripts/restore-drill.sh [file]` dựng container Timescale tạm, nạp dump, so số dòng 34 bảng với DB đang chạy. Lần đầu 2026-10-19: 0 lệch, 2 hypertable, 2 s. Nên chạy lại mỗi tháng.
