@@ -2,7 +2,7 @@
 
 Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2 (broker MQTT + backend + web). Quy mô thiết kế 10.000 tủ. **Dự án production.**
 
-- Spec: [`docs/spec.md`](docs/spec.md) · Quyết định: [`docs/decisions.md`](docs/decisions.md)
+- Tổng quan (trình bày / demo): [`docs/overview.md`](docs/overview.md) · Spec: [`docs/spec.md`](docs/spec.md) · Quyết định: [`docs/decisions.md`](docs/decisions.md)
 - Repo: https://github.com/dgbao2704/server_citylight (thư mục làm việc `D:\Viet_Nghiep_Project\CityLight\Server`).
 - Project overview + nhật ký: workspace firmware `release_citylight/city_light_v2/03 Projects/CityLight Server.md`.
 - Giao thức thiết bị: `docs/device-contract.md` (nguồn sự thật là repo firmware `city_light_v2`, `CLAUDE.md` + `BOARD_LTE_KEY/Mylib/core_if.c`).
@@ -22,9 +22,10 @@ Nền tảng giám sát / điều khiển tủ chiếu sáng CityLight V2 (broke
 | **M7** sự cố | ✅ tạo từ cảnh báo / thủ công, luồng giao → xử lý → đóng do server kiểm (quyền + phạm vi), người xử lý là user Bảo trì, "Việc của tôi", ảnh hiện trường / sau xử lý (magic bytes, 5 MB), Excel `.xlsx` sự cố + cảnh báo theo bộ lọc, báo cáo tháng, nhắc quá hạn qua Telegram; `npm run e2e:incidents` 36/36 |
 | **M8** GIS & quản trị | ✅ tuyến/trụ/đèn trên bản đồ theo khung nhìn, chỉnh sửa nháp (vẽ tuyến, thêm/dời/xóa trụ, sửa đèn) lưu 1 lần có chống ghi đè, sinh trụ theo mét, nhập Excel/CSV có kiểm trước; quản trị khu vực / khu QL / vùng, đăng ký tủ lạ, sửa / ngừng dùng tủ, cấu hình mất kết nối; `npm run e2e:gis` 22/22 (+ tải 200.000 trụ), `npm run e2e:admin` 25/25 |
 | **M9** Tiết giảm | ✅ hồ sơ theo nhóm đèn 3 tầng (tủ > vùng > hệ thống > mặc định), bỏ hồ sơ riêng, kiểm 1–5 thời đoạn liền nhau, ước tính kWh / đ theo đèn GIS thật + giá điện (Cấu hình); đồng bộ / `SET_DIMMING` vẫn 409 tới khi firmware hỗ trợ; `npm run e2e:dimming` 26/26 |
-| M10 Tủ thật | ⏳ đang chạy: tủ bàn thật `CTY0005` → `TM01.0001` **online trên VPS** từ 2026-10-20 (firmware LTE `dev_lte_mqtt_auth_dgb` @ `7600fb0` gửi tài khoản `citylight-cab`, UART2 `LDOM=13.55.91.187`, `LPOR=1883`), `v2-current`. Còn: thử lệnh thật + đo độ trễ, rút 4G, GPS. Trước đó: tủ giả Wokwi CTY0001 (8 lệnh confirmed, ack ~0,5 s) |
+| M10 Tủ thật | ⏳ gần xong: tủ bàn thật `CTY0005` → `TM01.0001` trên VPS (firmware LTE gửi tài khoản `citylight-cab`, UART2 `LDOM=13.55.91.187`, `LPOR=1883`). **87 lệnh qua 4G, 0 lỗi / 0 timeout**, ack 0,7–2,3 s, xác nhận 2,6–4,6 s; E301 có nguyên nhân thấy trên phần cứng (`PLGO=2/3`, 21/10). Còn: rút 4G, GPS, `LDIA`. Board LTE thay 21/10 → IMEI mới đã chấp nhận |
 | **M11** VPS & vận hành | ✅ VPS AWS Lightsail (HTTPS sslip.io, chỉ mở 1883/80/443), backup 02:15 + kéo về laptop hằng ngày, diễn tập khôi phục 34 bảng 0 lệch, watchdog 5 phút báo Telegram, `npm run e2e:browser` 14/14 (`e2e:vps` 6/6 lên production), runbook [`docs/runbook.md`](docs/runbook.md). Còn: monitor bên ngoài VPS (UptimeRobot / alarm Lightsail, cần tài khoản) |
 | Sau M11 (2026-10-19/20) | ✅ chống giả mạo (khóa IMEI E805, S42), MQTT 1883 bắt buộc tài khoản tủ (S43), chỉ đường Google Maps (S44), cảnh báo bảo mật Telegram + nhập lại 2FA cho thao tác nhạy cảm (S45), mã hóa backup `age` (S46, chờ khóa), role **Nhà cung cấp / Quản lý** + phân cấp (S47), icon tủ mới (S48), **Việt / Anh theo từng user** cho web, Telegram, Excel (S49, từ điển `apps/web/src/i18n/`). e2e 14 bộ + unit 129 đạt; VPS chạy `bbe6bef` |
+| 2026-10-21 | ✅ `PLGO` + E301 nhanh và nêu nguyên nhân (S50, migration 0017), thẻ trạng thái mở danh sách tủ + sửa race "chưa đăng ký" (S51), không thử tải 50k + dung lượng đĩa (S52, runbook 8). VPS chạy `7654ee2`; `e2e:logo` 9/9, unit 133. Tổng quan để trình bày: [`docs/overview.md`](docs/overview.md) |
 
 ## Chạy web (M1-UI)
 
