@@ -3,11 +3,14 @@ import { CONFIRMED_BY_TELEMETRY, type CommandType } from '@citylight/shared';
 import {
   FrameError,
   RETRYABLE,
+  TOPICS,
   ackError,
   ackMatches,
   buildCommandFrame,
   buildCommandFrames,
   buildFrame,
+  cabinetCommandTopic,
+  commandTopic,
   confirmRule,
   expectedAckKeys,
   isoVn,
@@ -100,6 +103,16 @@ describe('parseTelemetry', () => {
     expect(parseTelemetry("*#LTID'A&PLGO'2$").unknownKeys).toEqual({});
   });
 
+  it('decodes LFWV (firmware level, S53): positive integer, X / junk / missing = null', () => {
+    expect(parseTelemetry("*#LTID'A&PTIM'X&LFWV'3$").fwLevel).toBe(3);
+    expect(parseTelemetry("*#LTID'A&LFWV'2$").fwLevel).toBe(2);
+    expect(parseTelemetry("*#LTID'A&LFWV'X$").fwLevel).toBeNull();
+    expect(parseTelemetry("*#LTID'A&LFWV'-1$").fwLevel).toBeNull();
+    expect(parseTelemetry("*#LTID'A&LFWV'3.5$").fwLevel).toBeNull();
+    expect(parseTelemetry(TELE_OK).fwLevel).toBeNull();
+    expect(parseTelemetry("*#LTID'A&LFWV'3$").unknownKeys).toEqual({});
+  });
+
   it('keeps unknown keys for future firmware', () => {
     const t = parseTelemetry("*#LTID'A&MKWH'1234.5&LCSQ'21$");
     expect(t.unknownKeys).toEqual({ MKWH: '1234.5', LCSQ: '21' });
@@ -142,6 +155,11 @@ describe('uplinks', () => {
     expect(d.rx).toMatch(/^OK/);
     expect(d.tx).toMatch(/^Chưa kết luận/);
     expect(d.resultLine).toBe('FAIL');
+  });
+  it('command topic: own topic (upper-cased LTID) or the shared one, never both', () => {
+    expect(cabinetCommandTopic('cty0005')).toBe('citylight/cmd/CTY0005');
+    expect(commandTopic('cty0005', true)).toBe('citylight/cmd/CTY0005');
+    expect(commandTopic('CTY0005', false)).toBe(TOPICS.command);
   });
   it('parses the time-sync log frame', () => {
     const d = parseDemo(TIMESYNC);

@@ -423,8 +423,9 @@ async function onTelemetry(payload: string) {
   rt.samples.push({ at: now.getTime(), v: [t.vL1, t.vL2, t.vL3], i: [t.iL1, t.iL2, t.iL3], b1: t.branch1On, b2: t.branch2On });
   while (rt.samples.length && now.getTime() - rt.samples[0]!.at > SWING_WINDOW_MS + 30_000) rt.samples.shift();
   // Old field firmware sends no LQ2/LQ3/PMAN: detect it and flag (E804, commands blocked).
+  // LFWV'3 = the cabinet is subscribed to its own command topic (v3); LFWV'2 or no LFWV = shared topic only (S53).
   const oldFw = !t.keys.includes('LQ2') && !t.keys.includes('PMAN');
-  const fw: FwProfile = oldFw ? 'v2-1307ebc' : rt.fwProfile === 'v2-1307ebc' ? 'v2-current' : rt.fwProfile;
+  const fw: FwProfile = oldFw ? 'v2-1307ebc' : (t.fwLevel ?? 0) >= 3 ? 'v3' : 'v2-current';
   if (fw !== rt.fwProfile) {
     rt.fwProfile = fw;
     await sql`UPDATE cabinets SET fw_profile = ${fw} WHERE id = ${rt.id}`;

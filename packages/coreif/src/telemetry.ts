@@ -7,6 +7,8 @@
 //   CTTE:           1000 = DS18B20 read error
 //   LQ2/LQ3/PMAN:   "X" while PCON=0
 //   PLGO:           0..5 LOGO link diagnosis from PLC_KEY [46] (firmware LOGO_DIAG), "X" while PCON=0
+//   LFWV:           firmware level: 3 = own command topic citylight/cmd/<LTID> subscribed, 2 = shared topic only;
+//                   not sent by older firmware
 import type { GeoPoint } from '@citylight/shared';
 import { parseFrame, type ParsedFrame } from './frame';
 
@@ -48,6 +50,8 @@ export interface TelemetryPatch {
   contactorFault: boolean | null;
   /** PLGO: 0 LOGO OK, 1 lost, 2 ETH silent, 3 TCP down, 4 no Modbus, 5 ETH settings; null = X / not sent. */
   logoLink: number | null;
+  /** LFWV: 3 = the cabinet listens on its own command topic, 2 = shared topic only; null = not sent (older firmware). */
+  fwLevel: number | null;
   /** All keys present in the frame (e.g. old firmware 1307ebc has no LQ2/LQ3/PMAN). */
   keys: string[];
   /** Keys present in the frame that this parser does not know (future firmware). */
@@ -58,7 +62,7 @@ export interface TelemetryPatch {
 const KNOWN = new Set([
   'LTID', 'LDOM', 'LPOR', 'LIME', 'LGPS', 'LTIM', 'LCLI', 'LBAT', 'LACI', 'LERR', 'CTVL', 'CTTE', 'MCON',
   'MPU1', 'MPU2', 'MPU3', 'MPI1', 'MPI2', 'MPI3', 'MCO1', 'MCO2', 'MCO3', 'MCOS', 'MPOW', 'PCON',
-  'PIN5', 'LINE1', 'LINE2', 'LQ2', 'LQ3', 'PMAN', 'PTIM', 'PDOR', 'PFLT', 'PLGO',
+  'PIN5', 'LINE1', 'LINE2', 'LQ2', 'LQ3', 'PMAN', 'PTIM', 'PDOR', 'PFLT', 'PLGO', 'LFWV',
 ]);
 
 const isX = (v: string | undefined) => v === undefined || v === '' || v.toUpperCase() === 'X';
@@ -104,6 +108,12 @@ export function parseIso(v: string | undefined): string | null {
 function logoLink(v: string | undefined): number | null {
   const n = num(v);
   return n !== null && Number.isInteger(n) && n >= 0 && n <= 5 ? n : null;
+}
+
+/** LFWV: small positive integer; anything else = null. */
+function fwLevel(v: string | undefined): number | null {
+  const n = num(v);
+  return n !== null && Number.isInteger(n) && n > 0 && n < 100 ? n : null;
 }
 
 export function telemetryFromFields(p: ParsedFrame): TelemetryPatch {
@@ -157,6 +167,7 @@ export function telemetryFromFields(p: ParsedFrame): TelemetryPatch {
     doorOpen: bool01(f.PDOR),
     contactorFault: bool01(f.PFLT),
     logoLink: logoLink(f.PLGO),
+    fwLevel: fwLevel(f.LFWV),
     keys: [...p.order],
     unknownKeys,
     warnings,

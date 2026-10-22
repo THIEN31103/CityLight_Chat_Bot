@@ -4,8 +4,10 @@
 //  - LQ2/LQ3/PMAN change -> publish after 0.5 s (FAST_FEEDBACK), other changes after 2 s, >= 1 s between frames
 //  - commands on stm32/ec25/cmd: drop frames for other LTIDs, ack JSON on stm32/ec25/echo
 //  - boot JSON on stm32/ec25/boot, LDIA report on stm32/ec25/demo
+//  - cmdTopic (firmware dev_lte_cmd_topic_dgb): also subscribes citylight/cmd/<LTID>; telemetry LFWV'3 when the
+//    broker granted it, LFWV'2 when it refused (shared topic only)
 import mqtt, { type MqttClient } from 'mqtt';
-import { TOPICS, encodeFrame, isoVn, parseFrame, parseIso } from '@citylight/coreif';
+import { TOPICS, cabinetCommandTopic, encodeFrame, isoVn, parseFrame, parseIso } from '@citylight/coreif';
 
 export type Fault =
   | 'none'
@@ -30,6 +32,8 @@ export interface CabinetOptions {
   log?: (msg: string) => void;
   /** default: derived from the LTID (stable across runs: the server locks a cabinet to its first IMEI, S42) */
   imei?: string;
+  /** firmware with its own command topic + LFWV (default false = older firmware: shared topic, no LFWV) */
+  cmdTopic?: boolean;
 }
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -68,6 +72,8 @@ export class SimCabinet {
   private pln2 = false;
   private logoClockOffsetMs = 0;
   private frozenPtim: string | null = null;
+  /** own command topic while the broker grants it (cmdTopic option) */
+  private ownTopic: string | null = null;
   stats = { telemetry: 0, acks: 0, commands: 0 };
 
   constructor(private readonly o: CabinetOptions) {
@@ -94,7 +100,16 @@ export class SimCabinet {
     });
     this.client.on('connect', () => {
       this.bootTick = Date.now();
+      this.ownTopic = null;
       this.client!.subscribe(TOPICS.command, { qos: 0 });
+      if (this.o.cmdTopic) {
+        const own = cabinetCommandTopic(this.ltid);
+        this.client!.subscribe(own, { qos: 0 }, (err, granted) => {
+          // EMQX answers a denied subscription with SUBACK 0x80 (the firmware then stays on the shared topic)
+          this.ownTopic = !err && granted?.[0] && granted[0].qos !== 128 ? own : null;
+          if (!this.ownTopic) this.o.log?.(`[${this.ltid}] own cmd topic refused, shared topic only`);
+        });
+      }
       this.client!.publish(TOPICS.boot, JSON.stringify({ boot: 'ok', imei: this.imei, tick: 3000 + Math.floor(rand(0, 2000)) }));
       this.client!.publish(
         TOPICS.demo,
@@ -103,7 +118,7 @@ export class SimCabinet {
       this.publishTelemetry();
     });
     this.client.on('message', (topic, payload) => {
-      if (topic === TOPICS.command) this.onCommand(payload.toString());
+      if (topic === TOPICS.command || (this.ownTopic !== null && topic === this.ownTopic)) this.onCommand(payload.toString());
     });
     this.client.on('error', (e) => this.o.log?.(`[${this.ltid}] mqtt error: ${e.message}`));
     const every = this.o.telemetryMs ?? 10_000;
@@ -204,6 +219,7 @@ export class SimCabinet {
       pairs.push(['LQ2', plc ? (b1 ? 1 : 0) : 'X'], ['LQ3', plc ? (b2 ? 1 : 0) : 'X'], ['PMAN', plc ? (this.manual ? 1 : 0) : 'X']);
     }
     pairs.push(['PTIM', plc ? this.ptim() : 'X']);
+    if (this.o.cmdTopic) pairs.push(['LFWV', this.ownTopic ? 3 : 2]);
     return encodeFrame(pairs);
   }
 

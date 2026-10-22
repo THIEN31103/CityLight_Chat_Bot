@@ -13,8 +13,11 @@
 
 %% Cabinets (anonymous): uplinks only ...
 {allow, all, publish, ["electrical_cabinets_default", "stm32/ec25/echo", "stm32/ec25/demo", "stm32/ec25/boot"]}.
-%% ... and the shared command topic (frames are filtered by LTID on the device).
-{allow, all, subscribe, ["stm32/ec25/cmd"]}.
+%% ... and the shared command topic (frames are filtered by LTID on the device) plus the per-cabinet
+%% command topics citylight/cmd/<LTID> (LTE firmware CMD_TOPIC_PER_CABINET, decision S53). With one shared
+%% device account a client holding it can still read every cabinet's commands (here or on the shared
+%% topic, as before): per-cabinet accounts + an ACL on ${username} close that later.
+{allow, all, subscribe, ["stm32/ec25/cmd", "citylight/cmd/+"]}.
 
 %% Nobody else may publish commands or read other cabinets' traffic.
 {deny, all}.

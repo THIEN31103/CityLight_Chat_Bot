@@ -112,6 +112,14 @@ cd apps/web && VITE_API_MODE=real npx vite build && scp -r -i ~/.ssh/citylight_a
 Sau đó: mục 2 + `npm run e2e:vps`. Rollback: `git archive <commit cũ>` → `dc build` → `dc up -d` (migration chỉ thêm nên không phải khôi phục DB). Chỉ đổi một file cấu hình: chép riêng file đó, `dc config` để kiểm, rồi `dc up -d --no-deps <service>`.
 **Đổi `infra/Caddyfile`** (hoặc file nào được mount từng file vào container): `docker restart citylight-caddy`. `caddy reload` không đủ, vì `tar` thay file bằng file mới nên container vẫn đọc bản cũ (gặp 2026-10-20 khi thêm CSP).
 Tạo lại `db` làm DB gián đoạn ~7 s; ingest giữ frame trong bộ đệm nên không mất (đã thử 2026-10-19).
+**Đổi ACL EMQX** (`infra/emqx/acl.conf.tmpl`, ví dụ S53 thêm `citylight/cmd/+`): render lại rồi khởi động lại EMQX — mọi tủ rớt MQTT vài giây và tự nối lại trong ≤ 30 s (firmware `link_task`); làm lúc ít lệnh.
+
+```sh
+docker run --rm -v /opt/citylight/infra:/app/infra citylight-server:dev node /app/infra/scripts/gen-emqx-acl.mjs
+grep -n "citylight/cmd" infra/emqx/acl.conf && docker restart citylight-emqx
+```
+
+Thứ tự S53: deploy server + ACL **trước** khi nạp firmware topic riêng (firmware gặp ACL cũ vẫn chạy, chỉ ở topic chung + `LFWV'2`).
 
 ## 6. Sự cố thường gặp
 

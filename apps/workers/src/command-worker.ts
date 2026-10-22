@@ -6,16 +6,21 @@
 //                         \-> failed (rc != 0) | timeout (no ack; idempotent types re-sent once)
 //  - SET_SCHEDULE / PULSE_ON / DIAG end at "acked": the device reports nothing that proves the effect
 //  - every change -> commands row + Redis "command.updated" (Socket.IO) ; every outcome -> activity_logs
+//  - topic (S53): cabinets with capability per_cabinet_topic (fw_profile v3 = telemetry LFWV'3) get their frames on
+//    citylight/cmd/<LTID>, the others on the shared stm32/ec25/cmd; one topic per frame, never both. Every cabinet
+//    on the shared topic receives every frame sent there, so first sends on it are paced (CMD_SHARED_SEND_PER_SEC).
 import mqtt from 'mqtt';
 import { Redis } from 'ioredis';
 import {
-  RETRYABLE, TOPICS, ackError, ackMatches, buildCommandFrames, confirmRule, parseAck, parseTelemetry, type Ack,
+  RETRYABLE, TOPICS, ackError, ackMatches, buildCommandFrames, commandTopic, confirmRule, parseAck, parseTelemetry, type Ack,
 } from '@citylight/coreif';
 import { createSql } from '@citylight/db';
 import { SYSTEM_USER_ID, batchById } from '@citylight/db/batches';
 import { COMMANDS_NOTIFY, EVENTS_CHANNEL, commandById } from '@citylight/db/commands';
 import { CONFIG_CHANNEL } from '@citylight/db/notify';
-import { COMMAND_STATUS_LABELS, describeCommand, errorOf, type AlarmType, type CommandStatus, type CommandType } from '@citylight/shared';
+import {
+  COMMAND_STATUS_LABELS, capabilitiesFor, describeCommand, errorOf, type AlarmType, type CommandStatus, type CommandType, type FwProfile,
+} from '@citylight/shared';
 
 const MQTT_URL = process.env.MQTT_URL ?? 'mqtt://localhost:1883';
 const ACK_TIMEOUT_MS = Number(process.env.CMD_ACK_TIMEOUT_MS ?? 30_000);
@@ -24,6 +29,8 @@ const QUEUE_TTL_MS = Number(process.env.CMD_QUEUE_TTL_MS ?? 120_000);
 /** Batch and scheduler commands queue behind each other (10k cabinets at 20/s = ~8 min). */
 const BULK_TTL_MS = Number(process.env.CMD_BULK_TTL_MS ?? 30 * 60_000);
 const SEND_PER_SEC = Number(process.env.CMD_SEND_PER_SEC ?? 20);
+/** Part of SEND_PER_SEC allowed on the shared topic: the LTE keeps only 2 pending frames during its AT waits. */
+const SHARED_SEND_PER_SEC = Number(process.env.CMD_SHARED_SEND_PER_SEC ?? 3);
 const TICK_MS = 500;
 
 const sql = createSql(process.env.DATABASE_URL, 5);
@@ -135,13 +142,21 @@ function freshFrames(f: Pick<InFlight, 'ltid' | 'type' | 'params' | 'frames'>) {
   return f.type === 'SET_TIME' ? buildCommandFrames(f.ltid, f.type, f.params) : f.frames;
 }
 
-function publishFrame(frame: string) {
-  mq.publish(TOPICS.command, frame, { qos: 0 });
+const perCabinetTopic = (fw: FwProfile) => capabilitiesFor(fw).includes('per_cabinet_topic');
+
+/** fw = the profile read with the command; later frames read it again (ingest keeps it in step with LFWV). */
+async function publishFrame(f: Pick<InFlight, 'cabinetId' | 'ltid'>, frame: string, fw?: FwProfile) {
+  if (!fw) {
+    const [c] = await sql<{ fw_profile: FwProfile }[]>`SELECT fw_profile FROM cabinets WHERE id = ${f.cabinetId}`;
+    fw = c?.fw_profile ?? 'v2-current';
+  }
+  mq.publish(commandTopic(f.ltid, perCabinetTopic(fw)), frame, { qos: 0 });
 }
 
 // ---------------- dispatch ----------------
 
 let sentThisSecond = 0;
+let sharedThisSecond = 0;
 let secondStart = Date.now();
 
 async function dispatch() {
@@ -149,12 +164,13 @@ async function dispatch() {
   if (Date.now() - secondStart >= 1000) {
     secondStart = Date.now();
     sentThisSecond = 0;
+    sharedThisSecond = 0;
   }
   if (sentThisSecond >= SEND_PER_SEC) return;
   const rows = await sql<
-    { id: string; cabinet_id: string; ltid: string; type: CommandType; params: Record<string, unknown>; frame: string; queued_at: Date; online: boolean | null; bulk: boolean }[]
+    { id: string; cabinet_id: string; ltid: string; fw_profile: FwProfile; type: CommandType; params: Record<string, unknown>; frame: string; queued_at: Date; online: boolean | null; bulk: boolean }[]
   >`
-    SELECT m.id, m.cabinet_id, c.ltid, m.type, m.params, m.frame, m.queued_at, s.online,
+    SELECT m.id, m.cabinet_id, c.ltid, c.fw_profile, m.type, m.params, m.frame, m.queued_at, s.online,
            (m.batch_id IS NOT NULL OR m.requested_by = ${SYSTEM_USER_ID}) AS bulk
     FROM commands m JOIN cabinets c ON c.id = m.cabinet_id LEFT JOIN cabinet_state s ON s.cabinet_id = m.cabinet_id
     WHERE m.status = 'queued'
@@ -177,6 +193,8 @@ async function dispatch() {
       continue;
     }
     if (sentThisSecond >= SEND_PER_SEC) break;
+    const shared = !perCabinetTopic(r.fw_profile);
+    if (shared && sharedThisSecond >= SHARED_SEND_PER_SEC) continue; // next tick; own-topic cabinets go on
     const f: InFlight = {
       id: r.id, cabinetId: r.cabinet_id, ltid, type: r.type, params: r.params, frames: r.frame.split('\n'),
       step: 0, attempts: 1, phase: 'ack', deadline: Date.now() + ACK_TIMEOUT_MS, ackRc: {},
@@ -189,8 +207,9 @@ async function dispatch() {
       WHERE id = ${r.id} AND status = 'queued' RETURNING id`;
     if (!claimed.length) continue;
     inflight.set(ltid, f);
-    publishFrame(f.frames[0]!);
+    await publishFrame(f, f.frames[0]!, r.fw_profile);
     sentThisSecond++;
+    if (shared) sharedThisSecond++;
     stats.sent++;
     await emit(f.id);
   }
@@ -238,7 +257,7 @@ async function onAck(payload: string) {
     f.attempts = 1;
     f.deadline = Date.now() + ACK_TIMEOUT_MS;
     await sql`UPDATE commands SET step = ${f.step}, attempts = 1, deadline_at = ${new Date(f.deadline)} WHERE id = ${f.id}`;
-    publishFrame(f.frames[f.step]!);
+    await publishFrame(f, f.frames[f.step]!);
     return;
   }
   stats.acked++;
@@ -290,7 +309,7 @@ async function checkDeadlines() {
       f.frames = freshFrames(f);
       f.deadline = now + ACK_TIMEOUT_MS;
       await sql`UPDATE commands SET attempts = ${f.attempts}, frame = ${f.frames.join('\n')}, deadline_at = ${new Date(f.deadline)} WHERE id = ${f.id}`;
-      publishFrame(f.frames[f.step]!);
+      await publishFrame(f, f.frames[f.step]!);
       stats.resent++;
     } else {
       stats.timeout++;

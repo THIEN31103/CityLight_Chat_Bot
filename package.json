@@ -35,6 +35,7 @@
     "e2e:security": "node --env-file=.env --import tsx apps/api/test/e2e-security.ts",
     "e2e:roles": "node --env-file=.env --import tsx apps/api/test/e2e-roles.ts",
     "e2e:mqtt-auth": "node --env-file=.env --env-file=infra/.env --import tsx apps/api/test/e2e-mqtt-auth.ts",
+    "e2e:cmdtopic": "node --env-file=.env --env-file=infra/.env --import tsx apps/api/test/e2e-cmdtopic.ts",
     "db:seed": "npm run seed -w @citylight/db",
     "sim:register": "npm run register -w @citylight/simulator --",
     "dev:web:hybrid": "npm run dev:hybrid -w @citylight/web",

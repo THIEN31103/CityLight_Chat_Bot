@@ -12,6 +12,19 @@ export const TOPICS = {
   boot: 'stm32/ec25/boot',
 } as const;
 
+/** Prefix of the per-cabinet command topics (firmware CMD_TOPIC_PER_CABINET, telemetry LFWV'3). */
+export const CABINET_COMMAND_PREFIX = 'citylight/cmd/';
+
+/** citylight/cmd/<LTID>; the firmware upper-cases the LTID in its subscription. */
+export function cabinetCommandTopic(ltid: string): string {
+  return `${CABINET_COMMAND_PREFIX}${ltid.toUpperCase()}`;
+}
+
+/** Where a command frame for this cabinet goes: exactly one topic, never both (the device would run it twice). */
+export function commandTopic(ltid: string, perCabinetTopic: boolean): string {
+  return perCabinetTopic ? cabinetCommandTopic(ltid) : TOPICS.command;
+}
+
 export interface Ack {
   /** Cabinet id; missing on old firmware 1307ebc. */
   ltid: string | null;

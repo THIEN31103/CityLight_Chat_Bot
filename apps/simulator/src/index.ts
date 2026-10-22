@@ -12,6 +12,8 @@ const broker = arg('broker', process.env.MQTT_URL ?? 'mqtt://localhost:1883');
 const prefix = arg('prefix', 'SIM');
 const faultRate = Number(arg('fault-rate', '0.08'));
 const telemetryMs = Number(arg('interval', '10000'));
+/** --cmd-topic: firmware with its own command topic citylight/cmd/<LTID> + LFWV (S53) */
+const cmdTopic = process.argv.includes('--cmd-topic');
 
 const FAULTS: Fault[] = ['offline', 'plc_lost', 'bus_down', 'pm_lost', 'ct_lost', 'dh_meter_lost', 'phase_loss', 'temp_sensor_fault', 'logo_lost', 'old_firmware', 'ack_lost'];
 
@@ -30,6 +32,7 @@ for (let i = 0; i < count; i++) {
     fault: pickFault(i, faultRate),
     location: fleetLocation(i),
     telemetryMs,
+    cmdTopic,
     log: (m) => console.error(m),
   });
   cabinets.push(c);
@@ -37,7 +40,7 @@ for (let i = 0; i < count; i++) {
   setTimeout(() => c.start(), Math.floor(i * Math.min(20, 30_000 / count)));
 }
 
-console.log(`[sim] ${count} cabinets -> ${broker} (prefix ${prefix}, fault rate ${faultRate}, interval ${telemetryMs} ms)`);
+console.log(`[sim] ${count} cabinets -> ${broker} (prefix ${prefix}, fault rate ${faultRate}, interval ${telemetryMs} ms${cmdTopic ? ', own cmd topic' : ''})`);
 setInterval(() => {
   const t = cabinets.reduce((s, c) => s + c.stats.telemetry, 0);
   const a = cabinets.reduce((s, c) => s + c.stats.acks, 0);
