@@ -107,6 +107,7 @@ interface DeviceAdapter {
 
 - Adapter mặc định: **`CoreIfV2Adapter`** (topic chung, QoS 0, LTID trong payload — firmware hiện tại).
 - Adapter tương lai: **`CoreIfV3Adapter`** (topic riêng từng tủ `citylight/<LTID>/{tele,cmd,ack}`, QoS 1, user/pass) — thêm khi firmware giai đoạn 2 xong. Tủ chọn adapter theo `fw_profile`.
+- **Đã làm phần lệnh (S53, 2026-10-23):** tủ `v3` (telemetry `LFWV'3`, firmware LTE `dev_lte_cmd_topic_dgb`) nhận lệnh trên `citylight/cmd/<LTID>`; telemetry / ack vẫn ở topic chung, QoS 0.
 - **Bắt buộc trước khi vận hành 10k tủ:** V3. Với V2, mỗi lệnh gửi tới *mọi* tủ subscribe topic chung.
 
 ### 4.1 Lệnh logic → CoreIF
@@ -145,7 +146,8 @@ Quy tắc firmware server phải tôn trọng:
 | `power_full` (S, Q, P từng pha, Hz) | ❌ | ❌ | firmware |
 | `sim_info` (ICCID, CSQ, nhà mạng) | ❌ | ❌ | firmware |
 | `dimming`, `smart_lamps` | ❌ | ❌ | phần cứng mới |
-| `per_cabinet_topic`, `qos1`, `auth` | ❌ | ❌ | giai đoạn 2 |
+| `per_cabinet_topic` | ❌ | ❌ | ✅ (S53: `citylight/cmd/<LTID>`, firmware báo `LFWV'3`) |
+| `qos1`, `auth` riêng từng tủ | ❌ | ❌ | giai đoạn 2 |
 
 Tủ `v2-1307ebc`: **chặn gửi lệnh** từ web (không lọc LTID → ảnh hưởng mọi tủ), chỉ giám sát.
 
