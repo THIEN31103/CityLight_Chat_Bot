@@ -115,7 +115,7 @@ Tạo lại `db` làm DB gián đoạn ~7 s; ingest giữ frame trong bộ đệ
 **Đổi ACL EMQX** (`infra/emqx/acl.conf.tmpl`, ví dụ S53 thêm `citylight/cmd/+`): render lại rồi khởi động lại EMQX — mọi tủ rớt MQTT vài giây và tự nối lại trong ≤ 30 s (firmware `link_task`); làm lúc ít lệnh.
 
 ```sh
-docker run --rm -v /opt/citylight/infra:/app/infra citylight-server:dev node /app/infra/scripts/gen-emqx-acl.mjs
+docker run --rm --user $(id -u):$(id -g) -v /opt/citylight/infra:/app/infra citylight-server:dev node /app/infra/scripts/gen-emqx-acl.mjs
 grep -n "citylight/cmd" infra/emqx/acl.conf && docker restart citylight-emqx
 ```
 

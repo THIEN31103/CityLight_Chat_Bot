@@ -66,7 +66,7 @@ Backup DB 02:15 mỗi đêm + kéo về laptop; diễn tập khôi phục 34 b�
 ## 7. Hiện trạng và giới hạn
 
 - M10 (tủ thật) gần xong: còn thử rút 4G, GPS, `LDIA`.
-- Sau demo 21/10 (đã code 23/10, chưa deploy): topic lệnh riêng mỗi tủ (S53), ẩn lỗi DS18B20 khi tủ không lắp cảm biến (S54), xuất Excel / CSV (S55), lệnh hàng loạt theo vùng + mã tủ + điều khiển (S56). Chờ bàn: nhập bản đồ CAD.
+- Sau demo 21/10 (deploy 23/10): topic lệnh riêng mỗi tủ (S53), ẩn lỗi DS18B20 khi tủ không lắp cảm biến (S54), xuất Excel / CSV (S55), lệnh hàng loạt theo vùng + mã tủ + điều khiển (S56). Chờ bàn: nhập bản đồ CAD.
 - Tiết giảm chờ firmware / phần cứng dim. Lịch chỉ xác nhận được "đã nhận" (tủ chưa gửi lịch đang chạy).
 - **Đĩa**: đổi chính sách lưu trữ hoặc thêm đĩa trước khi vượt ~1.000 tủ (runbook mục 8).
 - MQTT dùng chung một mật khẩu; tiếp theo: mỗi tủ một mật khẩu, rồi TLS. Chưa có tên miền riêng, chưa có monitor ngoài, backup chưa mã hóa (chờ khóa).
