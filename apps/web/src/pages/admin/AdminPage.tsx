@@ -438,11 +438,13 @@ function DevicesAdmin() {
   const districts = tree.data?.areas.filter((a) => a.kind === 'district') ?? [];
   const blank = { ltid: '', code: '', name: '', lat: '', lng: '', districtId: '', wardId: '', zone1Id: '', address: '', imei: '' };
   const [form, setForm] = useState<typeof blank | null>(null);
+  const [tempSensor, setTempSensor] = useState(false);
   // the device's own GPS fix pre-fills the position (wrong hand-typed coordinates are the usual E802 cause)
   const [fromGps, setFromGps] = useState(false);
   // S42: the IMEI becomes the cabinet's identity; two IMEIs under one LTID = the admin picks the real one
   const [imeiChoices, setImeiChoices] = useState<string[]>([]);
   const review = (d: UnknownDevice) => {
+    setTempSensor(false);
     setFromGps(!!d.gps);
     setImeiChoices(d.otherImei && d.imei ? [d.imei, d.otherImei] : []);
     setForm({ ...blank, ltid: d.ltid, lat: d.gps ? d.gps.lat.toFixed(7) : '', lng: d.gps ? d.gps.lng.toFixed(7) : '', imei: d.otherImei ? '' : (d.imei ?? '') });
@@ -453,7 +455,7 @@ function DevicesAdmin() {
       api.registerCabinet({
         ltid: form!.ltid, code: form!.code, name: form!.name, location: { lat: Number(form!.lat), lng: Number(form!.lng) },
         districtId: form!.districtId || null, wardId: form!.wardId || null, zone1Id: form!.zone1Id || null, address: form!.address || null,
-        imei: form!.imei || null,
+        imei: form!.imei || null, hasTempSensor: tempSensor,
       }),
     onSuccess: () => {
       toast(fill(dictNow(ADMIN).devices.registered, { code: form!.code }), 'success');
@@ -466,7 +468,7 @@ function DevicesAdmin() {
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setForm((f) => ({ ...f!, [k]: e.target.value }));
   return (
     <>
-      <PageHeader title={t.title} subtitle={t.subtitle} actions={<Button onClick={() => { setFromGps(false); setForm(blank); }}><Plus className="h-4 w-4" /> {t.registerNew}</Button>} />
+      <PageHeader title={t.title} subtitle={t.subtitle} actions={<Button onClick={() => { setFromGps(false); setTempSensor(false); setForm(blank); }}><Plus className="h-4 w-4" /> {t.registerNew}</Button>} />
       <Card>
         <CardHeader title={t.unknown} />
         <table className="w-full text-sm">
@@ -538,6 +540,9 @@ function DevicesAdmin() {
                 {zones.data?.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
               </Select>
             </Field>
+            <div className="col-span-2">
+              <Checkbox label={t.tempSensor} checked={tempSensor} onChange={setTempSensor} />
+            </div>
           </div>
         )}
       </Modal>

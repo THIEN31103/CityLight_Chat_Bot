@@ -132,6 +132,7 @@ for (let i = 0; i < CABINET_COUNT; i++) {
     zone2Id: r() < 0.15 ? 'z5' : null,
     location,
     fwProfile,
+    hasTempSensor: i % 5 === 0, // no r() call: keeps the rest of the seeded fleet unchanged
     imei: `86${Math.floor(between(1e12, 9e12))}`,
     simIccid: null,
     photoUrl: null,

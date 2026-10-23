@@ -175,6 +175,8 @@ export function LeakTempTab({ detail }: { detail: CabinetDetail }) {
   const s = detail.state;
   const t = detail.thresholds;
   const d = useDict(CABINET).leak;
+  // S54: no DS18B20 on this cabinet's CT_KEY -> no reading, threshold or chart
+  const fitted = detail.cabinet.hasTempSensor;
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2">
@@ -185,12 +187,18 @@ export function LeakTempTab({ detail }: { detail: CabinetDetail }) {
         </Card>
         <Card className="p-4">
           <div className="text-xs text-subtle">{d.temp}</div>
-          <div className={`text-2xl font-semibold ${s.tempC !== null && s.tempC > t.tempC.value ? 'text-st-offline' : ''}`}>{fmtNum(s.tempC, 0, '°C')}</div>
-          <div className="text-xs text-subtle">{d.threshold} {t.tempC.value} °C</div>
+          {fitted ? (
+            <>
+              <div className={`text-2xl font-semibold ${s.tempC !== null && s.tempC > t.tempC.value ? 'text-st-offline' : ''}`}>{fmtNum(s.tempC, 0, '°C')}</div>
+              <div className="text-xs text-subtle">{d.threshold} {t.tempC.value} °C</div>
+            </>
+          ) : (
+            <div className="mt-1 text-sm text-subtle">{d.noTempSensor}</div>
+          )}
         </Card>
       </div>
       <ChartTab cabinetId={detail.cabinet.id} metrics={['leakMa']} names={[d.leakSeries]} unit="mA" title={d.leakTitle} />
-      <ChartTab cabinetId={detail.cabinet.id} metrics={['tempC']} names={[d.tempSeries]} unit="°C" title={d.tempTitle} />
+      {fitted && <ChartTab cabinetId={detail.cabinet.id} metrics={['tempC']} names={[d.tempSeries]} unit="°C" title={d.tempTitle} />}
     </div>
   );
 }

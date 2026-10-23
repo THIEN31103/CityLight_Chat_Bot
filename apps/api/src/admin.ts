@@ -31,11 +31,15 @@ const CabinetBody = z.object({
   managementUnitId: uuid.nullish(),
   zone1Id: uuid.nullish(),
   fwProfile: z.enum(['v2-1307ebc', 'v2-current', 'v3']).default('v2-current'),
+  /** DS18B20 fitted on CT_KEY (S54); none of the current cabinets has one */
+  hasTempSensor: z.boolean().default(false),
   notes: z.string().trim().max(2000).nullish(),
   /** only when registering: which IMEI to trust when the unknown device showed two (S42); default = the one it reported */
   imei: Imei.nullish(),
 });
-const CabinetPatch = CabinetBody.partial().omit({ imei: true }).omit({ fwProfile: true }).extend({ fwProfile: z.enum(['v2-1307ebc', 'v2-current', 'v3']).optional() });
+const CabinetPatch = CabinetBody.partial()
+  .omit({ imei: true, fwProfile: true, hasTempSensor: true })
+  .extend({ fwProfile: z.enum(['v2-1307ebc', 'v2-current', 'v3']).optional(), hasTempSensor: z.boolean().optional() });
 
 export const SETTING_DEFAULTS = { offline_after_s: OFFLINE_AFTER_MS / 1000, lamp_group_labels: LAMP_GROUP_LABELS as Record<string, string>, price_per_kwh: 2000 };
 const SettingsBody = z.object({
@@ -222,10 +226,10 @@ export class AdminService {
     const imei = b.imei ?? unk?.imei ?? null;
     const id = await this.sql.begin(async (tx) => {
       const r = (await tx<{ id: string }[]>`
-        INSERT INTO cabinets (organization_id, ltid, code, name, address, street, ward_id, district_id, management_unit_id, zone1_id, location, fw_profile, notes, imei)
+        INSERT INTO cabinets (organization_id, ltid, code, name, address, street, ward_id, district_id, management_unit_id, zone1_id, location, fw_profile, has_temp_sensor, notes, imei)
         VALUES (${u.organizationId}, ${b.ltid}, ${b.code}, ${b.name}, ${b.address ?? null}, ${b.street ?? null}, ${b.wardId ?? null}, ${districtId},
-                ${b.managementUnitId ?? null}, ${b.zone1Id ?? null}, ST_SetSRID(ST_MakePoint(${b.location.lng}, ${b.location.lat}), 4326), ${b.fwProfile}, ${b.notes ?? null},
-                ${imei})
+                ${b.managementUnitId ?? null}, ${b.zone1Id ?? null}, ST_SetSRID(ST_MakePoint(${b.location.lng}, ${b.location.lat}), 4326), ${b.fwProfile},
+                ${b.hasTempSensor}, ${b.notes ?? null}, ${imei})
         RETURNING id`)[0]!;
       await tx`INSERT INTO cabinet_state (cabinet_id, status, online) VALUES (${r.id}, 'offline', false) ON CONFLICT DO NOTHING`;
       await tx`DELETE FROM unknown_devices WHERE upper(ltid) = ${b.ltid}`;
@@ -260,6 +264,7 @@ export class AdminService {
         zone1_id = CASE WHEN ${set('zone1Id')} THEN ${b.zone1Id ?? null}::uuid ELSE zone1_id END,
         location = CASE WHEN ${set('location')} THEN ST_SetSRID(ST_MakePoint(${b.location?.lng ?? 0}, ${b.location?.lat ?? 0}), 4326) ELSE location END,
         fw_profile = CASE WHEN ${set('fwProfile')} THEN ${b.fwProfile ?? 'v2-current'}::fw_profile ELSE fw_profile END,
+        has_temp_sensor = CASE WHEN ${set('hasTempSensor')} THEN ${b.hasTempSensor ?? false} ELSE has_temp_sensor END,
         notes = CASE WHEN ${set('notes')} THEN ${b.notes ?? null} ELSE notes END,
         updated_at = now()
       WHERE id = ${cid}`;

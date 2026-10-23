@@ -218,6 +218,8 @@ export interface CabinetInput {
   managementUnitId?: string | null;
   zone1Id?: string | null;
   notes?: string | null;
+  /** DS18B20 fitted (S54), default false */
+  hasTempSensor?: boolean;
   /** the IMEI to trust when the unknown device showed two (S42) */
   imei?: string | null;
 }

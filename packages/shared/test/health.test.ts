@@ -19,6 +19,7 @@ const base: HealthInput = {
   leakMa: 12,
   tempC: 35,
   tempSensorFault: false,
+  tempSensorInstalled: true,
   gpsDevice: { lat: 10.77, lng: 106.7 },
   batteryMv: 4000,
   deviceTime: '2026-10-17T11:59:00Z',
@@ -67,6 +68,8 @@ describe('activeHealthAlarms', () => {
   it('sensor, gps, firmware, flapping', () => {
     expect(types({ tempSensorFault: true })).toEqual(['temp_sensor_fault']);
     expect(types({ tempSensorFault: true, busStatus: '3' })).toEqual(['ct_lost']);
+    // S54: no DS18B20 fitted -> CTTE=1000 is not a fault
+    expect(types({ tempSensorFault: true, tempSensorInstalled: false })).toEqual([]);
     expect(types({ gpsDevice: null })).toEqual(['gps_nofix']);
     expect(types({ gpsDevice: null, lastBootAt: '2026-10-17T11:55:00Z' })).toEqual([]);
     expect(types({ fwProfile: 'v2-1307ebc' })).toEqual(['fw_unsafe']);
@@ -85,6 +88,11 @@ describe('deriveCabinetStatus', () => {
 });
 
 describe('buildDiagnostics', () => {
+  it('temperature sensor not fitted: unsupported, not E503 (S54)', () => {
+    const temp = (h: Partial<HealthInput>) => buildDiagnostics({ ...base, ...h }, NOW).find((i) => i.evidence.startsWith('CTTE') || i.evidence.startsWith('has_temp'))!;
+    expect(temp({ tempSensorFault: true, tempSensorInstalled: false })).toMatchObject({ status: 'unsupported', code: null });
+    expect(temp({ tempSensorFault: true })).toMatchObject({ status: 'fault', code: 'E503' });
+  });
   it('marks dependents unknown when their bridge is lost', () => {
     const d = buildDiagnostics({ ...base, busStatus: '4', plcOnline: false, pmOnline: false }, NOW);
     const by = Object.fromEntries(d.map((i) => [i.subsystem, i]));

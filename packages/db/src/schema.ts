@@ -89,6 +89,8 @@ export const cabinets = pgTable(
     zone2Id: uuid('zone2_id').references(() => zones.id),
     location: point('location').notNull(),
     fwProfile: fwProfileEnum('fw_profile').notNull().default('v2-current'),
+    /** DS18B20 fitted on CT_KEY (S54): false = CTTE ignored (no E503 / over_temp, no temperature chart) */
+    hasTempSensor: boolean('has_temp_sensor').notNull().default(false),
     imei: text('imei'),
     simIccid: text('sim_iccid'),
     photoUrl: text('photo_url'),

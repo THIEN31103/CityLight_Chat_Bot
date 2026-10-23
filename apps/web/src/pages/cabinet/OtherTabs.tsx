@@ -222,6 +222,24 @@ export function LampsTab({ detail, onLocate }: { detail: Detail; onLocate: (p: G
 
 // ---------- Thông tin ----------
 
+/** S54: DS18B20 fitted or not; device admins switch it here, everyone else reads it. */
+function TempSensorToggle({ cabinetId, fitted }: { cabinetId: string; fitted: boolean }) {
+  const qc = useQueryClient();
+  const canEdit = useSession((x) => x.can('admin.devices'));
+  const t = useDict(CABINET).info;
+  const save = useMutation({
+    mutationFn: (v: boolean) => api.updateCabinet(cabinetId, { hasTempSensor: v }),
+    onSuccess: (_r, v) => {
+      const tt = dictNow(CABINET).info;
+      toast(fill(tt.tempSensorSaved, { state: (v ? tt.tempSensorFitted : tt.tempSensorNone).toLowerCase() }), 'success');
+      qc.invalidateQueries({ queryKey: ['cabinet', cabinetId] });
+      qc.invalidateQueries({ queryKey: ['diagnostics', cabinetId] });
+    },
+  });
+  if (!canEdit) return <span>{fitted ? t.tempSensorFitted : t.tempSensorNone}</span>;
+  return <Checkbox label={fitted ? t.tempSensorFitted : t.tempSensorNone} checked={fitted} disabled={save.isPending} onChange={(v) => save.mutate(v)} />;
+}
+
 export function InfoTab({ detail, onLocate }: { detail: Detail; onLocate: (p: GeoPoint) => void }) {
   const { cabinet: c, state: s } = detail;
   const can = useSession((x) => x.can('cabinet.configure'));
@@ -250,6 +268,7 @@ export function InfoTab({ detail, onLocate }: { detail: Detail; onLocate: (p: Ge
           <KV label={t.battery} value={fmtNum(s.batteryMv, 0, 'mV')} />
           <KV label={t.sim} value={<span className="text-subtle">{dict.monitor.waitFw}</span>} />
           <KV label={t.installed} value={fmtTime(c.installedAt, 'DD/MM/YYYY')} />
+          <KV label={t.tempSensor} value={<TempSensorToggle cabinetId={c.id} fitted={c.hasTempSensor} />} />
         </div>
       </Card>
       <Card>

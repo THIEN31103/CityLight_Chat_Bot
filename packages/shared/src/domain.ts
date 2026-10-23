@@ -63,6 +63,8 @@ export interface Cabinet {
   zone2Id: string | null;
   location: GeoPoint;
   fwProfile: FwProfile;
+  /** DS18B20 fitted on CT_KEY (S54); false = temperature not judged / not shown */
+  hasTempSensor: boolean;
   imei: string;
   simIccid: string | null;
   photoUrl: string | null;

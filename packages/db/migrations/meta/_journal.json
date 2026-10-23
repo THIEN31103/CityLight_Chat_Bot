@@ -127,6 +127,13 @@
       "when": 1792519837286,
       "tag": "0017_logo_link",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792718878370,
+      "tag": "0018_temp_sensor",
+      "breakpoints": true
     }
   ]
 }

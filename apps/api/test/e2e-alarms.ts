@@ -142,6 +142,9 @@ async function main() {
     // simulators of an earlier e2e must be seen offline first, or their "mất kết nối" alarms land in our messages
     await waitFor('earlier simulators offline', async () => (await sql`SELECT 1 FROM cabinet_state WHERE online LIMIT 1`).length === 0, 120_000);
     await sleep(5000); // their offline alarms are batched and sent before we start counting
+    // over_temp needs a fitted DS18B20 (S54: cabinets have none by default)
+    await sql`UPDATE cabinets SET has_temp_sensor = true WHERE id IN (${A.id}, ${B.id})`;
+    await redis.publish('cl:config', '{"type":"registry"}');
     for (const ltid of [A.ltid, B.ltid]) sims.push(new SimCabinet({ ltid, brokerUrl: MQTT_URL, fault: 'none', location: { lat: 10.78, lng: 106.7 }, telemetryMs: 2000 }));
     sims.forEach((s) => s.start());
     await waitFor('sims online', async () => (await sql`SELECT 1 FROM cabinet_state WHERE online AND cabinet_id IN (${A.id}, ${B.id})`).length === 2, 30_000);
@@ -198,7 +201,7 @@ async function main() {
     check('Báo "hết" cho mức Cao/Nghiêm trọng, không báo hết cho mức Thấp', clrA.includes('Hết: E403') && !clrA.includes('E502') && !clrA.includes('E803'), clrA.replace(/\n/g, ' / '));
     // only messages about this test's two cabinets: simulators of an earlier e2e going offline also alert
     const ours = sent.slice(before).filter((m) => m.text.includes(A.code) || m.text.includes(B.code) || m.text.includes('cảnh báo mới'));
-    check('Không gửi tin thừa về 2 tủ của bài', ours.length <= 6, `${ours.length} tin`);
+    check('Không gửi tin thừa về 2 tủ của bài', ours.length <= 6, `${ours.length} tin: ${ours.map((m) => m.text.split('\n')[0]).join(' / ')}`);
 
     // ---------- stop / unlink ----------
     tgSay(1002, '/stop');
@@ -213,6 +216,8 @@ async function main() {
     tg.close();
     const ids = (await sql<{ id: string }[]>`SELECT id FROM cabinets WHERE ltid IN ('SIM9001', 'SIM9020')`).map((c) => c.id);
     await sql`DELETE FROM thresholds WHERE cabinet_id = ANY(${ids}::uuid[])`;
+    await sql`UPDATE cabinets SET has_temp_sensor = false WHERE id = ANY(${ids}::uuid[])`;
+    await redis.publish('cl:config', '{"type":"registry"}');
     await redis.publish('cl:config', '{"type":"thresholds"}');
     await sql`DELETE FROM users WHERE email LIKE ${'%@' + DOMAIN}`;
     // the real worker (if any) owns the bot key: drop the fake bot's entry

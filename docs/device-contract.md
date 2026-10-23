@@ -38,7 +38,7 @@ Tóm tắt phần server cần biết. Nguồn sự thật: `../../CLAUDE.md` (m
   - `PLGO` (firmware `LOGO_DIAG`, nhánh `dev_plc_logo_diag_dgb`) = chẩn đoán đường PLC_KEY → LOGO, thanh ghi PLC `[46]`: 0 LOGO trả lời, 1 mất LOGO / chưa rõ nguyên nhân, 2 module ETH không trả lời AT (UART PLC_KEY ↔ ETH / module), 3 ETH sống nhưng mất TCP tới LOGO (cáp, nguồn LOGO, IP), 4 có TCP nhưng LOGO không trả Modbus, 5 ETH sai WAN/SOCK. `X` khi `PCON'0`. Server: `PLGO` 2..5 → E301 ngay; `PTIM'X` > 15 s hoặc phút PTIM đứng > 150 s → E301 (firmware cũ).
   - `LFWV` (S53) = mức firmware: `3` = tủ đang subscribe được `citylight/cmd/<LTID>`, `2` = chỉ topic chung (broker từ chối topic riêng hoặc tắt `CMD_TOPIC_PER_CABINET`); firmware cũ không gửi. Ingest đặt `fw_profile` theo mỗi frame: `3` → `v3` (capability `per_cabinet_topic`), còn lại → `v2-current` (`v2-1307ebc` vẫn nhận theo thiếu `LQ2`/`PMAN`). Đặt tay `v3` trên web sẽ bị frame kế tiếp ghi đè.
   - `LGPS'X` trước fix GNSS đầu tiên.
-  - `CTVL` dòng rò mA, `CTTE` nhiệt độ °C (1000 = lỗi DS18B20). `MPU/MPI/MCO/MCOS/MPOW` từ đồng hồ DH (0 khi đồng hồ mất).
+  - `CTVL` dòng rò mA, `CTTE` nhiệt độ °C (1000 = lỗi DS18B20; tủ hiện tại không lắp DS18B20 nên luôn 1000 — server chỉ xét `CTTE` khi `cabinets.has_temp_sensor`, S54). `MPU/MPI/MCO/MCOS/MPOW` từ đồng hồ DH (0 khi đồng hồ mất).
 - Chưa gửi: `PDOR` (cửa), `PFLT` (lỗi contactor) — `TELE_SEND_DOOR_FAULT 0`.
 - Chưa có: lịch đang chạy trong LOGO (T10..T22).
 

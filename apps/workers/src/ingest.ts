@@ -66,7 +66,7 @@ const byId = new Map<string, Runtime>();
 async function loadCabinets(ids: string[] | null) {
   const rows = await sql<
     {
-      id: string; ltid: string; code: string; name: string; fw_profile: FwProfile;
+      id: string; ltid: string; code: string; name: string; fw_profile: FwProfile; has_temp_sensor: boolean;
       status: string | null; online: boolean | null; last_seen_at: Date | null; last_boot_at: Date | null; bus_status: string | null;
       branch1_on: boolean | null; branch2_on: boolean | null; manual_mode: boolean | null; plc_online: boolean | null; pm_online: boolean | null;
       v_l1: number | null; v_l2: number | null; v_l3: number | null; i_l1: number | null; i_l2: number | null; i_l3: number | null;
@@ -76,7 +76,7 @@ async function loadCabinets(ids: string[] | null) {
       zone1_id: string | null; decl_lat: number; decl_lng: number; imei: string | null;
     }[]
   >`
-    SELECT c.id, c.ltid, c.code, c.name, c.fw_profile, c.zone1_id, ST_Y(c.location) AS decl_lat, ST_X(c.location) AS decl_lng, c.imei,
+    SELECT c.id, c.ltid, c.code, c.name, c.fw_profile, c.has_temp_sensor, c.zone1_id, ST_Y(c.location) AS decl_lat, ST_X(c.location) AS decl_lng, c.imei,
            s.status, s.online, s.last_seen_at, s.last_boot_at, s.bus_status, s.branch1_on, s.branch2_on, s.manual_mode,
            s.plc_online, s.pm_online, s.v_l1, s.v_l2, s.v_l3, s.i_l1, s.i_l2, s.i_l3, s.leak_ma, s.temp_c, s.temp_sensor_fault,
            s.battery_mv, ST_Y(s.gps_device) AS lat, ST_X(s.gps_device) AS lng, s.device_time, s.device_time_changed_at,
@@ -91,7 +91,7 @@ async function loadCabinets(ids: string[] | null) {
       status: r.status ?? 'offline', online: !!r.online, lastSeenAt: iso(r.last_seen_at), lastBootAt: iso(r.last_boot_at),
       busStatus: r.bus_status, plcOnline: r.plc_online, pmOnline: r.pm_online, branch1On: r.branch1_on, branch2On: r.branch2_on,
       manualMode: r.manual_mode, vL1: r.v_l1, vL2: r.v_l2, vL3: r.v_l3, iL1: r.i_l1, iL2: r.i_l2, iL3: r.i_l3,
-      leakMa: r.leak_ma, tempC: r.temp_c, tempSensorFault: !!r.temp_sensor_fault, batteryMv: r.battery_mv,
+      leakMa: r.leak_ma, tempC: r.temp_c, tempSensorFault: !!r.temp_sensor_fault, tempSensorInstalled: r.has_temp_sensor, batteryMv: r.battery_mv,
       gpsDevice: r.lat !== null && r.lng !== null ? { lat: r.lat, lng: r.lng } : null, sats: null,
       deviceTime: iso(r.device_time), deviceTimeChangedAt: iso(r.device_time_changed_at),
       deviceTimeMissingSince: iso(r.device_time_missing_since), logoLink: r.logo_link,
@@ -143,8 +143,8 @@ async function dropRegisteredUnknowns() {
  * position, decommissioned ones dropped. Runtime state of unchanged cabinets is kept.
  */
 async function refreshRegistry() {
-  const rows = await sql<{ id: string; ltid: string; code: string; name: string; zone1_id: string | null; fw_profile: FwProfile; lat: number; lng: number; imei: string | null }[]>`
-    SELECT id, ltid, code, name, zone1_id, fw_profile, ST_Y(location) AS lat, ST_X(location) AS lng, imei FROM cabinets WHERE active`;
+  const rows = await sql<{ id: string; ltid: string; code: string; name: string; zone1_id: string | null; fw_profile: FwProfile; has_temp_sensor: boolean; lat: number; lng: number; imei: string | null }[]>`
+    SELECT id, ltid, code, name, zone1_id, fw_profile, has_temp_sensor, ST_Y(location) AS lat, ST_X(location) AS lng, imei FROM cabinets WHERE active`;
   const seen = new Set<string>();
   const fresh: string[] = [];
   for (const r of rows) {
@@ -160,7 +160,10 @@ async function refreshRegistry() {
       rt.ltid = ltid;
       byLtid.set(ltid, rt);
     }
-    Object.assign(rt, { code: r.code, name: r.name, zoneId: r.zone1_id, fwProfile: r.fw_profile, declaredLocation: { lat: Number(r.lat), lng: Number(r.lng) } });
+    Object.assign(rt, {
+      code: r.code, name: r.name, zoneId: r.zone1_id, fwProfile: r.fw_profile, tempSensorInstalled: r.has_temp_sensor,
+      declaredLocation: { lat: Number(r.lat), lng: Number(r.lng) },
+    });
     // admin accepted a new IMEI or asked to re-learn it: E805 closes on the next sweep
     if (normImei(r.imei) !== rt.imei) {
       rt.imei = normImei(r.imei);

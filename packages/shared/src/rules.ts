@@ -188,7 +188,7 @@ export function measurementAlarms(
 
   // ----- CT_KEY sensors -----
   if (t.leakMa.enabled && h.leakMa !== null && h.leakMa > t.leakMa.value) out.set('leak_current', T.leak(h.leakMa, t.leakMa.value));
-  if (t.tempC.enabled && !h.tempSensorFault && h.tempC !== null && h.tempC > t.tempC.value) out.set('over_temp', T.temp(h.tempC, t.tempC.value));
+  if (t.tempC.enabled && h.tempSensorInstalled && !h.tempSensorFault && h.tempC !== null && h.tempC > t.tempC.value) out.set('over_temp', T.temp(h.tempC, t.tempC.value));
   if (t.batteryLowMv.enabled && h.batteryMv !== null && h.batteryMv > 0 && h.batteryMv < t.batteryLowMv.value)
     out.set('battery_low', T.battery(h.batteryMv, t.batteryLowMv.value));
 

@@ -20,6 +20,8 @@ export interface HealthInput {
   leakMa: number | null;
   tempC: number | null;
   tempSensorFault: boolean;
+  /** cabinets.has_temp_sensor (S54): false = no DS18B20 fitted, CTTE is not judged. */
+  tempSensorInstalled: boolean;
   gpsDevice: GeoPoint | null;
   batteryMv: number | null;
   deviceTime: string | null;
@@ -161,7 +163,7 @@ export function activeHealthAlarms(h: HealthInput, now = Date.now(), lang: Lang 
   if (logoLost(h, now)) out.set('logo_lost', logoLostText(h, lang));
   if (dhMeterLost(h)) out.set('dh_meter_lost', T.dhMeterLost);
   if (phaseLoss(h)) out.set('phase_loss', T.phaseLoss(n(h.vL1), n(h.vL2), n(h.vL3)));
-  if (h.tempSensorFault && !ctLost(h.busStatus)) out.set('temp_sensor_fault', T.tempSensor);
+  if (h.tempSensorInstalled && h.tempSensorFault && !ctLost(h.busStatus)) out.set('temp_sensor_fault', T.tempSensor);
   if (!h.gpsDevice && h.lastBootAt && now - Date.parse(h.lastBootAt) > GPS_GRACE_MS) out.set('gps_nofix', T.gpsNofix);
   if (h.fwProfile === 'v2-1307ebc') out.set('fw_unsafe', T.fwUnsafe);
   return out;
@@ -232,6 +234,7 @@ export const DIAGNOSTICS_TEXT = defineDict(
     ctFault: 'Không có dòng rò và nhiệt độ tủ.',
     needCt: 'Cần CT_KEY trả lời mới đánh giá được.',
     tempFault: 'Đứt dây OneWire hoặc cảm biến hỏng.',
+    tempNotFitted: 'Tủ không lắp cảm biến nhiệt: bỏ qua CTTE. Bật "Có cảm biến nhiệt" trong thông tin tủ khi lắp.',
     tempOk: 'Đang đọc được.',
     gpsNoFix: 'Chưa có fix GNSS.',
     gpsOk: 'Có fix.',
@@ -297,6 +300,7 @@ export const DIAGNOSTICS_TEXT = defineDict(
     ctFault: 'No leakage current or cabinet temperature.',
     needCt: 'Can be assessed only when CT_KEY responds.',
     tempFault: 'OneWire wire broken or sensor faulty.',
+    tempNotFitted: 'No temperature sensor fitted: CTTE is ignored. Turn on "Temperature sensor fitted" in the cabinet info once it is installed.',
     tempOk: 'Reading normally.',
     gpsNoFix: 'No GNSS fix yet.',
     gpsOk: 'Fix acquired.',
@@ -357,7 +361,8 @@ export function buildDiagnostics(h: HealthInput, now = Date.now(), lang: Lang = 
   else if (ctLost(h.busStatus)) add(S.ct, R.ct, 'fault', 'E203', `LCLI=${h.busStatus}`, T.ctFault);
   else add(S.ct, R.ct, 'ok', null, `CTVL=${h.leakMa ?? 'X'} mA`, T.responding);
 
-  if (stale || ctLost(h.busStatus)) add(S.temp, R.temp, 'unknown', null, 'CTTE=X', T.needCt);
+  if (!h.tempSensorInstalled) add(S.temp, R.temp, 'unsupported', null, 'has_temp_sensor = false', T.tempNotFitted);
+  else if (stale || ctLost(h.busStatus)) add(S.temp, R.temp, 'unknown', null, 'CTTE=X', T.needCt);
   else if (h.tempSensorFault) add(S.temp, R.temp, 'fault', 'E503', 'CTTE=1000', T.tempFault);
   else add(S.temp, R.temp, 'ok', null, `CTTE=${h.tempC ?? 'X'} °C`, T.tempOk);
 

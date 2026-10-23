@@ -425,7 +425,8 @@ export function diagnosticsOf(id: string): CabinetDiagnostics {
     branch1On: s.branch1On, branch2On: s.branch2On,
     vL1: dhLost ? 0 : s.vL1, vL2: dhLost ? 0 : s.vL2, vL3: dhLost || sc === 'phase_loss' ? 0 : s.vL3,
     iL1: dhLost ? 0 : s.iL1, iL2: dhLost ? 0 : s.iL2, iL3: dhLost ? 0 : s.iL3,
-    leakMa: s.leakMa, tempC: s.tempC, tempSensorFault: sc === 'temp_sensor_fault', gpsDevice: s.gpsDevice, batteryMv: s.batteryMv,
+    leakMa: s.leakMa, tempC: s.tempC, tempSensorFault: sc === 'temp_sensor_fault',
+    tempSensorInstalled: c.hasTempSensor || sc === 'temp_sensor_fault', gpsDevice: s.gpsDevice, batteryMv: s.batteryMv,
     deviceTime: s.deviceTime,
     // LOGO lost: PTIM stopped changing 10 min ago
     deviceTimeChangedAt: sc === 'logo_lost' ? new Date(Date.now() - 600_000).toISOString() : new Date().toISOString(),

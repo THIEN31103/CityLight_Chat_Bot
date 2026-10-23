@@ -168,6 +168,7 @@ export const CABINET = defineDict(
       tempSeries: 'Nhiệt độ',
       leakTitle: 'Dòng rò theo thời gian',
       tempTitle: 'Nhiệt độ tủ theo thời gian',
+      noTempSensor: 'Tủ không lắp cảm biến nhiệt (bật trong tab Thông tin khi lắp).',
     },
     thresholds: {
       rows: {
@@ -226,6 +227,10 @@ export const CABINET = defineDict(
       battery: 'Pin',
       sim: 'SIM seri / nhà mạng / sóng',
       installed: 'Lắp đặt',
+      tempSensor: 'Cảm biến nhiệt DS18B20',
+      tempSensorFitted: 'Có lắp',
+      tempSensorNone: 'Không lắp (không báo lỗi E503)',
+      tempSensorSaved: 'Đã lưu: cảm biến nhiệt {state}',
       location: 'Vị trí',
       locateGps: 'Định vị theo GPS',
       declared: 'Tọa độ khai báo',
@@ -479,6 +484,7 @@ export const CABINET = defineDict(
       tempSeries: 'Temperature',
       leakTitle: 'Leakage current over time',
       tempTitle: 'Cabinet temperature over time',
+      noTempSensor: 'No temperature sensor fitted (turn it on in the Info tab once installed).',
     },
     thresholds: {
       rows: {
@@ -536,6 +542,10 @@ export const CABINET = defineDict(
       battery: 'Battery',
       sim: 'SIM serial / carrier / signal',
       installed: 'Installed',
+      tempSensor: 'DS18B20 temperature sensor',
+      tempSensorFitted: 'Fitted',
+      tempSensorNone: 'Not fitted (no E503 alarm)',
+      tempSensorSaved: 'Saved: temperature sensor {state}',
       location: 'Location',
       locateGps: 'Locate by GPS',
       declared: 'Declared coordinates',
