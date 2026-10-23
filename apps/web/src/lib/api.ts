@@ -272,6 +272,23 @@ export interface BatchItem {
   error: string | null;
 }
 
+/** Cabinets of a batch (S56): zones and / or codes ("TM01.0001", "TM01.*"), as typed. */
+export interface BatchTarget {
+  zoneIds: string[];
+  codes?: string;
+}
+
+export interface BatchPreview {
+  total: number;
+  offline: number;
+  /** old firmware 1307ebc */
+  blocked?: number;
+  /** firmware without the capability the command needs */
+  unsupported?: number;
+  /** most cabinets a control batch may hold; null for schedule / time */
+  max?: number | null;
+}
+
 export interface IncidentReport {
   month: string;
   total: number;
@@ -393,9 +410,11 @@ export const api = {
   command: (id: string) => req<Command>('GET', `/commands/${id}`),
   batches: () => req<CommandBatch[]>('GET', '/command-batches'),
   batch: (id: string) => req<{ batch: CommandBatch; items: BatchItem[] }>('GET', `/command-batches/${id}`),
-  previewBatch: (zoneIds: string[]) => req<{ total: number; offline: number; blocked?: number }>('POST', '/command-batches/preview', { zoneIds }),
+  previewBatch: (kind: CommandBatch['kind'], target: BatchTarget, command?: CommandBatch['command']) =>
+    req<BatchPreview>('POST', '/command-batches/preview', { kind, ...target, command: command ?? undefined }),
   // mass actions need the current 2FA code (decision M6-E)
-  createBatch: (kind: CommandBatch['kind'], zoneIds: string[], otp: string) => req<CommandBatch>('POST', '/command-batches', { kind, zoneIds, otp }),
+  createBatch: (kind: CommandBatch['kind'], target: BatchTarget, otp: string, command?: CommandBatch['command']) =>
+    req<CommandBatch>('POST', '/command-batches', { kind, ...target, command: command ?? undefined, otp }),
   retryBatch: (id: string, otp: string) => req<CommandBatch>('POST', `/command-batches/${id}/retry-failed`, { otp }),
   zoneSchedulePreview: (id: string, offsetOnMin: number, offsetOffMin: number) =>
     req<{ date: string; on: string; off: string; sunset: string; sunrise: string }[]>('GET', `/zones/${id}/schedule/preview${qs({ days: 30, offsetOnMin, offsetOffMin })}`),

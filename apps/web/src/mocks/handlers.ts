@@ -1,6 +1,6 @@
 // MSW handlers implementing the /api/v1 contract of docs/spec.md section 11 against the in-browser mock DB.
 import { http, HttpResponse, delay, type PathParams } from 'msw';
-import type { Alarm, CommandType, DimmingProfile, GpsDriftItem, GpsSuggestion, Incident, LampGroup, Schedule, Thresholds, User } from '@citylight/shared';
+import type { Alarm, CommandBatch, CommandType, DimmingProfile, GpsDriftItem, GpsSuggestion, Incident, LampGroup, Schedule, Thresholds, User } from '@citylight/shared';
 import { GPS_RELOCATE_WINDOW_MIN, canManageRole, categoryForAlarm, defaultFieldMap, errorCatalog, distanceM, estimateDimming, judgeGpsSuggestion, roleRequires2fa, validateDimming } from '@citylight/shared';
 import { getLang } from '@/i18n';
 import {
@@ -94,6 +94,19 @@ function cabinetDimmingOf(id: string, group: LampGroup): DimmingProfile {
   if (own) return { ...own, source: 'cabinet', inheritedFromZone: false, estimate: mockEstimate(own.segments, 1) };
   const up = levelDimmingOf(group, cabinetById.get(id)?.zone1Id ?? null);
   return { ...up, inheritedFromZone: true, estimate: mockEstimate(up.segments, 1) };
+}
+
+/** Cabinet codes of a batch (S56), as the API reads them. */
+function batchCodes(text: string | undefined) {
+  return (text ?? '').split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
+}
+
+/** Cabinets of a batch: zones (zone 1 or 2) and / or codes, "TM01.*" = prefix (same rule as apps/api/src/scope.ts). */
+function batchCabinets(b: { zoneIds: string[]; codes?: string }) {
+  const codes = batchCodes(b.codes).map((c) => c.toUpperCase());
+  return cabinets.filter((c) =>
+    b.zoneIds.includes(c.zone1Id ?? '') || b.zoneIds.includes(c.zone2Id ?? '') ||
+    codes.some((k) => (k.endsWith('*') ? c.code.toUpperCase().startsWith(k.slice(0, -1)) : c.code.toUpperCase() === k)));
 }
 
 function problem(status: number, code: string, detail: string) {
@@ -473,11 +486,12 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
   http.get(`${API}/commands`, wrap(({ request }: { request: Request }) => HttpResponse.json(paginate(commands, new URL(request.url))))),
   http.post(`${API}/command-batches`, wrap(async ({ request }: { request: Request }) => {
     const u = requireUser();
-    const body = (await request.json()) as { kind: 'schedule' | 'dimming' | 'time'; zoneIds: string[] };
+    const body = (await request.json()) as { kind: CommandBatch['kind']; zoneIds: string[]; codes?: string; command?: CommandBatch['command'] };
     if (body.kind === 'dimming') return problem(409, 'capability_unsupported', 'Tủ hiện tại chưa hỗ trợ tiết giảm (cần firmware có lệnh tiết giảm và bộ điều khiển đèn thông minh); hồ sơ chỉ được lưu.');
-    const ids = cabinets.filter((c) => body.zoneIds.includes(c.zone1Id ?? '') || body.zoneIds.includes(c.zone2Id ?? '')).map((c) => c.id);
-    const scope = zones.filter((z) => body.zoneIds.includes(z.id)).map((z) => z.name).join(', ');
-    return HttpResponse.json(createBatch(body.kind, scope, ids, u.email), { status: 202 });
+    const ids = batchCabinets(body).map((c) => c.id);
+    if (!ids.length) return problem(422, 'empty_batch', 'Không có tủ nào trong phạm vi của bạn ở các vùng / mã đã chọn');
+    const scope = [...zones.filter((z) => body.zoneIds.includes(z.id)).map((z) => z.name), ...batchCodes(body.codes)].join(', ');
+    return HttpResponse.json(createBatch(body.kind, scope, ids, u.email, body.command ?? null), { status: 202 });
   })),
   http.get(`${API}/command-batches`, wrap(() => HttpResponse.json(batches))),
   http.get(`${API}/command-batches/:id`, wrap(({ params }: { params: Record<string, string> }) => {
@@ -490,9 +504,9 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
     return HttpResponse.json(retryBatchFailed(params.id!, u.email), { status: 202 });
   })),
   http.post(`${API}/command-batches/preview`, wrap(async ({ request }: { request: Request }) => {
-    const body = (await request.json()) as { zoneIds: string[] };
-    const list = cabinets.filter((c) => body.zoneIds.includes(c.zone1Id ?? '') || body.zoneIds.includes(c.zone2Id ?? ''));
-    return HttpResponse.json({ total: list.length, offline: list.filter((c) => !states.get(c.id)!.online).length });
+    const body = (await request.json()) as { kind?: CommandBatch['kind']; zoneIds: string[]; codes?: string };
+    const list = batchCabinets(body);
+    return HttpResponse.json({ total: list.length, offline: list.filter((c) => !states.get(c.id)!.online).length, blocked: 0, unsupported: 0, max: body.kind === 'control' ? 2000 : null });
   })),
 
   // ---------- Alarms ----------

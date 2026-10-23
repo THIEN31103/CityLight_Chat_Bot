@@ -36,7 +36,7 @@ export const cabinetStatusEnum = pgEnum('cabinet_status', ['offline', 'fault', '
 export const commandStatusEnum = pgEnum('command_status', ['queued', 'sent', 'acked', 'confirmed', 'acked_unconfirmed', 'failed', 'timeout', 'cancelled']);
 export const severityEnum = pgEnum('severity', ['critical', 'major', 'minor']);
 export const incidentStatusEnum = pgEnum('incident_status', ['new', 'assigned', 'deferred', 'resolved', 'closed']);
-export const batchKindEnum = pgEnum('batch_kind', ['schedule', 'dimming', 'time']);
+export const batchKindEnum = pgEnum('batch_kind', ['schedule', 'dimming', 'time', 'control']);
 export const batchResultEnum = pgEnum('batch_result', ['pending', 'ok', 'failed', 'offline']);
 
 // ---------- organisation ----------
@@ -281,6 +281,9 @@ export const commandBatches = pgTable('command_batches', {
   kind: batchKindEnum('kind').notNull(),
   scope: text('scope').notNull(),
   total: integer('total').notNull(),
+  /** kind = control (S56): the command every cabinet gets, so a retry resends the same one */
+  commandType: text('command_type'),
+  params: jsonb('params'),
   requestedBy: uuid('requested_by').notNull(),
   createdAt: createdAt(),
   finishedAt: tsz('finished_at'),

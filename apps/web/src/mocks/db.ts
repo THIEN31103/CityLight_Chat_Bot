@@ -352,10 +352,11 @@ export const batches: CommandBatch[] = [];
 export const batchItems = new Map<string, { cabinetId: string; cabinetName: string; result: 'pending' | 'ok' | 'failed' | 'offline'; error: string | null }[]>();
 let batchSeq = 1;
 
-export function createBatch(kind: CommandBatch['kind'], scope: string, cabinetIds: string[], user: string): CommandBatch {
+export function createBatch(kind: CommandBatch['kind'], scope: string, cabinetIds: string[], user: string, command: CommandBatch['command'] = null): CommandBatch {
   const b: CommandBatch = {
     id: `b${batchSeq++}`,
     kind,
+    command,
     scope,
     total: cabinetIds.length,
     succeeded: 0,
@@ -405,7 +406,7 @@ export function retryBatchFailed(id: string, user: string) {
   const items = batchItems.get(id) ?? [];
   const ids = items.filter((i) => i.result !== 'ok').map((i) => i.cabinetId);
   const b = batches.find((x) => x.id === id)!;
-  return createBatch(b.kind, `${b.scope} (gửi lại)`, ids, user);
+  return createBatch(b.kind, `${b.scope} (gửi lại)`, ids, user, b.command);
 }
 
 

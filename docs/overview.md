@@ -32,7 +32,7 @@ Tủ (LTE EC25 4G) --MQTT 1883, user/pass--> EMQX (broker tự host)
 | Bản đồ | Tủ theo trạng thái (sáng / nghỉ / lỗi / mất kết nối / tiết giảm / không rõ); bấm thẻ trạng thái → danh sách tủ → bay tới tủ; tìm kiếm, cây khu vực, vị trí đã lưu, chỉ đường Google Maps |
 | Chi tiết tủ | 12 tab: điện áp / dòng / công suất 3 pha, dòng rò, nhiệt độ, GPS, giờ LOGO, chẩn đoán từng khối (4G, RS485, PLC, LOGO/ETH, đồng hồ điện, cảm biến) |
 | Điều khiển | Bật/tắt từng nhánh hoặc cả tủ (thủ công), về tự động, đặt lịch, đồng bộ giờ. Nút: viền vàng = đang gửi, tô màu + ✓ = tủ đã xác nhận đèn đổi |
-| Lịch & hàng loạt | Lịch vùng / riêng tủ, lịch thiên văn; lệnh hàng loạt theo vùng có mã 2FA, tiến độ realtime |
+| Lịch & hàng loạt | Lịch vùng / riêng tủ, lịch thiên văn; lệnh hàng loạt theo vùng và / hoặc mã tủ (đồng bộ giờ / lịch, bật / tắt / về tự động / bật tạm 15 phút, tối đa 2.000 tủ một lô điều khiển) có mã 2FA, tiến độ realtime |
 | Cảnh báo | 40+ mã E1xx–E8xx: mất kết nối, mất PLC/PM/CT, **mất LOGO kèm nguyên nhân** (ETH / cáp / LOGO), quá/thấp áp, mất pha, rò điện, nhiệt, lệch lịch, sai giờ, lệch GPS, nghi giả mạo. Chống nhiễu 30 s; Telegram |
 | Sự cố | Tạo từ cảnh báo, giao người xử lý, ảnh hiện trường, Excel, báo cáo tháng, nhắc quá hạn |
 | GIS | Tuyến / trụ / đèn trên bản đồ, vẽ / sửa, nhập Excel (đã thử 200.000 trụ) |
@@ -66,7 +66,7 @@ Backup DB 02:15 mỗi đêm + kéo về laptop; diễn tập khôi phục 34 b�
 ## 7. Hiện trạng và giới hạn
 
 - M10 (tủ thật) gần xong: còn thử rút 4G, GPS, `LDIA`.
-- Sau demo 21/10 (đã code 23/10, chưa deploy): topic lệnh riêng mỗi tủ (S53), ẩn lỗi DS18B20 khi tủ không lắp cảm biến (S54), xuất Excel / CSV (S55). Đang làm: lệnh hàng loạt theo vùng + mã tủ + điều khiển. Chờ bàn: nhập bản đồ CAD.
+- Sau demo 21/10 (đã code 23/10, chưa deploy): topic lệnh riêng mỗi tủ (S53), ẩn lỗi DS18B20 khi tủ không lắp cảm biến (S54), xuất Excel / CSV (S55), lệnh hàng loạt theo vùng + mã tủ + điều khiển (S56). Chờ bàn: nhập bản đồ CAD.
 - Tiết giảm chờ firmware / phần cứng dim. Lịch chỉ xác nhận được "đã nhận" (tủ chưa gửi lịch đang chạy).
 - **Đĩa**: đổi chính sách lưu trữ hoặc thêm đĩa trước khi vượt ~1.000 tủ (runbook mục 8).
 - MQTT dùng chung một mật khẩu; tiếp theo: mỗi tủ một mật khẩu, rồi TLS. Chưa có tên miền riêng, chưa có monitor ngoài, backup chưa mã hóa (chờ khóa).

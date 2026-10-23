@@ -4,23 +4,43 @@
 import { Body, Controller, Delete, Get, HttpCode, Inject, Injectable, Module, Param, Post, Put, Query, Req } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
-import type { CommandBatch, FwProfile, Schedule } from '@citylight/shared';
-import { astroPreview, defaultSchedule, firmwareBlocksCommands, vnDate } from '@citylight/shared';
+import type { CommandBatch, CommandType, FwProfile, Schedule } from '@citylight/shared';
+import { BATCH_CONTROL_TYPES, COMMAND_CAPABILITY, astroPreview, capabilitiesFor, defaultSchedule, describeCommand, firmwareBlocksCommands, hasPermission, vnDate } from '@citylight/shared';
 import { buildCommandFrames } from '@citylight/coreif';
 import { SCHEDULES_CHANNEL, batchById, selectBatches } from '@citylight/db/batches';
 import { COMMANDS_NOTIFY } from '@citylight/db/commands';
 import { loadDesired, scheduleFromRow, type ScheduleRow } from '@citylight/db/schedules';
 import { AuthModule, AuthService, RequirePerm, type AuthedRequest, type SessionUser } from './auth';
 import { CabinetsModule, CabinetsService } from './cabinets';
-import { ScheduleBody } from './commands';
+import { PARAMS, ScheduleBody } from './commands';
 import { ApiError } from './errors';
 import { REDIS, SQL, type Sql } from './infra';
-import { scopeWhere } from './scope';
+import { parseCodes, pickWhere, scopeWhere } from './scope';
 
 const uuid = z.string().uuid();
-const ZoneIds = z.array(uuid).min(1).max(50);
 export const DIMMING_UNSUPPORTED = 'Tủ hiện tại chưa hỗ trợ tiết giảm (cần firmware có lệnh tiết giảm và bộ điều khiển đèn thông minh); hồ sơ chỉ được lưu.';
-const BatchBody = z.object({ kind: z.enum(['schedule', 'time', 'dimming']), zoneIds: ZoneIds, otp: z.string().optional() });
+/**
+ * Control batches (S56) only: at 3 frames/s on the shared topic 2,000 cabinets take ~11 min, well inside the 30-min
+ * bulk queue TTL. Schedule / time batches stay unlimited (the scheduler resends schedules anyway).
+ */
+export const MAX_CONTROL_CABINETS = 2_000;
+/** Cabinets: zones (zone 1 or 2) and / or codes ("TM01.0001", "TM01.*"), at least one of the two. */
+const Target = z.object({ zoneIds: z.array(uuid).max(50).default([]), codes: z.string().max(20_000).optional() });
+const ControlCommand = z.object({ type: z.enum(BATCH_CONTROL_TYPES), params: z.record(z.unknown()).default({}) });
+const BatchBody = Target.extend({ kind: z.enum(['schedule', 'time', 'dimming', 'control']), command: ControlCommand.optional(), otp: z.string().optional() });
+const PreviewBody = Target.extend({ kind: z.enum(['schedule', 'time', 'dimming', 'control']).default('time'), command: ControlCommand.optional() });
+
+type Cab = { id: string; ltid: string; fw_profile: FwProfile; online: boolean | null };
+type BatchCommand = NonNullable<CommandBatch['command']>;
+const KIND_TYPE: Record<'schedule' | 'time', CommandType> = { schedule: 'SET_SCHEDULE', time: 'SET_TIME' };
+
+/** Why a cabinet gets no command of this type (null = it can take it). */
+function skipReason(c: Cab, type: CommandType): string | null {
+  if (firmwareBlocksCommands(c.fw_profile)) return 'Firmware cũ 1307ebc: chặn điều khiển';
+  const need = COMMAND_CAPABILITY[type];
+  if (need && !capabilitiesFor(c.fw_profile).includes(need)) return 'Thiết bị chưa hỗ trợ chức năng này';
+  return null;
+}
 
 @Injectable()
 export class SchedulesService {
@@ -87,29 +107,55 @@ export class SchedulesService {
 
   // ---------------- batches ----------------
 
-  private async cabinetsOf(u: SessionUser, zoneIds: string[]) {
-    return this.sql<{ id: string; ltid: string; fw_profile: FwProfile; online: boolean | null }[]>`
+  /** Cabinets of a batch: zones and / or codes inside the user's areas (S56). */
+  private async cabinetsOf(u: SessionUser, t: { zoneIds: string[]; codes: string[] }) {
+    if (!t.zoneIds.length && !t.codes.length) return [];
+    return this.sql<Cab[]>`
       SELECT c.id, c.ltid, c.fw_profile, s.online FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id
-      WHERE c.zone1_id = ANY(${zoneIds}::uuid[]) AND ${scopeWhere(this.sql, u.scope)}`;
+      WHERE ${scopeWhere(this.sql, u.scope)} AND ${pickWhere(this.sql, t.zoneIds, t.codes)} ORDER BY c.code`;
+  }
+
+  private target(b: z.infer<typeof Target>) {
+    return { zoneIds: b.zoneIds, codes: parseCodes(b.codes, MAX_CONTROL_CABINETS) };
+  }
+
+  /** Control command of a batch, params checked like a single command; needs cabinet.control on top of batch.run. */
+  private control(u: SessionUser, c: z.infer<typeof ControlCommand> | undefined): BatchCommand {
+    if (!hasPermission(u.role, 'cabinet.control')) throw new ApiError(403, 'forbidden', 'Không đủ quyền');
+    if (!c) throw new ApiError(422, 'invalid_params', 'Chưa chọn lệnh điều khiển', { reason: 'command' });
+    return { type: c.type, params: PARAMS[c.type]!.parse(c.params) };
   }
 
   async previewBatch(u: SessionUser, body: unknown) {
-    const zoneIds = ZoneIds.parse((body as { zoneIds?: unknown })?.zoneIds);
-    const cabs = await this.cabinetsOf(u, zoneIds);
-    return { total: cabs.length, offline: cabs.filter((c) => !c.online).length, blocked: cabs.filter((c) => firmwareBlocksCommands(c.fw_profile)).length };
+    const b = PreviewBody.parse(body);
+    const type = b.kind === 'control' ? (b.command?.type ?? 'MANUAL_ALL') : b.kind === 'schedule' ? 'SET_SCHEDULE' : 'SET_TIME';
+    const cabs = await this.cabinetsOf(u, this.target(b));
+    const blocked = cabs.filter((c) => firmwareBlocksCommands(c.fw_profile)).length;
+    return {
+      total: cabs.length,
+      offline: cabs.filter((c) => !c.online).length,
+      blocked,
+      /** not 1307ebc but missing the capability (e.g. manual control) */
+      unsupported: cabs.filter((c) => skipReason(c, type)).length - blocked,
+      max: b.kind === 'control' ? MAX_CONTROL_CABINETS : null,
+    };
   }
 
-  /** Online cabinets get a command each; offline ones are recorded (schedules: the scheduler sends later). */
-  private async enqueueItems(u: SessionUser, batchId: string, kind: 'schedule' | 'time', cabs: { id: string; ltid: string; fw_profile: FwProfile; online: boolean | null }[]) {
+  /**
+   * Online cabinets get a command each; offline ones are recorded (schedules: the scheduler sends later; control:
+   * never sent later on its own, a late on / off would surprise people), unsupported ones fail.
+   */
+  private async enqueueItems(u: SessionUser, batchId: string, kind: 'schedule' | 'time' | 'control', cabs: Cab[], command: BatchCommand | null) {
     const desired = kind === 'schedule' ? new Map((await loadDesired(this.sql, cabs.map((c) => c.id))).map((d) => [d.cabinetId, d.window])) : null;
     const cmd = { ids: [] as string[], params: [] as string[], frames: [] as string[] };
     const items: { cabinet_id: string; result: 'pending' | 'failed' | 'offline'; error: string | null; command_id: string | null }[] = [];
-    const type = kind === 'schedule' ? 'SET_SCHEDULE' : 'SET_TIME';
+    const type = kind === 'control' ? command!.type : KIND_TYPE[kind];
     for (const c of cabs) {
-      if (firmwareBlocksCommands(c.fw_profile)) items.push({ cabinet_id: c.id, result: 'failed', error: 'Firmware cũ 1307ebc: chặn điều khiển', command_id: null });
+      const skip = skipReason(c, type);
+      if (skip) items.push({ cabinet_id: c.id, result: 'failed', error: skip, command_id: null });
       else if (!c.online) items.push({ cabinet_id: c.id, result: 'offline', error: 'Tủ mất kết nối lúc gửi', command_id: null });
       else {
-        const params = kind === 'schedule' ? (desired!.get(c.id) as unknown as Record<string, unknown>) : {};
+        const params = kind === 'schedule' ? (desired!.get(c.id) as unknown as Record<string, unknown>) : kind === 'control' ? command!.params : {};
         cmd.ids.push(c.id);
         cmd.params.push(JSON.stringify(params));
         cmd.frames.push(buildCommandFrames(c.ltid, type, params).join('\n'));
@@ -136,18 +182,27 @@ export class SchedulesService {
 
   async createBatch(u: SessionUser, body: unknown, ip?: string): Promise<CommandBatch> {
     const b = BatchBody.parse(body);
-    // before the OTP: nothing could be sent anyway, so do not burn a code on it
+    // checks before the OTP: nothing could be sent anyway, so do not burn a code on them
     if (b.kind === 'dimming') throw new ApiError(409, 'capability_unsupported', DIMMING_UNSUPPORTED);
+    const command = b.kind === 'control' ? this.control(u, b.command) : null;
+    const t = this.target(b);
+    const zones = await this.sql<{ name: string }[]>`SELECT name FROM zones WHERE id = ANY(${t.zoneIds}::uuid[]) ORDER BY name`;
+    if (zones.length !== t.zoneIds.length) throw new ApiError(404, 'not_found', 'Không tìm thấy vùng');
+    const cabs = await this.cabinetsOf(u, t);
+    if (!cabs.length) throw new ApiError(422, 'empty_batch', 'Không có tủ nào trong phạm vi của bạn ở các vùng / mã đã chọn');
+    if (command && cabs.length > MAX_CONTROL_CABINETS)
+      throw new ApiError(422, 'too_many_cabinets', `Quá ${MAX_CONTROL_CABINETS} tủ: chọn ít vùng / mã hơn`, { max: MAX_CONTROL_CABINETS });
     await this.auth.reauthTotp(u.id, b.otp);
-    const zones = await this.sql<{ name: string }[]>`SELECT name FROM zones WHERE id = ANY(${b.zoneIds}::uuid[]) ORDER BY name`;
-    if (zones.length !== b.zoneIds.length) throw new ApiError(404, 'not_found', 'Không tìm thấy vùng');
-    const cabs = await this.cabinetsOf(u, b.zoneIds);
-    if (!cabs.length) throw new ApiError(422, 'empty_batch', 'Không có tủ nào trong phạm vi của bạn ở các vùng đã chọn');
-    const scope = zones.map((z) => z.name).join(', ');
+    const shown = t.codes.map((c) => c.toUpperCase());
+    const codes = shown.length > 10 ? [...shown.slice(0, 10), `… (+${shown.length - 10} mã)`] : shown;
+    const scope = [...zones.map((z) => z.name), ...codes].join(', ');
     const id = (await this.sql<{ id: string }[]>`
-      INSERT INTO command_batches (kind, scope, total, requested_by) VALUES (${b.kind}, ${scope}, ${cabs.length}, ${u.id}) RETURNING id`)[0]!.id;
-    const sent = await this.enqueueItems(u, id, b.kind, cabs);
-    await this.log(u, b.kind === 'schedule' ? 'Đồng bộ lịch hàng loạt' : 'Đồng bộ giờ hàng loạt', 'batch', id, scope, `${cabs.length} tủ, gửi ${sent}`, ip);
+      INSERT INTO command_batches (kind, command_type, params, scope, total, requested_by)
+      VALUES (${b.kind}, ${command?.type ?? null}, ${command ? this.sql.json(command.params as never) : null}, ${scope}, ${cabs.length}, ${u.id})
+      RETURNING id`)[0]!.id;
+    const sent = await this.enqueueItems(u, id, b.kind, cabs, command);
+    const action = { schedule: 'Đồng bộ lịch hàng loạt', time: 'Đồng bộ giờ hàng loạt', control: 'Điều khiển hàng loạt' }[b.kind];
+    await this.log(u, action, 'batch', id, scope, `${command ? `${describeCommand(command.type, command.params)} · ` : ''}${cabs.length} tủ, gửi ${sent}`, ip);
     return (await batchById(this.sql, id))!;
   }
 
@@ -161,14 +216,16 @@ export class SchedulesService {
   async retry(u: SessionUser, id: string, body: unknown, ip?: string) {
     const b = await this.ownBatch(u, id);
     if (b.kind === 'dimming') throw new ApiError(409, 'capability_unsupported', DIMMING_UNSUPPORTED);
+    if (b.kind === 'control' && !hasPermission(u.role, 'cabinet.control')) throw new ApiError(403, 'forbidden', 'Không đủ quyền');
     await this.auth.reauthTotp(u.id, (body as { otp?: string })?.otp);
-    const cabs = await this.sql<{ id: string; ltid: string; fw_profile: FwProfile; online: boolean | null }[]>`
+    const cabs = await this.sql<Cab[]>`
       SELECT c.id, c.ltid, c.fw_profile, s.online FROM command_batch_items i JOIN cabinets c ON c.id = i.cabinet_id
-      LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE i.batch_id = ${b.id} AND i.result IN ('failed', 'offline')`;
+      LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE i.batch_id = ${b.id} AND i.result IN ('failed', 'offline') AND c.active`;
     if (!cabs.length) throw new ApiError(409, 'nothing_to_retry', 'Không còn tủ lỗi hoặc offline để gửi lại');
     await this.sql`UPDATE command_batches SET finished_at = NULL WHERE id = ${b.id}`;
-    const sent = await this.enqueueItems(u, b.id, b.kind as 'schedule' | 'time', cabs);
-    await this.log(u, 'Gửi lại tủ lỗi (hàng loạt)', 'batch', b.id, b.scope, `${cabs.length} tủ, gửi ${sent}`, ip);
+    // a control batch resends the command it was created with
+    const sent = await this.enqueueItems(u, b.id, b.kind, cabs, b.command);
+    await this.log(u, 'Gửi lại tủ lỗi (hàng loạt)', 'batch', b.id, b.scope, `${b.command ? `${describeCommand(b.command.type, b.command.params)} · ` : ''}${cabs.length} tủ, gửi ${sent}`, ip);
     return (await batchById(this.sql, b.id))!;
   }
 

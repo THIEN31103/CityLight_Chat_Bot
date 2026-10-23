@@ -12,7 +12,7 @@ import { AuthModule, RequirePerm, type AuthedRequest, type SessionUser } from '.
 import { CabinetsModule, CabinetsService } from './cabinets';
 import { ApiError } from './errors';
 import { SQL, type Sql } from './infra';
-import { scopeWhere } from './scope';
+import { parseCodes, pickWhere, scopeWhere } from './scope';
 import { DATE_TIME, addSheet, attachment, newWorkbook, sendWorkbook, vnTime, type XlsxColumn } from './xlsx';
 
 export type Step = 'raw' | '5m' | '1h' | '1d';
@@ -131,7 +131,7 @@ export class ReportsController {
   private range(q: unknown, lang: Lang) {
     const p = Range.parse(q);
     const days = (p.to.getTime() - p.from.getTime()) / 86_400_000;
-    if (!(days > 0) || days > MAX_RANGE_DAYS) throw new ApiError(422, 'invalid_range', fill(TEXT[lang].badRange, { days: MAX_RANGE_DAYS }));
+    if (!(days > 0) || days > MAX_RANGE_DAYS) throw new ApiError(422, 'invalid_range', fill(TEXT[lang].badRange, { days: MAX_RANGE_DAYS }), { days: MAX_RANGE_DAYS });
     return p;
   }
 
@@ -302,15 +302,10 @@ export class ReportsController {
 
   /** Cabinets in these zones and / or with these codes, inside the user's areas. */
   private async pick(u: SessionUser, zoneIds: string[], codes: string[]) {
-    const exact = codes.filter((c) => !c.endsWith('*'));
-    const prefixes = codes.filter((c) => c.endsWith('*')).map((c) => `${c.slice(0, -1).replace(/[\\%_]/g, '\\$&')}%`);
     if (!zoneIds.length && !codes.length) return [];
     return this.sql<{ id: string; code: string; name: string; zone: string | null; has_temp_sensor: boolean }[]>`
       SELECT c.id, c.code, c.name, z.name AS zone, c.has_temp_sensor FROM cabinets c LEFT JOIN zones z ON z.id = c.zone1_id
-      WHERE ${scopeWhere(this.sql, u.scope)} AND (
-        (c.zone1_id = ANY(${zoneIds}::uuid[]) OR c.zone2_id = ANY(${zoneIds}::uuid[]))
-        OR upper(c.code) = ANY(${exact.map((c) => c.toUpperCase())}::text[])
-        OR upper(c.code) LIKE ANY(${prefixes.map((c) => c.toUpperCase())}::text[]))
+      WHERE ${scopeWhere(this.sql, u.scope)} AND ${pickWhere(this.sql, zoneIds, codes)}
       ORDER BY c.code LIMIT ${MAX_CABINETS + 1}`;
   }
 
@@ -336,7 +331,7 @@ export class ReportsController {
     this.range(p, lang);
     const uuidRe = /^[0-9a-f-]{36}$/i;
     const zoneIds = (p.zoneIds ?? '').split(',').map((s) => s.trim()).filter((s) => uuidRe.test(s));
-    const codes = (p.codes ?? '').split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean).slice(0, MAX_CABINETS);
+    const codes = parseCodes(p.codes, MAX_CABINETS);
     const cabs = await this.pick(u, zoneIds, codes);
     if (!cabs.length) throw new ApiError(422, 'no_cabinet', T.noCabinet);
     if (cabs.length > MAX_CABINETS) throw new ApiError(422, 'too_many_cabinets', fill(T.tooManyCabinets, { max: MAX_CABINETS }), { max: MAX_CABINETS });

@@ -7,10 +7,11 @@ import { fmtTime } from '@/lib/utils';
 import { useDict } from '@/i18n';
 import { SYNC_LOG } from '@/i18n/dict/logs';
 import { Badge, Card, Empty, PageHeader, Select, Spinner } from '@/components/ui';
-import { BatchProgress } from '../BatchesPage';
+import { BatchProgress, useBatchTitle } from '../BatchesPage';
 
 export function SyncLogPage() {
   const t = useDict(SYNC_LOG);
+  const title = useBatchTitle();
   const zones = useQuery({ queryKey: ['zones'], queryFn: api.zones });
   const batches = useQuery({ queryKey: ['batches'], queryFn: api.batches, refetchInterval: 3000 });
   const [zone, setZone] = useState('');
@@ -43,7 +44,7 @@ export function SyncLogPage() {
                 <button className="grid w-full grid-cols-[20px_1fr_200px] items-center gap-3 px-4 py-3 text-left hover:bg-muted/50" onClick={() => setOpen(open === b.id ? null : b.id)}>
                   {open === b.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                   <div>
-                    <div className="font-medium">{t.kind[b.kind]} · {b.scope}</div>
+                    <div className="font-medium">{title(b)} · {b.scope}</div>
                     <div className="text-xs text-subtle">{b.requestedBy} · {fmtTime(b.createdAt)} · {t.cabinets(b.total)}</div>
                   </div>
                   <BatchProgress b={b} />

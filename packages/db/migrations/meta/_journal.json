@@ -134,6 +134,13 @@
       "when": 1792718878370,
       "tag": "0018_temp_sensor",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792722531649,
+      "tag": "0019_batch_control",
+      "breakpoints": true
     }
   ]
 }

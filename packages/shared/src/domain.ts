@@ -256,9 +256,15 @@ export interface Command {
   error: string | null;
 }
 
+/** Commands a control batch may send (S56): manual on / off, back to the schedule, 15-min pulse. */
+export const BATCH_CONTROL_TYPES = ['MANUAL_ALL', 'MANUAL_BRANCH', 'AUTO', 'PULSE_ON'] as const satisfies readonly CommandType[];
+export type BatchControlType = (typeof BATCH_CONTROL_TYPES)[number];
+
 export interface CommandBatch {
   id: string;
-  kind: 'schedule' | 'dimming' | 'time';
+  kind: 'schedule' | 'dimming' | 'time' | 'control';
+  /** kind = control: the command every cabinet gets */
+  command: { type: BatchControlType; params: Record<string, unknown> } | null;
   scope: string;
   total: number;
   succeeded: number;

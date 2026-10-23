@@ -1,16 +1,23 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Clock, RefreshCw } from 'lucide-react';
-import type { CommandBatch } from '@citylight/shared';
+import { Clock, Power, RefreshCw } from 'lucide-react';
+import { describeCommand, type CommandBatch } from '@citylight/shared';
 import { api, ApiError } from '@/lib/api';
-import { fill, useDict } from '@/i18n';
+import { fill, useDict, useLang } from '@/i18n';
 import { BATCHES } from '@/i18n/dict/batches';
 import { subscribe } from '@/lib/realtime';
+import { useSession } from '@/stores/session';
 import { cn, fmtTime } from '@/lib/utils';
 import { SyncDialog } from '@/components/SyncDialog';
 import { Badge, Button, Card, CardHeader, Empty, Input, PageHeader, Spinner, toast } from '@/components/ui';
 
+/** Name of a batch: its command for a control batch ("Tắt nhánh 1 (thủ công)"), else its kind. */
+export function useBatchTitle() {
+  const t = useDict(BATCHES);
+  const lang = useLang((s) => s.lang);
+  return (b: CommandBatch) => (b.kind === 'control' && b.command ? describeCommand(b.command.type, b.command.params, lang) : t.kind[b.kind]);
+}
 
 export function BatchProgress({ b }: { b: CommandBatch }) {
   const t = useDict(BATCHES).progress;
@@ -38,6 +45,9 @@ export function BatchesPage() {
   const [params, setParams] = useSearchParams();
   const selected = params.get('id');
   const [syncOpen, setSyncOpen] = useState(false);
+  const [controlOpen, setControlOpen] = useState(false);
+  const canControl = useSession((s) => s.can('cabinet.control'));
+  const title = useBatchTitle();
   const list = useQuery({ queryKey: ['batches'], queryFn: api.batches });
   const detail = useQuery({ queryKey: ['batch', selected], queryFn: () => api.batch(selected!), enabled: !!selected });
 
@@ -67,9 +77,16 @@ export function BatchesPage() {
         title={t.title}
         subtitle={t.subtitle}
         actions={
-          <Button onClick={() => setSyncOpen(true)}>
-            <Clock className="h-4 w-4" /> {t.syncTime}
-          </Button>
+          <>
+            {canControl && (
+              <Button variant="outline" onClick={() => setControlOpen(true)}>
+                <Power className="h-4 w-4" /> {t.control}
+              </Button>
+            )}
+            <Button onClick={() => setSyncOpen(true)}>
+              <Clock className="h-4 w-4" /> {t.syncTime}
+            </Button>
+          </>
         }
       />
       <div className="grid gap-4 lg:grid-cols-[380px_1fr]">
@@ -84,7 +101,7 @@ export function BatchesPage() {
               {list.data.map((b) => (
                 <button key={b.id} onClick={() => setParams({ id: b.id })} className={cn('block w-full px-4 py-3 text-left hover:bg-muted/60', selected === b.id && 'bg-primary/10')}>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium">{t.kind[b.kind]}</span>
+                    <span className="font-medium">{title(b)}</span>
                     {b.finishedAt ? <Badge tone="green">{t.done}</Badge> : <Badge tone="blue">{t.running}</Badge>}
                   </div>
                   <div className="mb-1 text-xs text-subtle">{b.scope} · {t.cabinets(b.total)} · {fmtTime(b.createdAt)}</div>
@@ -102,7 +119,7 @@ export function BatchesPage() {
           ) : (
             <>
               <CardHeader
-                title={`${t.kind[detail.data.batch.kind]} — ${detail.data.batch.scope}`}
+                title={`${title(detail.data.batch)} — ${detail.data.batch.scope}`}
                 subtitle={fill(t.requestedBy, { by: detail.data.batch.requestedBy, at: fmtTime(detail.data.batch.createdAt) })}
                 actions={
                   detail.data.batch.finishedAt &&
@@ -143,6 +160,7 @@ export function BatchesPage() {
         </Card>
       </div>
       <SyncDialog open={syncOpen} onOpenChange={setSyncOpen} kind="time" title={t.syncTime} />
+      {canControl && <SyncDialog open={controlOpen} onOpenChange={setControlOpen} kind="control" title={t.control} />}
     </div>
   );
 }

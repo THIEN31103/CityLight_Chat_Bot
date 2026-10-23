@@ -36,3 +36,19 @@ export function inScope(scope: Scope, districtId: string | null | undefined, war
   if (scope.all) return true;
   return (!!districtId && scope.areaIds.includes(districtId)) || (!!wardId && scope.areaIds.includes(wardId));
 }
+
+/** Cabinet codes as typed (comma / semicolon / space / newline separated), at most `max`. */
+export function parseCodes(text: string | undefined, max: number): string[] {
+  return (text ?? '').split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean).slice(0, max);
+}
+
+/**
+ * Cabinets (alias c) in these zones (zone 1 or 2) and / or with these codes, case-insensitive; "TM01.*" = every code
+ * starting with TM01. Shared by reports (S55) and command batches (S56); combine with scopeWhere.
+ */
+export function pickWhere(sql: Sql, zoneIds: string[], codes: string[]) {
+  const exact = codes.filter((c) => !c.endsWith('*')).map((c) => c.toUpperCase());
+  const prefixes = codes.filter((c) => c.endsWith('*')).map((c) => `${c.slice(0, -1).replace(/[\\%_]/g, '\\$&').toUpperCase()}%`);
+  return sql`(c.zone1_id = ANY(${zoneIds}::uuid[]) OR c.zone2_id = ANY(${zoneIds}::uuid[])
+    OR upper(c.code) = ANY(${exact}::text[]) OR upper(c.code) LIKE ANY(${prefixes}::text[]))`;
+}

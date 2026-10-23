@@ -35,8 +35,8 @@ export const ScheduleBody = z.object({
   offsetOffMin: z.number().int().min(-120).max(120).default(-10),
 });
 
-/** Params kept per type (anything else in the body is dropped, never stored). */
-const PARAMS: Partial<Record<CommandType, z.ZodType<Record<string, unknown>>>> = {
+/** Params kept per type (anything else in the body is dropped, never stored); also used by control batches. */
+export const PARAMS: Partial<Record<CommandType, z.ZodType<Record<string, unknown>>>> = {
   MANUAL_ALL: z.object({ on: z.boolean() }),
   MANUAL_BRANCH: z.object({ branch: z.union([z.literal(1), z.literal(2)]), on: z.boolean() }),
   AUTO: z.object({}),

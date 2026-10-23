@@ -225,7 +225,7 @@ Bộ đếm, bản đồ, danh sách, trang cảnh báo **đọc cùng một ngu
 
 ### Lệnh
 - `commands`: `id`, `cabinet_id`, `type`, `params` (JSON), `frame`, `batch_id`, `idempotency_key`, `requested_by`, `status` (`queued → sent → acked → confirmed` | `failed` | `timeout` | `cancelled`), `ack_rc` (JSON theo key), `queued_at/sent_at/acked_at/confirmed_at`, `error`.
-- `command_batches`: lệnh hàng loạt (zone/danh sách), tổng/thành công/lỗi/offline, tiến độ.
+- `command_batches`: lệnh hàng loạt (vùng và / hoặc mã tủ), loại `schedule` / `time` / `dimming` / `control` (+ `command_type`, `params` của lệnh điều khiển, S56), tổng/thành công/lỗi/offline, tiến độ.
 
 ### Dữ liệu đo
 - `telemetry_raw` (hypertable): `ts`, `cabinet_id`, các cột số mục 5 (null khi `X`).
@@ -321,7 +321,7 @@ UI: dark/light, desktop chính, tablet/điện thoại xem được bản đồ 
 | Bản đồ | `GET /map/cabinets?bbox=&zoom=&status=` (cluster ở server khi zoom xa), `GET /map/assets?bbox=&layers=`, `GET /map/stats`, `GET /search?q=` |
 | Phân cấp | `GET /areas/tree` (kèm số tủ), `GET /cabinets/nearby?lat=&lng=&radius=` |
 | Tủ | `GET /cabinets?…` (phân trang), `GET /cabinets/:id`, `PATCH /cabinets/:id`, `POST /cabinets/:id/photo`, `GET /cabinets/:id/state`, `GET /cabinets/:id/telemetry?metrics=&from=&to=&interval=auto`, `GET /cabinets/:id/energy?range=`, `GET/PUT /cabinets/:id/schedule`, `GET/PUT /cabinets/:id/thresholds`, `GET/PUT /cabinets/:id/dimming`, `GET /cabinets/:id/alarms?limit=`, `GET /cabinets/:id/commands` |
-| Lệnh | `POST /cabinets/:id/commands` (header `Idempotency-Key`, trả `202`), `GET /commands/:id`, `POST /commands/:id/cancel`, `POST /command-batches`, `GET /command-batches/:id`, `POST /command-batches/:id/retry-failed` |
+| Lệnh | `POST /cabinets/:id/commands` (header `Idempotency-Key`, trả `202`), `GET /commands/:id`, `POST /commands/:id/cancel`, `POST /command-batches/preview`, `POST /command-batches` (`kind`, `zoneIds`, `codes`, `command` khi `kind=control`, `otp`; S56), `GET /command-batches/:id`, `POST /command-batches/:id/retry-failed` |
 | Tài sản GIS | CRUD `routes`, `poles`, `lamps`; `POST /map/edits` (lưu theo lô), `POST /poles/generate` |
 | Cảnh báo | `GET /alarms?active=&area=&type=&from=&to=`, `POST /alarms/:id/ack`, `GET /alarms/export.xlsx` |
 | Sự cố | `GET /incidents?…`, `GET /incidents/export.xlsx`, `POST /incidents`, `PATCH /incidents/:id`, `POST /incidents/:id/transition`, `POST /incidents/:id/photos`, `GET /incidents/report?month=` |

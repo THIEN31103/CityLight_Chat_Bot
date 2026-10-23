@@ -75,7 +75,7 @@ export const SYNC_LOG = defineDict(
     cabinets: (n: number) => `${n} tủ`,
     result: { ok: 'Thành công', pending: 'Đang chờ', offline: 'Mất kết nối', failed: 'Lỗi' },
     // same words as KIND_LABEL in pages/BatchesPage.tsx
-    kind: { schedule: 'Lịch chiếu sáng', dimming: 'Tiết giảm', time: 'Đồng bộ giờ' } as Record<CommandBatch['kind'], string>,
+    kind: { schedule: 'Lịch chiếu sáng', dimming: 'Tiết giảm', time: 'Đồng bộ giờ', control: 'Điều khiển hàng loạt' } as Record<CommandBatch['kind'], string>,
   },
   {
     title: 'Sync log by zone',
@@ -86,7 +86,7 @@ export const SYNC_LOG = defineDict(
     batches: 'Bulk sync',
     cabinets: (n: number) => plural(n, 'cabinet', 'cabinets'),
     result: { ok: 'Succeeded', pending: 'Pending', offline: 'Offline', failed: 'Failed' },
-    kind: { schedule: 'Lighting schedule', dimming: 'Dimming', time: 'Time sync' },
+    kind: { schedule: 'Lighting schedule', dimming: 'Dimming', time: 'Time sync', control: 'Bulk control' },
   },
 );
 

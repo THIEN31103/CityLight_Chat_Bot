@@ -34,7 +34,7 @@ export function DimmingPage() {
   const drop = useMutation({ mutationFn: () => api.dropGroupDimming(group, zoneId), onSuccess: () => done(t.dropped), onError: fail });
   // Refused by the API (409 capability_unsupported, before any OTP) until the firmware can dim; its reason is shown as is.
   const sync = useMutation({
-    mutationFn: () => api.createBatch('dimming', zoneId ? [zoneId] : (zones.data ?? []).map((z) => z.id), ''),
+    mutationFn: () => api.createBatch('dimming', { zoneIds: zoneId ? [zoneId] : (zones.data ?? []).map((z) => z.id) }, ''),
     onSuccess: () => toast(t.batchCreated, 'success'),
     onError: fail,
   });

@@ -4,7 +4,7 @@ import { defineDict, plural } from '@citylight/shared';
 export const BATCHES = defineDict(
   {
     /** CommandBatch['kind'] */
-    kind: { schedule: 'Lịch chiếu sáng', dimming: 'Tiết giảm', time: 'Đồng bộ giờ' },
+    kind: { schedule: 'Lịch chiếu sáng', dimming: 'Tiết giảm', time: 'Đồng bộ giờ', control: 'Điều khiển hàng loạt' },
     progress: {
       succeeded: (n: number) => `${n} thành công`,
       failed: (n: number) => `${n} lỗi`,
@@ -14,8 +14,9 @@ export const BATCHES = defineDict(
     retryFailed: 'Không gửi lại được',
     retrying: 'Đang gửi lại các tủ lỗi / offline',
     title: 'Đồng bộ hàng loạt',
-    subtitle: 'Lệnh gửi qua hàng đợi, giới hạn tốc độ, theo dõi kết quả từng tủ',
+    subtitle: 'Đồng bộ giờ / lịch hoặc điều khiển nhiều tủ theo vùng và mã tủ; lệnh gửi qua hàng đợi, giới hạn tốc độ, theo dõi kết quả từng tủ',
     syncTime: 'Đồng bộ giờ theo vùng',
+    control: 'Điều khiển hàng loạt',
     runs: 'Các lần đồng bộ',
     noRuns: 'Chưa có lần đồng bộ nào. Thử “Đồng bộ xuống tủ” ở trang Lịch chiếu sáng.',
     done: 'Xong',
@@ -29,7 +30,7 @@ export const BATCHES = defineDict(
     result: { ok: 'Thành công', failed: 'Lỗi', offline: 'Mất kết nối', pending: 'Đang chờ' },
   },
   {
-    kind: { schedule: 'Lighting schedule', dimming: 'Dimming', time: 'Time sync' },
+    kind: { schedule: 'Lighting schedule', dimming: 'Dimming', time: 'Time sync', control: 'Bulk control' },
     progress: {
       succeeded: (n: number) => `${n} succeeded`,
       failed: (n: number) => `${n} failed`,
@@ -39,8 +40,9 @@ export const BATCHES = defineDict(
     retryFailed: 'Could not resend',
     retrying: 'Resending to failed / offline cabinets',
     title: 'Bulk sync',
-    subtitle: 'Commands go through a rate-limited queue; results are tracked per cabinet',
+    subtitle: 'Sync time / schedules or control many cabinets by zone and cabinet code; commands go through a rate-limited queue, results are tracked per cabinet',
     syncTime: 'Sync time by zone',
+    control: 'Bulk control',
     runs: 'Sync runs',
     noRuns: 'No sync runs yet. Try “Sync to cabinets” on the Lighting schedules page.',
     done: 'Done',
