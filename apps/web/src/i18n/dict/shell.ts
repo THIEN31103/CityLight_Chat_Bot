@@ -20,6 +20,7 @@ export const SHELL = defineDict(
     },
     functionMenu: {
       alarms: 'Cảnh báo lỗi',
+      reports: 'Báo cáo dữ liệu (Excel)',
       schedules: 'Lịch chiếu sáng',
       dimming: 'Đồng bộ cấu hình tiết giảm',
       batches: 'Đồng bộ hàng loạt',
@@ -54,6 +55,7 @@ export const SHELL = defineDict(
     },
     functionMenu: {
       alarms: 'Fault alarms',
+      reports: 'Data reports (Excel)',
       schedules: 'Lighting schedules',
       dimming: 'Dimming configuration sync',
       batches: 'Bulk sync',

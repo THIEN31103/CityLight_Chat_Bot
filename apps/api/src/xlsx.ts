@@ -67,19 +67,38 @@ export interface XlsxColumn<T> {
 export const vnTime = (iso: string | Date | null | undefined) => (iso ? new Date(new Date(iso).getTime() + 7 * 3600_000) : null);
 export const DATE_TIME = 'dd/mm/yyyy hh:mm';
 
-export async function sendXlsx<T>(reply: FastifyReply, filename: string, sheet: string, columns: XlsxColumn<T>[], rows: T[]) {
+export function newWorkbook() {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'CityLight';
   wb.created = new Date();
+  return wb;
+}
+
+/** One sheet: bold frozen header row with a filter. */
+export function addSheet<T>(wb: ExcelJS.Workbook, sheet: string, columns: XlsxColumn<T>[], rows: T[]) {
   const ws = wb.addWorksheet(sheet, { views: [{ state: 'frozen', ySplit: 1 }] });
   ws.columns = columns.map((c, i) => ({ header: c.header, key: `c${i}`, width: c.width ?? 16, style: c.numFmt ? { numFmt: c.numFmt } : {} }));
   ws.getRow(1).font = { bold: true };
   for (const r of rows) ws.addRow(Object.fromEntries(columns.map((c, i) => [`c${i}`, c.value(r) ?? null])));
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: columns.length } };
-  const buf = await wb.xlsx.writeBuffer();
+  return ws;
+}
+
+export function attachment(reply: FastifyReply, filename: string, contentType: string) {
   reply
-    .header('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    .header('content-type', contentType)
     .header('content-disposition', `attachment; filename="${filename.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(filename)}`)
     .header('cache-control', 'no-store');
+}
+
+export async function sendWorkbook(reply: FastifyReply, filename: string, wb: ExcelJS.Workbook) {
+  const buf = await wb.xlsx.writeBuffer();
+  attachment(reply, filename, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   return Buffer.from(buf);
+}
+
+export async function sendXlsx<T>(reply: FastifyReply, filename: string, sheet: string, columns: XlsxColumn<T>[], rows: T[]) {
+  const wb = newWorkbook();
+  addSheet(wb, sheet, columns, rows);
+  return sendWorkbook(reply, filename, wb);
 }

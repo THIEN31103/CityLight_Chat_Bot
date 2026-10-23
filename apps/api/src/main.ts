@@ -16,6 +16,7 @@ import { DimmingModule } from './dimming';
 import { ProblemFilter } from './errors';
 import { FavoritesModule } from './favorites';
 import { GisModule } from './gis';
+import { ReportsModule } from './reports';
 import { IncidentsModule, MAX_PHOTO_BYTES } from './incidents';
 import { InfraModule } from './infra';
 import { LogsModule } from './logs';
@@ -25,7 +26,7 @@ import { SystemModule } from './system';
 import { UsersModule } from './users';
 
 @Module({
-  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, FavoritesModule, AlarmsModule, AlarmConfigModule, SchedulesModule, DimmingModule, IncidentsModule, GisModule, AdminModule, UsersModule, LogsModule, SystemModule, RealtimeModule],
+  imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, FavoritesModule, AlarmsModule, AlarmConfigModule, SchedulesModule, DimmingModule, IncidentsModule, GisModule, ReportsModule, AdminModule, UsersModule, LogsModule, SystemModule, RealtimeModule],
   providers: [{ provide: APP_FILTER, useClass: ProblemFilter }],
 })
 class AppModule {}

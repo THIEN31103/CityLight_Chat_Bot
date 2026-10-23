@@ -156,6 +156,10 @@ function haversineM(a: { lat: number; lng: number }, b: { lat: number; lng: numb
 }
 
 export const handlers = [
+  // S55 exports need the real server: 404 = downloadFile() returns false and the page says so
+  http.get(`${API}/cabinets/:id/export.xlsx`, () => problem(404, 'not_found', 'Bản demo không xuất được file')),
+  http.get(`${API}/reports/telemetry.xlsx`, () => problem(404, 'not_found', 'Bản demo không xuất được file')),
+  http.get(`${API}/reports/telemetry.csv`, () => problem(404, 'not_found', 'Bản demo không xuất được file')),
   // ---------- Auth ----------
   http.post(`${API}/auth/login`, wrap(async ({ request }: { request: Request }) => {
     const body = (await request.json()) as { email: string; password: string };

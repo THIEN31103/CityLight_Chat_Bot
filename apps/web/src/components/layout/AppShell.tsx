@@ -167,6 +167,7 @@ const incidentMenu = (t: ShellText): MenuEntry[] => [
 
 const functionMenu = (t: ShellText): MenuEntry[] => [
   { label: t.functionMenu.alarms, to: '/alarms', perm: 'alarm.view' },
+  { label: t.functionMenu.reports, to: '/reports', perm: 'map.view' },
   { label: t.functionMenu.schedules, to: '/schedules', perm: 'schedule.manage' },
   { label: t.functionMenu.dimming, to: '/dimming', perm: 'dimming.manage' },
   { label: t.functionMenu.batches, to: '/batches', perm: 'batch.run' },

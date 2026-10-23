@@ -11,6 +11,7 @@ import { IncidentReportPage } from './pages/incidents/IncidentReportPage';
 import { SchedulesPage } from './pages/SchedulesPage';
 import { DimmingPage } from './pages/DimmingPage';
 import { BatchesPage } from './pages/BatchesPage';
+import { ReportsPage } from './pages/ReportsPage';
 import { ActivityLogPage } from './pages/logs/ActivityLogPage';
 import { SyncLogPage } from './pages/logs/SyncLogPage';
 import { AccountPage } from './pages/AccountPage';
@@ -39,6 +40,7 @@ export const router = createBrowserRouter([
       { path: 'schedules', element: guard('schedule.manage', <SchedulesPage />) },
       { path: 'dimming', element: guard('dimming.manage', <DimmingPage />) },
       { path: 'batches', element: guard('batch.run', <BatchesPage />) },
+      { path: 'reports', element: guard('map.view', <ReportsPage />) },
       { path: 'logs/activity', element: guard('log.view', <ActivityLogPage />) },
       { path: 'logs/sync', element: guard('log.view', <SyncLogPage />) },
       { path: 'account', element: <AccountPage /> },

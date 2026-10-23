@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { useDict } from '@/i18n';
 import { CABINET } from '@/i18n/dict/cabinet';
 import { DirectionsLink } from '@/components/Directions';
+import { CabinetExportButton } from '@/components/ExportRange';
 import { ControlTab } from './ControlTab';
 import { DiagnosticsTab } from './DiagnosticsTab';
 import { MonitorTab, ChartTab, EnergyTab, LeakTempTab } from './MonitorTabs';
@@ -97,6 +98,7 @@ export function CabinetDrawer({
         )}
         <div className="flex shrink-0 items-center gap-1">
           {data && <DirectionsLink point={data.cabinet.location} icon />}
+          {data && <CabinetExportButton cabinetId={cabinetId} />}
           <button
             onClick={onToggleMode}
             className="rounded-md p-1.5 hover:bg-muted"

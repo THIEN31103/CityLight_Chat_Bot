@@ -136,6 +136,13 @@ async function upload<T>(path: string, form: FormData): Promise<T> {
   return data as T;
 }
 
+/** Export period (ISO instants, `to` exclusive) and data step (S55). */
+export interface ExportRange {
+  from: string;
+  to: string;
+  step: 'auto' | 'raw' | '5m' | '1h' | '1d';
+}
+
 const qs = (o: Record<string, string | number | boolean | undefined | null>) => {
   const p = new URLSearchParams();
   Object.entries(o).forEach(([k, v]) => {
@@ -418,6 +425,11 @@ export const api = {
   exportIncidents: (p: { q?: string; district?: string; from?: string; to?: string }) => downloadFile(`/incidents/export.xlsx${qs(p)}`, 'su-co.xlsx'),
   exportAlarms: (p: { active?: boolean; type?: string; severity?: string; district?: string; from?: string; to?: string }) =>
     downloadFile(`/alarms/export.xlsx${qs(p)}`, 'canh-bao.xlsx'),
+  /** S55: one cabinet, a sheet per drawer tab */
+  exportCabinet: (id: string, p: ExportRange) => downloadFile(`/cabinets/${id}/export.xlsx${qs({ ...p })}`, 'du-lieu-tu.xlsx'),
+  /** S55: several cabinets (zones and / or codes, "TM01.*" = prefix) */
+  exportReport: (fmt: 'xlsx' | 'csv', p: ExportRange & { zoneIds?: string; codes?: string }) =>
+    downloadFile(`/reports/telemetry.${fmt}${qs({ ...p })}`, `bao-cao-tu.${fmt}`),
   incidentReport: (month: string) => req<IncidentReport>('GET', `/incidents/report${qs({ month })}`),
 
   // schedules / dimming
