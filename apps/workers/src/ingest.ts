@@ -8,12 +8,14 @@
 //  - publish state + alarm events on Redis for the API's Socket.IO gateway
 //  - anonymous-broker guards (S42): per-LTID frame budget, implausible values dropped, frames whose IMEI does
 //    not match the cabinet's are not applied (E805 spoof_suspect, shared/identity.ts)
+//  - frames_raw (S57): every non-telemetry frame, every telemetry frame with a note or from an unregistered LTID,
+//    otherwise 1 telemetry frame per cabinet per RAW_SAMPLE_MIN minutes (0 = all)
 import mqtt from 'mqtt';
 import { Redis } from 'ioredis';
 import { TOPICS, parseBoot, parseDemo, parseTelemetry, sanitizeTelemetry, type TelemetryPatch } from '@citylight/coreif';
 import { createSql } from '@citylight/db';
 import {
-  Debouncer, FrameBudget, LOGO_LINK, MEASUREMENT_TYPES, OFFLINE_AFTER_MS, SPOOF_HOLD_MS, SWING_WINDOW_MS, activeHealthAlarms, checkImei, defaultThresholds,
+  Debouncer, FrameBudget, LOGO_LINK, MEASUREMENT_TYPES, OFFLINE_AFTER_MS, RAW_SAMPLE_MIN_DEFAULT, RawSampler, SPOOF_HOLD_MS, SWING_WINDOW_MS, activeHealthAlarms, checkImei, defaultThresholds,
   deriveCabinetStatus, errorOf, measurementAlarms, normImei,
   type AlarmType, type FwProfile, type GeoPoint, type HealthInput, type MeasureSample, type ScheduleWindow, type Thresholds,
 } from '@citylight/shared';
@@ -22,6 +24,7 @@ import { EVENTS_CHANNEL, type AlarmEvent, type CabinetStateEvent, type WorkerEve
 const MQTT_URL = process.env.MQTT_URL ?? 'mqtt://localhost:1883';
 const FLUSH_MS = Number(process.env.INGEST_FLUSH_MS ?? 500);
 const MAX_BATCH = Number(process.env.INGEST_MAX_BATCH ?? 2000);
+const RAW_SAMPLE_MIN = Number(process.env.RAW_SAMPLE_MIN ?? RAW_SAMPLE_MIN_DEFAULT);
 const SWEEP_MS = 10_000;
 
 const sql = createSql();
@@ -238,6 +241,7 @@ function warnOnce(key: string, msg: string) {
 function raw(topic: string, ltid: string | null, payload: string, parseError: string | null = null) {
   rawRows.push({ ts: new Date(), topic, ltid, payload, parse_error: parseError });
 }
+const rawSampler = new RawSampler(RAW_SAMPLE_MIN);
 
 const unknownSeen = new Map<string, { imei: string | null; otherImei: string | null; frames: number; gps: { lat: number; lng: number } | null }>();
 
@@ -364,7 +368,8 @@ async function onTelemetry(payload: string) {
   const rt = byLtid.get(t.ltid);
   const verdict = rt ? checkImei(rt.imei, t.imei) : 'ok';
   const foreign = verdict === 'mismatch' ? `IMEI ${normImei(t.imei) ?? 'X'} khác IMEI đã ghi nhận` : null;
-  raw(TOPICS.telemetry, t.ltid, payload, foreign ?? (dropped.length ? `bỏ giá trị: ${dropped.join(', ')}` : null));
+  const note = foreign ?? (dropped.length ? `bỏ giá trị: ${dropped.join(', ')}` : null);
+  if (rawSampler.keep(t.ltid, Date.now(), note !== null || !rt)) raw(TOPICS.telemetry, t.ltid, payload, note);
   if (!rt) {
     stats.unknown++;
     const imei = normImei(t.imei);

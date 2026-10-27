@@ -81,7 +81,13 @@ async function main() {
     const cid: string = reg.data.id;
     check('Đăng ký tủ (mặc định không có cảm biến nhiệt)', reg.status === 201 && (await admin.get(`/cabinets/${cid}`)).data.cabinet.hasTempSensor === false);
     await waitFor('online', async () => (await sql`SELECT 1 FROM cabinet_state WHERE cabinet_id = ${cid} AND online`).length === 1, 20_000);
-    await sleep(5000);
+    const t1 = new Date();
+    await sleep(8000);
+
+    // ---------- S57: frames_raw keeps 1 frame / 10 min of a registered cabinet (ingest RAW_SAMPLE_MIN default) ----------
+    const rawN = (await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM frames_raw WHERE ltid = ${LTID} AND ts >= ${t1}`)[0]!.n;
+    const teleN = (await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM telemetry WHERE cabinet_id = ${cid} AND ts >= ${t1}`)[0]!.n;
+    check('frames_raw chỉ lấy mẫu (≤ 1 frame) trong khi telemetry ghi mọi frame', rawN <= 1 && teleN >= 5, `raw ${rawN}, telemetry ${teleN}`);
 
     // ---------- S54: DS18B20 flag ----------
     check('Không lắp cảm biến: CTTE=1000 không bật E503', !(await tempAlarm(cid)));
@@ -115,8 +121,18 @@ async function main() {
     check('Bước 1 giờ: không có sheet Trạng thái nhánh, Công suất có cột kWh', !wbh.getWorksheet('Trạng thái nhánh') && headers(wbh.getWorksheet('Công suất')!).some((c) => c.includes('kWh')));
     const dd = await download(admin, `/cabinets/${cid}/export.xlsx?${range(30, '1d')}`);
     check('Bước 1 ngày → 200', dd.status === 200 && (await workbook(dd.buf)).getWorksheet('Điện áp')!.rowCount >= 2);
-    const big = await download(admin, `/cabinets/${cid}/export.xlsx?${range(24 * 40, 'raw')}`);
-    check('Quá nhiều dòng (từng frame 40 ngày) → 422 too_many_rows', big.status === 422 && JSON.parse(big.buf.toString()).code === 'too_many_rows', `${big.status}`);
+    const big = await download(admin, `/cabinets/${cid}/export.xlsx?${range(24 * 20, 'raw')}`);
+    check('Quá nhiều dòng (từng frame 20 ngày) → 422 too_many_rows', big.status === 422 && JSON.parse(big.buf.toString()).code === 'too_many_rows', `${big.status}`);
+    // S57: every-frame rows are kept 30 days; the 5-minute step reads telemetry_5m before that
+    const old = await download(admin, `/cabinets/${cid}/export.xlsx?${range(24 * 40, 'raw')}`);
+    const oldBody = old.status === 422 ? JSON.parse(old.buf.toString()) : null;
+    check('Từng frame quá 30 ngày → 422 raw_too_old (có lời nhắn)', oldBody?.code === 'raw_too_old' && /30 ngày/.test(oldBody.detail ?? ''), `${old.status} ${oldBody?.code}`);
+    const m5 = await download(admin, `/cabinets/${cid}/export.xlsx?${range(24 * 60, '5m')}`);
+    check('Bước 5 phút 60 ngày (bảng tổng hợp + bảng thô) → 200, có dòng gần nhất', m5.status === 200 && (await workbook(m5.buf)).getWorksheet('Điện áp')!.rowCount >= 2, `${m5.status}`);
+    const auto = await download(admin, `/reports/telemetry.xlsx?${range(24 * 45, 'auto')}&codes=${encodeURIComponent(CODE)}`);
+    const autoInfo = auto.status === 200 ? (await workbook(auto.buf)).getWorksheet('Thông tin') : undefined;
+    const autoStep = autoInfo ? ((autoInfo.getColumn(2).values as unknown[]) ?? []).map(String) : [];
+    check('Tự động với khoảng 45 ngày không chọn "từng frame"', auto.status === 200 && !autoStep.some((v) => v.startsWith('Từng frame')), `${auto.status} ${autoStep.find((v) => /phút|giờ|ngày|frame/.test(v)) ?? ''}`);
     const bad = await download(admin, `/cabinets/${cid}/export.xlsx?from=${new Date(now).toISOString()}&to=${new Date(now - 1000).toISOString()}`);
     check('Khoảng ngược → 422 invalid_range', bad.status === 422 && JSON.parse(bad.buf.toString()).code === 'invalid_range', `${bad.status}`);
 

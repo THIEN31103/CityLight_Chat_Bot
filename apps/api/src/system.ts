@@ -1,5 +1,6 @@
 import { Controller, Get, Inject, Module } from '@nestjs/common';
 import { Redis } from 'ioredis';
+import { STORAGE_POLICY } from '@citylight/shared';
 import { Public, RequirePerm } from './auth';
 import { REDIS, SQL, type Sql } from './infra';
 
@@ -44,6 +45,24 @@ export class SystemController {
       brokerConnections: c[0]?.online ?? 0,
       uptimeHours: Math.round((process.uptime() / 3600) * 10) / 10,
     };
+  }
+
+  /** S57: size of each time-series relation (with its retention / compression) and of everything else. */
+  @Get('system/storage')
+  @RequirePerm('system.view')
+  async storage() {
+    const rels = STORAGE_POLICY.map((p) => p.rel);
+    const rows = await this.sql<{ rel: string; bytes: string | null; compressed: string | null }[]>`
+      SELECT r.rel, hypertable_size(r.rel::regclass)::text AS bytes,
+             (SELECT sum(after_compression_total_bytes) FROM hypertable_compression_stats(r.rel::regclass))::text AS compressed
+      FROM unnest(${rels}::text[]) AS r(rel)`;
+    const [db] = await this.sql<{ total: string }[]>`SELECT pg_database_size(current_database())::text AS total`;
+    const items = STORAGE_POLICY.map((p) => {
+      const r = rows.find((x) => x.rel === p.rel);
+      return { name: p.rel, bytes: Number(r?.bytes ?? 0), compressedBytes: Number(r?.compressed ?? 0), keep: p.dropAfter ?? null, compressAfter: p.compressAfter ?? null };
+    });
+    const totalBytes = Number(db?.total ?? 0);
+    return { items, otherBytes: Math.max(0, totalBytes - items.reduce((s, i) => s + i.bytes, 0)), totalBytes };
   }
 }
 

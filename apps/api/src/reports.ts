@@ -1,12 +1,13 @@
 // Telemetry exports (S55, after the 2026-10-21 demo). One cabinet = one workbook with a sheet per tab of the
 // cabinet drawer (monitoring snapshot, voltage, current, power, leak / temperature, branch state, energy per day,
 // alarms, commands). Several cabinets (zones and / or cabinet codes) = one long table, Excel or CSV for data work,
-// plus a per-cabinet summary. Steps: every frame (raw, 90 days kept), 5 min, 1 h, 1 day; 1 h / 1 day read the
-// telemetry_1h aggregate (kept for good) and the raw rows of the last hours it has not materialized yet.
+// plus a per-cabinet summary. Steps: every frame (raw, RAW_TELEMETRY_DAYS = 30 days kept, S57), 5 min, 1 h, 1 day;
+// 5 min reads raw rows inside the raw window and the telemetry_5m aggregate (400 days) before it; 1 h / 1 day read
+// the telemetry_1h aggregate (kept for good) and the raw rows of the last hours it has not materialized yet.
 // Temperature only for cabinets with a DS18B20 (S54). Times in Asia/Ho_Chi_Minh, texts in the user's language.
 import { Controller, Get, Inject, Module, Param, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
-import { LABELS, alarmTypeLabels, defineDict, describeCommand, fill, type CommandType, type Lang } from '@citylight/shared';
+import { LABELS, RAW_TELEMETRY_DAYS, alarmTypeLabels, defineDict, describeCommand, fill, type CommandType, type Lang } from '@citylight/shared';
 import { z } from 'zod';
 import { AuthModule, RequirePerm, type AuthedRequest, type SessionUser } from './auth';
 import { CabinetsModule, CabinetsService } from './cabinets';
@@ -29,9 +30,15 @@ export function estimateRows(cabinets: number, from: Date, to: Date, step: Step)
   return cabinets * Math.ceil((to.getTime() - from.getTime()) / 1000 / STEP_SEC[step]);
 }
 
-export function pickStep(cabinets: number, from: Date, to: Date, wanted: Step | 'auto'): Step {
+/** Start of the raw window: older rows are dropped by the retention policy (S57); 1 day of margin for the chunk edge. */
+export function rawSince(now = Date.now()) {
+  return new Date(now - (RAW_TELEMETRY_DAYS - 1) * 86_400_000);
+}
+
+export function pickStep(cabinets: number, from: Date, to: Date, wanted: Step | 'auto', now = Date.now()): Step {
   if (wanted !== 'auto') return wanted;
-  return (['raw', '5m', '1h', '1d'] as const).find((s) => estimateRows(cabinets, from, to, s) <= AUTO_ROWS) ?? '1d';
+  const steps = from < rawSince(now) ? (['5m', '1h', '1d'] as const) : (['raw', '5m', '1h', '1d'] as const);
+  return steps.find((s) => estimateRows(cabinets, from, to, s) <= AUTO_ROWS) ?? '1d';
 }
 
 const Range = z.object({
@@ -86,6 +93,7 @@ const TEXT = defineDict(
     noCabinet: 'Không có tủ nào khớp vùng / mã đã chọn trong khu vực của bạn',
     tooManyCabinets: 'Quá {max} tủ: chọn ít vùng / mã hơn',
     badRange: 'Khoảng thời gian không hợp lệ (tối đa {days} ngày)',
+    rawTooOld: 'Dữ liệu từng frame chỉ giữ {days} ngày gần nhất: chọn bước 5 phút trở lên',
   },
   {
     file: 'cabinet-data', reportFile: 'cabinet-report',
@@ -115,6 +123,7 @@ const TEXT = defineDict(
     noCabinet: 'No cabinet in your areas matches the selected zones / codes',
     tooManyCabinets: 'More than {max} cabinets: pick fewer zones / codes',
     badRange: 'Invalid period (at most {days} days)',
+    rawTooOld: 'Every-frame data is only kept for the last {days} days: pick a 5-minute step or larger',
   },
 );
 
@@ -139,6 +148,13 @@ export class ReportsController {
     if (rows > REPORT_MAX_ROWS) throw new ApiError(422, 'too_many_rows', fill(TEXT[lang].tooMany, { rows, max: REPORT_MAX_ROWS }), { rows, max: REPORT_MAX_ROWS });
   }
 
+  /** Every-frame rows are gone before the raw window (S57). */
+  private checkStep(step: Step, from: Date, lang: Lang) {
+    if (step === 'raw' && from < rawSince()) {
+      throw new ApiError(422, 'raw_too_old', fill(TEXT[lang].rawTooOld, { days: RAW_TELEMETRY_DAYS }), { days: RAW_TELEMETRY_DAYS });
+    }
+  }
+
   /** Time series of these cabinets, one row per cabinet and bucket, ordered by cabinet then time. */
   private async series(ids: string[], from: Date, to: Date, step: Step): Promise<SeriesRow[]> {
     const sql = this.sql;
@@ -150,13 +166,22 @@ export class ReportsController {
         ORDER BY cabinet_id, ts LIMIT ${REPORT_MAX_ROWS + 1}`;
     }
     if (step === '5m') {
+      // before the raw window: telemetry_5m (no manual_mode column there -> man is empty for those rows)
+      const edge = new Date(Math.max(from.getTime(), Math.ceil(rawSince().getTime() / 300_000) * 300_000));
       return sql<SeriesRow[]>`
-        SELECT cabinet_id, time_bucket('5 minutes', ts) AS t, avg(v_l1)::real AS v1, avg(v_l2)::real AS v2, avg(v_l3)::real AS v3,
-               avg(i_l1)::real AS i1, avg(i_l2)::real AS i2, avg(i_l3)::real AS i3, avg(p_total_kw)::real AS p, avg(pf_total)::real AS pf,
-               max(leak_ma)::real AS leak, avg(temp_c)::real AS temp, bool_or(branch1_on) AS b1, bool_or(branch2_on) AS b2, bool_or(manual_mode) AS man,
-               (avg(p_total_kw) / 12)::real AS kwh, count(*)::int AS samples
-        FROM telemetry WHERE cabinet_id = ANY(${ids}::uuid[]) AND ts >= ${from} AND ts < ${to}
-        GROUP BY 1, 2 ORDER BY 1, 2`;
+        SELECT * FROM (
+          SELECT cabinet_id, bucket AS t, v_l1::real AS v1, v_l2::real AS v2, v_l3::real AS v3, i_l1::real AS i1, i_l2::real AS i2, i_l3::real AS i3,
+                 p_total_kw::real AS p, pf_total::real AS pf, leak_ma_max::real AS leak, temp_c::real AS temp, branch1_on AS b1, branch2_on AS b2,
+                 NULL::boolean AS man, (p_total_kw / 12)::real AS kwh, samples::int
+          FROM telemetry_5m WHERE cabinet_id = ANY(${ids}::uuid[]) AND bucket >= ${from} AND bucket < ${to} AND bucket < ${edge}
+          UNION ALL
+          SELECT cabinet_id, time_bucket('5 minutes', ts), avg(v_l1)::real, avg(v_l2)::real, avg(v_l3)::real,
+                 avg(i_l1)::real, avg(i_l2)::real, avg(i_l3)::real, avg(p_total_kw)::real, avg(pf_total)::real,
+                 max(leak_ma)::real, avg(temp_c)::real, bool_or(branch1_on), bool_or(branch2_on), bool_or(manual_mode),
+                 (avg(p_total_kw) / 12)::real, count(*)::int
+          FROM telemetry WHERE cabinet_id = ANY(${ids}::uuid[]) AND ts >= ${edge} AND ts < ${to}
+          GROUP BY 1, 2
+        ) s ORDER BY 1, 2`;
     }
     // telemetry_1h is materialized up to ~1 h ago (policy end_offset): older hours from it, the rest from raw rows
     const cut = new Date(Math.floor((Date.now() - 2 * 3_600_000) / 3_600_000) * 3_600_000);
@@ -198,6 +223,7 @@ export class ReportsController {
     const detail = await this.cabinets.detail(u.scope, id);
     const cid = detail.cabinet.id;
     const step = pickStep(1, p.from, p.to, p.step);
+    this.checkStep(step, p.from, lang);
     this.checkRows(estimateRows(1, p.from, p.to, step), lang);
     const rows = await this.series([cid], p.from, p.to, step);
     this.checkRows(rows.length, lang);
@@ -336,6 +362,7 @@ export class ReportsController {
     if (!cabs.length) throw new ApiError(422, 'no_cabinet', T.noCabinet);
     if (cabs.length > MAX_CABINETS) throw new ApiError(422, 'too_many_cabinets', fill(T.tooManyCabinets, { max: MAX_CABINETS }), { max: MAX_CABINETS });
     const step = pickStep(cabs.length, p.from, p.to, p.step);
+    this.checkStep(step, p.from, lang);
     this.checkRows(estimateRows(cabs.length, p.from, p.to, step), lang);
     const rows = await this.series(cabs.map((c) => c.id), p.from, p.to, step);
     this.checkRows(rows.length, lang);

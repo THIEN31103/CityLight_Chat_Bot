@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { createDb } from './index';
+import { syncStoragePolicy } from './storage-policy';
 
 const { db, client } = createDb();
 await migrate(db, { migrationsFolder: fileURLToPath(new URL('../migrations', import.meta.url)) });
@@ -20,4 +21,8 @@ for (const file of readdirSync(postDir).filter((f) => f.endsWith('.sql')).sort()
   for (const st of statements) await client.unsafe(st);
   console.log(`[db] post script ${file}: ${statements.length} statements`);
 }
+
+// S57: chunk interval / compression / retention, after the aggregates exist
+const changed = await syncStoragePolicy(client);
+console.log(`[db] storage policy: ${changed.length ? changed.join('; ') : 'unchanged'}`);
 await client.end();

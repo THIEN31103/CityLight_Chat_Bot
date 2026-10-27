@@ -737,10 +737,23 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
       ingestLagMs: Math.round(80 + Math.random() * 120),
       commandQueue: commands.filter((c) => c.status === 'queued' || c.status === 'sent').length,
       ackErrors24h: commands.filter((c) => c.status === 'failed' || c.status === 'timeout').length,
-      dbSizeGb: 1.8,
+      dbSizeGb: 5.6, // = total of /system/storage below
       brokerConnections: online + 3,
       uptimeHours: 72.4,
     });
+  })),
+  // S57: sizes of a ~600-cabinet system in steady state (scaled from the 2026-10-27 measurement)
+  http.get(`${API}/system/storage`, wrap(() => {
+    const GB = 1024 ** 3;
+    const items = [
+      { name: 'telemetry', bytes: 3.8 * GB, compressedBytes: 3.5 * GB, keep: '30 days', compressAfter: '6 hours' },
+      { name: 'frames_raw', bytes: 0.09 * GB, compressedBytes: 0.06 * GB, keep: '7 days', compressAfter: '1 day' },
+      { name: 'telemetry_5m', bytes: 1.1 * GB, compressedBytes: 0.9 * GB, keep: '400 days', compressAfter: '7 days' },
+      { name: 'telemetry_1h', bytes: 0.25 * GB, compressedBytes: 0.1 * GB, keep: null, compressAfter: '30 days' },
+      { name: 'telemetry_1d', bytes: 0.02 * GB, compressedBytes: 0, keep: null, compressAfter: null },
+    ].map((i) => ({ ...i, bytes: Math.round(i.bytes), compressedBytes: Math.round(i.compressedBytes) }));
+    const otherBytes = Math.round(0.3 * GB);
+    return HttpResponse.json({ items, otherBytes, totalBytes: items.reduce((s, i) => s + i.bytes, otherBytes) });
   })),
   http.get(`${API}/server-time`, () => HttpResponse.json({ now: new Date().toISOString() })),
 ];

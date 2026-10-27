@@ -327,6 +327,13 @@ export interface SystemStats {
   uptimeHours: number;
 }
 
+/** S57: size of each time-series relation and its retention / compression (interval text, null = kept / never). */
+export interface SystemStorage {
+  items: { name: string; bytes: number; compressedBytes: number; keep: string | null; compressAfter: string | null }[];
+  otherBytes: number;
+  totalBytes: number;
+}
+
 export interface UnknownDevice {
   ltid: string;
   imei: string;
@@ -488,4 +495,5 @@ export const api = {
   saveSettings: (b: { offlineAfterS: number; lampGroupLabels: Record<string, string>; pricePerKwh?: number }) => req<SystemSettings>('PUT', '/settings', b),
   alarmRules: () => req<AlarmRule[]>('GET', '/alarm-rules'),
   systemStats: () => req<SystemStats>('GET', '/system/stats'),
+  systemStorage: () => req<SystemStorage>('GET', '/system/storage'),
 };

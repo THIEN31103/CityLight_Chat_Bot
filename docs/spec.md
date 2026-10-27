@@ -88,9 +88,11 @@ Process (cùng codebase, khác entrypoint): `api`, `ingest`, `command-worker`, `
 
 ### 3.2 Lưu trữ
 
-- `telemetry_raw`: hypertable, chunk 1 ngày, nén sau 2 ngày, **giữ 90 ngày**.
-- Continuous aggregates: `5m`, `1h`, `1d` (min/max/avg U, I, P, cosφ; năng lượng). Giữ lâu dài.
-- `frames_raw` (chuỗi frame gốc): giữ 7 ngày, phục vụ debug.
+Theo S57 (2026-10-27, `packages/shared/src/storage.ts`, áp mỗi lần `migrate`):
+- `telemetry` (từng frame): hypertable, chunk 6 giờ, nén sau 6 giờ, **giữ 30 ngày**.
+- Continuous aggregates (min/max/avg U, I, P, cosφ; năng lượng): `telemetry_5m` nén sau 7 ngày, giữ 400 ngày; `telemetry_1h` nén sau 30 ngày, giữ mãi; `telemetry_1d` giữ mãi.
+- `frames_raw` (chuỗi frame gốc, gỡ lỗi): frame không phải telemetry, frame lỗi / có ghi chú / LTID lạ, và 1 frame telemetry / tủ / 10 phút; nén sau 1 ngày, giữ 7 ngày.
+- Backup hằng đêm không chứa dữ liệu `telemetry` và `frames_raw` (lịch sử còn ở các bảng tổng hợp).
 
 ---
 

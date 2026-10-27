@@ -14,3 +14,4 @@ export * from './relocate';
 export * from './identity';
 export * from './security';
 export * from './i18n';
+export * from './storage';

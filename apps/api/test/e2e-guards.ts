@@ -137,9 +137,10 @@ async function main() {
     // ---------- frame budget ----------
     await sleep(6000); // bucket full again
     const t0 = new Date();
-    for (let i = 0; i < 40; i++) send(forge(sim, { MPU1: String(200 + i / 10) }));
+    // implausible voltage = a guard note, so every frame past the budget is kept raw despite the 1 / 10 min sampling
+    // of frames_raw (S57); telemetry itself dedupes frames of the same millisecond
+    for (let i = 0; i < 40; i++) send(forge(sim, { MPU1: String(5000 + i) }));
     await sleep(2500);
-    // every frame past the budget is kept raw (telemetry itself dedupes frames of the same millisecond)
     const kept = (await sql<{ n: number }[]>`SELECT count(*)::int AS n FROM frames_raw WHERE ltid = ${LTID} AND ts >= ${t0}`)[0]!.n;
     check('Xả 40 frame/lúc cho 1 LTID → chỉ ~5 frame qua được', kept >= 4 && kept <= 8, `${kept}/40`);
 

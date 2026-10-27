@@ -41,7 +41,7 @@ Từ laptop: `npm run e2e:vps` (Playwright, 6 kiểm tra không cần đăng nh�
 
 ## 4. Backup và khôi phục
 
-- Hằng ngày 02:15 (cron user `ubuntu`): `infra/scripts/backup-db.sh` → `/opt/citylight/backups/db-*.sql.gz` + `uploads-*.tar.gz`, giữ 14 ngày. Kiểm: `crontab -l`, `tail backups/backup.log`. Cron gọi script qua `sh …` (2026-10-20: deploy bằng `git archive` từng làm mất quyền thực thi → backup 02:15 và watchdog lỗi "Permission denied" suốt 17 h; script giờ lưu mode 755 trong git).
+- Hằng ngày 02:15 (cron user `ubuntu`): `infra/scripts/backup-db.sh` → `/opt/citylight/backups/db-*.sql.gz` + `uploads-*.tar.gz`, giữ 14 ngày. Từ S57 bản dump **không chứa dữ liệu `telemetry` (từng frame) và `frames_raw`**: khôi phục xong thì biểu đồ vài ngày gần nhất trống tới khi tủ gửi frame mới; lịch sử dài nằm ở `telemetry_5m` / `1h` / `1d`. Cần dump đủ (ví dụ trước một migration viết lại 2 bảng đó): `FULL=1 sh infra/scripts/backup-db.sh`. Kiểm: `crontab -l`, `tail backups/backup.log`. Cron gọi script qua `sh …` (2026-10-20: deploy bằng `git archive` từng làm mất quyền thực thi → backup 02:15 và watchdog lỗi "Permission denied" suốt 17 h; script giờ lưu mode 755 trong git).
 - Bản ngoài VPS: Task Scheduler laptop **"CityLight backup pull"** (08:30 hằng ngày + khi đăng nhập, chạy bù) → `D:\CityLightBackups\vps`, giữ 60 ngày, log `pull.log`. Chạy tay: `powershell -ExecutionPolicy Bypass -File infra\scripts\pull-backups.ps1`. Chỉ kéo bản **mã hóa** `*.age` (S46); khi VPS chưa có bản `.age` thì kéo bản rõ và ghi `WARN plain` vào log.
 
 ### 4.1 Mã hóa backup (S46)
@@ -101,7 +101,10 @@ git archive HEAD | ssh -i ~/.ssh/citylight_aws ubuntu@13.55.91.187 'tar -x -C /o
 dc build
 dc run --rm --no-deps -w /app/packages/db api node --import tsx src/migrate.ts
 dc up -d
+docker builder prune -af   # S57: build cache cũ (đo 23/10: 8,7 GB, 7,2 GB xóa được)
 ```
+
+`migrate` cũng áp chính sách lưu trữ S57 (dòng `[db] storage policy: …` = đã đổi gì, `unchanged` = đã đúng).
 
 4. Từ laptop: web.
 
@@ -144,7 +147,7 @@ Thứ tự S53: deploy server + ACL **trước** khi nạp firmware topic riêng
   - Vẫn giả được: ack lệnh trên `stm32/ec25/echo` (không có IMEI). Hết hẳn khi có user/pass.
 - **MQTT user/pass (S43)**: cổng 1883 bắt buộc tài khoản tủ chung `MQTT_DEVICE_USERNAME` / `MQTT_DEVICE_PASSWORD` (trong `/opt/citylight/infra/.env`); backend dùng 1885 trong mạng Docker (không mở ra ngoài). Tủ không có / sai mật khẩu: EMQX trả CONNACK 4/5, không thấy trong `emqx ctl clients list`. **Đổi mật khẩu**: sửa 2 dòng trong `.env` → `sh /opt/citylight/infra/scripts/emqx-device-account.sh` (tủ đang nối không bị ngắt; nạp firmware mật khẩu mới **trước**, không thì tủ không nối lại được). Kiểm local: `npm run e2e:mqtt-auth`.
 
-## 8. Dung lượng (đo 2026-10-21, chưa xử lý)
+## 8. Dung lượng (đo 2026-10-21; đã xử lý ở 8.1, S57)
 
 Mỗi frame telemetry ghi **2 dòng**: `telemetry` (nén sau 2 ngày, giữ 90 ngày) và `frames_raw` (frame thô, **không nén**, giữ 7 ngày).
 Đo trên VPS: payload trung bình 315 B; khoảng **565 B/dòng `frames_raw`** và **280 B/dòng `telemetry`** gồm index
@@ -158,3 +161,26 @@ Mỗi frame telemetry ghi **2 dòng**: `telemetry` (nén sau 2 ngày, giữ 90 n
 Đĩa VPS 77 GB (còn ~59 GB). **Phải xử lý trước khi vượt vài trăm tủ**, ví dụ: giữ `frames_raw` vài giờ hoặc chỉ giữ frame lỗi /
 frame lạ, nén `telemetry` sau vài giờ thay vì 2 ngày, hoặc gắn thêm đĩa (Lightsail block storage). Theo dõi: `df -h /`,
 `SELECT pg_size_pretty(hypertable_size('frames_raw'))` trong psql.
+
+### 8.1 Đã xử lý: chính sách lưu trữ S57 (2026-10-27)
+
+Đo local (200 tủ × 1 ngày, 10 s/frame, dữ liệu giống thật): `telemetry` **222 → 23 B/dòng** khi nén (9,3×), `frames_raw` **496 → 28 B/dòng** (17,8×).
+
+| Bảng | Chunk | Nén sau | Giữ |
+|---|---|---|---|
+| `telemetry` (từng frame) | 6 giờ | 6 giờ | **30 ngày** |
+| `frames_raw` (chỉ frame không phải telemetry, frame lỗi / có ghi chú / LTID lạ, 1 frame / tủ / 10 phút) | 1 ngày | 1 ngày | 7 ngày |
+| `telemetry_5m` | — | 7 ngày | 400 ngày |
+| `telemetry_1h` | — | 30 ngày | mãi |
+| `telemetry_1d` | — | — | mãi |
+
+| Số tủ | `telemetry` 30 ngày | `frames_raw` | `telemetry_5m` 400 ngày | `1h` / `1d` | Tổng ổn định |
+|---|---|---|---|---|---|
+| 500 | ~3,2 GB | < 0,1 GB | ~1 GB | ~0,1 GB / năm | **~4,5 GB** |
+| 1.000 | ~6,4 GB | ~0,1 GB | ~2 GB | ~0,2 GB / năm | **~9 GB** |
+| 10.000 | ~64 GB | ~1 GB | ~20 GB | ~2 GB / năm | **~90 GB** → thêm đĩa |
+
+- Đổi số: sửa `packages/shared/src/storage.ts` → deploy → `migrate` tự áp (chỉ đổi phần khác). Chunk mới mới theo kích thước mới.
+- Lấy mẫu `frames_raw`: biến `RAW_SAMPLE_MIN` của ingest (mặc định 10; `0` = ghi mọi frame khi cần gỡ lỗi một thời gian).
+- Log Docker: `docker-compose.prod.yml` giới hạn 3 × 10 MB / container (áp khi `dc up -d` tạo lại container).
+- Theo dõi: trang **Giám sát hệ thống** → bảng "Dung lượng dữ liệu"; `df -h /`; `docker system df`.

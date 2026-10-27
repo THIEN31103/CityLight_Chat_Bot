@@ -284,7 +284,8 @@ export const CABINET = defineDict(
       warnNoReplace: 'không ai thay modem',
       warnKeep: 'giữ nguyên IMEI',
       colImei: 'IMEI trong frame (24 giờ qua)',
-      colFrames: 'Số frame',
+      // S57: frames_raw keeps 1 frame / 10 min of the registered IMEI, every frame of another IMEI
+      colFrames: 'Số frame đã lưu',
       colLast: 'Gần nhất',
       noFrames: 'Không có frame nào trong 24 giờ',
       noImei: '(không có IMEI)',
@@ -599,7 +600,7 @@ export const CABINET = defineDict(
       warnNoReplace: 'nobody replaced the modem',
       warnKeep: 'keep the IMEI',
       colImei: 'IMEI in frames (last 24 hours)',
-      colFrames: 'Frames',
+      colFrames: 'Frames stored',
       colLast: 'Last seen',
       noFrames: 'No frames in the last 24 hours',
       noImei: '(no IMEI)',

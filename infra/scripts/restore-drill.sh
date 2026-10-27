@@ -36,7 +36,14 @@ echo "drill: restore ok in $(( $(date +%s) - START )) s"
 TABLES=$(docker exec citylight-db psql -U citylight -d citylight -tAc \
   "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY 1")
 bad=0; n=0
-for t in $TABLES; do
+# S57: backup-db.sh leaves out the rows of these two (unless FULL=1): only check that the table came back
+for t in telemetry frames_raw; do
+  rest=$(docker exec "$NAME" psql -U citylight -d citylight -tAc "SELECT count(*) FROM public.\"$t\"" 2>/dev/null || echo MISSING)
+  [ "$rest" = MISSING ] && { bad=$((bad + 1)); echo "  MISSING $t"; } || echo "  skipped $t (rows not in the backup, restored=$rest)"
+done
+# history lives in the aggregates (views, so not in TABLES): compare them like tables
+for t in $TABLES telemetry_5m telemetry_1h telemetry_1d; do
+  case "$t" in telemetry|frames_raw) continue ;; esac
   live=$(docker exec citylight-db psql -U citylight -d citylight -tAc "SELECT count(*) FROM public.\"$t\"")
   rest=$(docker exec "$NAME" psql -U citylight -d citylight -tAc "SELECT count(*) FROM public.\"$t\"" 2>/dev/null || echo MISSING)
   n=$((n + 1))
