@@ -13,6 +13,7 @@ REPEAT_MIN=${REPEAT_MIN:-60}
 DISK_MAX=${DISK_MAX:-85}
 BACKUP_MAX_H=${BACKUP_MAX_H:-26}
 QUIET_MIN=${QUIET_MIN:-15}
+BROKER_DOWN_MIN=${BROKER_DOWN_MIN:-5}
 CONTAINERS="db redis emqx api ingest command scheduler notify caddy"
 
 envv() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2-; }
@@ -52,11 +53,29 @@ if [ -s "$ROOT/infra/backup-recipients.txt" ]; then
   fi
 fi
 
-# registered cabinets but no frame at all for QUIET_MIN: broker or ingest is stuck (one offline cabinet is an alarm, not this)
+# registered cabinets but no frame at all for QUIET_MIN: broker or ingest is stuck (one offline cabinet is an alarm, not this).
+# telemetry, not frames_raw: since S57 frames_raw keeps only 1 frame per cabinet per 10 min
 reg=$(SQL "SELECT count(*) FROM cabinets WHERE active")
 if [ "${reg:-0}" -gt 0 ]; then
-  recent=$(SQL "SELECT count(*) FROM frames_raw WHERE ts > now() - interval '$QUIET_MIN minutes'")
+  recent=$(SQL "SELECT count(*) FROM telemetry WHERE ts > now() - interval '$QUIET_MIN minutes'")
   [ "${recent:-0}" -eq 0 ] && add "no MQTT frame from any of $reg cabinets for $QUIET_MIN min"
+fi
+
+# ingest <-> broker link (written by ingest every 30 s, cl:ingest:mqtt): while it is down ingest pauses the offline
+# checks, so this single message replaces one E101 per cabinet
+link=$(docker exec citylight-redis redis-cli -a "$(envv REDIS_PASSWORD)" --no-auth-warning GET cl:ingest:mqtt 2>/dev/null)
+field() { echo "$link" | grep -o "\"$1\":[^,}]*" | cut -d: -f2- | tr -d '"'; }
+if [ -z "$link" ]; then
+  add "ingest has never reported its broker link (cl:ingest:mqtt missing)"
+else
+  at=$(date -d "$(field at)" +%s 2>/dev/null || echo 0)
+  if [ $(( $(date +%s) - at )) -gt 180 ]; then
+    add "ingest stopped reporting its broker link $(( ($(date +%s) - at) / 60 )) min ago: ingest stuck?"
+  elif [ "$(field connected)" = false ]; then
+    since=$(date -d "$(field since)" +%s 2>/dev/null || date +%s)
+    down_min=$(( ($(date +%s) - since) / 60 ))
+    [ "$down_min" -ge "$BROKER_DOWN_MIN" ] && add "ingest lost the MQTT broker ${down_min} min ago: cabinet status is frozen (no offline alarms meanwhile)"
+  fi
 fi
 
 end=$(echo | timeout 10 openssl s_client -connect "$SITE:443" -servername "$SITE" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)

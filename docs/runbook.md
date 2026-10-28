@@ -31,7 +31,7 @@ Từ laptop: `npm run e2e:vps` (Playwright, 6 kiểm tra không cần đăng nh�
 
 ## 3. Giám sát và cảnh báo
 
-- **Watchdog trên VPS** (`infra/scripts/watchdog.sh`, cron mỗi 5 phút, log `backups/watchdog.log`): container chết / unhealthy, API health, cổng 1883, đĩa ≥ 85 %, backup mới nhất > 26 h, có tủ đăng ký mà 15 phút không có frame MQTT nào, chứng chỉ HTTPS < 14 ngày.
+- **Watchdog trên VPS** (`infra/scripts/watchdog.sh`, cron mỗi 5 phút, log `backups/watchdog.log`): container chết / unhealthy, API health, cổng 1883, đĩa ≥ 85 %, backup mới nhất > 26 h, có tủ đăng ký mà 15 phút không có frame MQTT nào (đếm `telemetry`), ingest mất broker ≥ 5 phút hoặc ingest không báo trạng thái broker > 3 phút (Redis `cl:ingest:mqtt`, S58), chứng chỉ HTTPS < 14 ngày.
   Gửi Telegram tới **admin đã liên kết bot** (Tài khoản → Telegram), lặp lại mỗi 60 phút khi lỗi còn, báo một lần khi hết. Danh sách chat được lưu tạm `infra/.watchdog-chats` để vẫn gửi được khi DB chết.
 - **Không tự báo được khi cả VPS chết.** Cần monitor bên ngoài (chưa có, cần tài khoản của Bảo):
   - UptimeRobot (miễn phí, 5 phút): monitor *Keyword* `https://13-55-91-187.sslip.io/api/v1/health` chứa `"status":"ok"`, + monitor *Port* `13.55.91.187:1883`; báo qua email / Telegram.
@@ -129,6 +129,7 @@ Thứ tự S53: deploy server + ACL **trước** khi nạp firmware topic riêng
 | Triệu chứng | Kiểm | Xử lý |
 |---|---|---|
 | Watchdog báo container X | `docker logs --since 10m citylight-X` | `dc up -d <service>` (service: `db redis emqx api ingest command-worker notify-worker scheduler caddy`); lặp lại thì xem log trước khi restart |
+| Watchdog "ingest lost the MQTT broker" | `docker logs --since 10m citylight-ingest` (`lost the broker`, `Connection refused`), `docker ps` EMQX | Trong lúc này trạng thái tủ **đứng yên** và **không có E101** (S58, có chủ đích). EMQX chết → `dc up -d emqx`; ingest tự nối lại (2 s / lần, kể cả khi EMQX từ chối CONNACK). Trial: kiểm VPN (`wg show`) |
 | Tủ không lên web | `emqx ctl clients list` có client `ec25_*`? `frames_raw` có `ltid` đó? `unknown_devices`? | Chưa đăng ký → Quản trị → Thiết bị chưa đăng ký. Không có client → phía tủ (4G, LDOM/LPOR) |
 | Lệnh `timeout` | `commands` (status, ack_rc, error), tủ có subscribe `stm32/ec25/cmd` không | Firmware cũ `1307ebc` bị chặn điều khiển có chủ đích |
 | `rc:0` nhưng đèn không đổi (`acked_unconfirmed`) | `PCON`, `PTIM` trong telemetry | LTE đã ghi PLC_KEY nhưng PLC↔LOGO (ETH) mất: xem LED PB5 trên PLC_KEY |

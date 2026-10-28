@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeHealthAlarms, buildDiagnostics, deriveCabinetStatus, type HealthInput } from '../src';
+import { activeHealthAlarms, buildDiagnostics, deriveCabinetStatus, healthChecksPaused, type HealthInput } from '../src';
 
 const NOW = Date.parse('2026-10-17T12:00:00Z');
 const base: HealthInput = {
@@ -100,5 +100,17 @@ describe('buildDiagnostics', () => {
     expect(by['LOGO (qua module ETH)']!.status).toBe('unknown');
     expect(by['Đồng hồ điện DH']!.status).toBe('unknown');
     expect(by['Cảm biến nhiệt DS18B20']!.status).toBe('unknown');
+  });
+});
+
+describe('healthChecksPaused (ingest lost the broker)', () => {
+  const grace = 60_000;
+  it('pauses while disconnected or before the first subscription', () => {
+    expect(healthChecksPaused({ connected: false, upSinceMs: null }, NOW, grace)).toBe(true);
+    expect(healthChecksPaused({ connected: true, upSinceMs: null }, NOW, grace)).toBe(true);
+  });
+  it('pauses for offline_after once the link is back, then runs', () => {
+    expect(healthChecksPaused({ connected: true, upSinceMs: NOW - 59_000 }, NOW, grace)).toBe(true);
+    expect(healthChecksPaused({ connected: true, upSinceMs: NOW - 60_000 }, NOW, grace)).toBe(false);
   });
 });

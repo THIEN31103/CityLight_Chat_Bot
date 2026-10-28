@@ -2,7 +2,8 @@
 //  - shared subscription on the uplink topics (EMQX hash_clientid keeps one cabinet on one instance)
 //  - parse with @citylight/coreif, keep per-cabinet runtime state in memory
 //  - batch-write telemetry / raw frames / cabinet_state every FLUSH_MS
-//  - device-health alarms (shared/health.ts) opened / closed as state changes; offline sweep every 10 s
+//  - device-health alarms (shared/health.ts) opened / closed as state changes; offline sweep every 10 s,
+//    paused while ingest has lost the broker and for offline_after once it is back (no mass E101 on an outage)
 //  - measurement alarms (shared/rules.ts, M5): thresholds (cabinet > zone > default), schedule applied by
 //    the server, clock, GPS; debounced per cabinet; config reloaded on Redis "cl:config" + every 60 s
 //  - publish state + alarm events on Redis for the API's Socket.IO gateway
@@ -15,7 +16,7 @@ import { Redis } from 'ioredis';
 import { TOPICS, parseBoot, parseDemo, parseTelemetry, sanitizeTelemetry, type TelemetryPatch } from '@citylight/coreif';
 import { createSql } from '@citylight/db';
 import {
-  Debouncer, FrameBudget, LOGO_LINK, MEASUREMENT_TYPES, OFFLINE_AFTER_MS, RAW_SAMPLE_MIN_DEFAULT, RawSampler, SPOOF_HOLD_MS, SWING_WINDOW_MS, activeHealthAlarms, checkImei, defaultThresholds,
+  Debouncer, FrameBudget, LOGO_LINK, healthChecksPaused, MEASUREMENT_TYPES, OFFLINE_AFTER_MS, RAW_SAMPLE_MIN_DEFAULT, RawSampler, SPOOF_HOLD_MS, SWING_WINDOW_MS, activeHealthAlarms, checkImei, defaultThresholds,
   deriveCabinetStatus, errorOf, measurementAlarms, normImei,
   type AlarmType, type FwProfile, type GeoPoint, type HealthInput, type MeasureSample, type ScheduleWindow, type Thresholds,
 } from '@citylight/shared';
@@ -226,6 +227,16 @@ const rawRows: { ts: Date; topic: string; ltid: string | null; payload: string; 
 const dirty = new Set<string>();
 const stateEvents = new Map<string, CabinetStateEvent>();
 const stats = { frames: 0, telemetry: 0, unknown: 0, parseErrors: 0, throttled: 0, sanitized: 0, spoofed: 0, flushes: 0, lastFlushMs: 0, lagMs: 0 };
+/** ingest <-> broker link: offline checks pause while it is down (shared/health.ts healthChecksPaused) */
+const brokerLink = { connected: false, upSinceMs: null as number | null, downSinceMs: Date.now() as number | null };
+/** Read by the API (system page) and infra/scripts/watchdog.sh: {connected, since, at} */
+const BROKER_KEY = 'cl:ingest:mqtt';
+function publishBrokerLink() {
+  const since = brokerLink.connected ? brokerLink.upSinceMs : brokerLink.downSinceMs;
+  void redis
+    .set(BROKER_KEY, JSON.stringify({ connected: brokerLink.connected, since: since ? new Date(since).toISOString() : null, at: new Date().toISOString() }))
+    .catch(() => undefined);
+}
 /** per-LTID budget: firmware sends <= 1 frame/s; a flood under one LTID is dropped before it costs a DB write */
 const budget = new FrameBudget(5, 1);
 const lastWarn = new Map<string, number>();
@@ -659,6 +670,11 @@ async function markOffline(list: Runtime[], now: number) {
 
 async function sweep() {
   const now = Date.now();
+  if (healthChecksPaused(brokerLink, now, offlineAfterMs)) {
+    for (const rt of byId.values()) updateBootCounters(rt, now);
+    warnOnce('sweep:paused', `[ingest] broker link ${brokerLink.connected ? 'just back' : 'down'}: offline / time-based checks paused`);
+    return;
+  }
   const wentSilent: Runtime[] = [];
   for (const rt of byId.values()) {
     updateBootCounters(rt, now);
@@ -702,8 +718,12 @@ const mq = mqtt.connect(MQTT_URL, {
   clientId: `cl-ingest-${process.pid}`,
   username: process.env.MQTT_USERNAME,
   password: process.env.MQTT_PASSWORD,
-  keepalive: 30,
+  // a lost link is noticed after ~1.5 x keepalive: 15 s -> ~22 s, well inside the shortest offline_after (30 s)
+  keepalive: 15,
   reconnectPeriod: 2000,
+  // mqtt.js stops for good after a refused CONNACK unless told otherwise; EMQX refuses transiently right after it
+  // comes back ("Identifier rejected", seen 2026-10-28 in e2e:broker-outage) and ingest then never reconnected
+  reconnectOnConnackError: true,
   clean: true,
 });
 mq.on('connect', () => {
@@ -713,7 +733,18 @@ mq.on('connect', () => {
     const denied = granted?.filter((g) => g.qos === 128) ?? [];
     if (denied.length) console.error(`[ingest] broker denied ${denied.map((g) => g.topic).join(', ')} — check MQTT_USERNAME vs infra/emqx/acl.conf`);
     else console.log(`[ingest] subscribed ${subs.length} topics on ${MQTT_URL}`);
+    // the link counts as up only once frames can flow (subscribed); the grace period starts here
+    if (!err && !denied.length && !brokerLink.connected) {
+      Object.assign(brokerLink, { connected: true, upSinceMs: Date.now(), downSinceMs: null });
+      publishBrokerLink();
+    }
   });
+});
+mq.on('close', () => {
+  if (!brokerLink.connected) return;
+  Object.assign(brokerLink, { connected: false, upSinceMs: null, downSinceMs: Date.now() });
+  console.warn(`[ingest] lost the broker ${MQTT_URL}: offline checks paused until it is back`);
+  publishBrokerLink();
 });
 mq.on('error', (e) => console.error('[ingest] mqtt', e.message));
 
@@ -735,7 +766,9 @@ setInterval(() => void (chain = chain.then(sweep)), SWEEP_MS);
 setInterval(() => {
   console.log(`[ingest] frames ${stats.frames} · telemetry ${stats.telemetry} · unknown ${stats.unknown} · parse errors ${stats.parseErrors} · throttled ${stats.throttled} · sanitized ${stats.sanitized} · foreign IMEI ${stats.spoofed} · last flush ${stats.lastFlushMs} ms · queue ${telemetryRows.length}`);
   void redis.set('cl:ingest:stats', JSON.stringify({ ...stats, at: Date.now(), queue: telemetryRows.length })).catch(() => undefined);
+  publishBrokerLink(); // refreshes "at": a stale key means ingest itself is stuck
 }, 30_000);
+publishBrokerLink();
 
 async function shutdown() {
   await flush();

@@ -355,6 +355,7 @@ const mq = mqtt.connect(MQTT_URL, {
   password: process.env.MQTT_PASSWORD,
   keepalive: 30,
   reconnectPeriod: 2000,
+  reconnectOnConnackError: true, // else one refused CONNACK (EMQX just restarted) stops reconnecting for good
   clean: true,
 });
 mq.on('connect', () => {

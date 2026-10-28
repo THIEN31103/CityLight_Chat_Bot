@@ -28,6 +28,9 @@ export class SystemController {
     const c = await this.sql<{ online: number; total: number }[]>`
       SELECT count(*) FILTER (WHERE s.online)::int AS online, count(*)::int AS total FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id WHERE c.active`;
     const ingest = JSON.parse((await this.redis.get('cl:ingest:stats')) ?? '{}') as { lastFlushMs?: number; queue?: number };
+    // ingest refreshes this every 30 s; older than 90 s = ingest itself is not running
+    const link = JSON.parse((await this.redis.get('cl:ingest:mqtt')) ?? 'null') as { connected: boolean; since: string | null; at: string } | null;
+    const linkFresh = !!link && Date.now() - Date.parse(link.at) < 90_000;
     const size = await this.sql<{ gb: number }[]>`SELECT round(pg_database_size(current_database()) / 1024.0 / 1024 / 1024, 2)::float AS gb`;
     const rate = await this.sql<{ n: number }[]>`SELECT count(*)::int AS n FROM telemetry WHERE ts > now() - interval '1 minute'`;
     const cmd = await this.sql<{ open: number; errors: number }[]>`
@@ -43,6 +46,8 @@ export class SystemController {
       ackErrors24h: cmd[0]?.errors ?? 0,
       dbSizeGb: size[0]?.gb ?? 0,
       brokerConnections: c[0]?.online ?? 0,
+      /** ingest <-> broker; null = no fresh report from ingest */
+      brokerLink: linkFresh ? { connected: link!.connected, since: link!.since } : null,
       uptimeHours: Math.round((process.uptime() / 3600) * 10) / 10,
     };
   }

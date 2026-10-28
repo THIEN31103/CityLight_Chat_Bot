@@ -38,6 +38,17 @@ export interface HealthInput {
 }
 
 export const OFFLINE_AFTER_MS = 60_000;
+
+/**
+ * Time-based health checks (offline, PTIM frozen, GPS grace, flapping) need the frame stream. When ingest itself has
+ * lost the broker (EMQX down, the VPN to a customer's broker down, ingest just started), silence says nothing about
+ * the cabinets: pause the checks while disconnected and for `graceMs` (= offline_after) after the link is back, so
+ * every live cabinet has sent a frame again before anyone is called offline.
+ */
+export function healthChecksPaused(link: { connected: boolean; upSinceMs: number | null }, nowMs: number, graceMs: number): boolean {
+  return !link.connected || link.upSinceMs === null || nowMs - link.upSinceMs < graceMs;
+}
+
 /** LOGO RTC has minute resolution and PLC_KEY reads it every 30 s: a new minute shows within ~95 s. */
 export const PTIM_STALE_MS = 150_000;
 /** PTIM'X with PCON=1 for this long = LOGO lost (one 10 s frame of X may be a PLC_KEY boot). */

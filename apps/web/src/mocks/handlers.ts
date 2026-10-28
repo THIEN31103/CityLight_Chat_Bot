@@ -739,6 +739,7 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
       ackErrors24h: commands.filter((c) => c.status === 'failed' || c.status === 'timeout').length,
       dbSizeGb: 5.6, // = total of /system/storage below
       brokerConnections: online + 3,
+      brokerLink: { connected: true, since: new Date(Date.now() - 72.4 * 3_600_000).toISOString() },
       uptimeHours: 72.4,
     });
   })),

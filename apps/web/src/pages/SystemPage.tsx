@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { useDict } from '@/i18n';
+import { fill, useDict } from '@/i18n';
 import { SYSTEM } from '@/i18n/dict/system';
 import { Card, CardHeader, PageHeader, Spinner } from '@/components/ui';
+import { cn, fmtTime } from '@/lib/utils';
 
 const mb = (bytes: number) => (bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`);
 
@@ -20,7 +21,12 @@ export function SystemPage() {
   const items = data
     ? [
         { label: t.cabinetsOnline, value: `${data.cabinetsOnline} / ${data.cabinetsTotal}` },
-        { label: t.brokerConnections, value: data.brokerConnections },
+        {
+          label: t.brokerConnections,
+          value: !data.brokerLink ? t.broker.unknown : data.brokerLink.connected ? t.broker.up : t.broker.down,
+          note: data.brokerLink?.since ? fill(t.broker.since, { time: fmtTime(data.brokerLink.since) }) : undefined,
+          bad: !data.brokerLink?.connected,
+        },
         { label: t.telemetry, value: `${data.msgPerSec} msg/s` },
         { label: t.ingestLag, value: `${data.ingestLagMs} ms` },
         { label: t.commandQueue, value: data.commandQueue },
@@ -39,7 +45,8 @@ export function SystemPage() {
           {items.map((i) => (
             <Card key={i.label} className="p-4">
               <div className="text-xs text-subtle">{i.label}</div>
-              <div className="text-2xl font-semibold tabular-nums">{i.value}</div>
+              <div className={cn('text-2xl font-semibold tabular-nums', 'bad' in i && i.bad && 'text-st-fault')}>{i.value}</div>
+              {'note' in i && i.note && <div className="text-xs text-subtle">{i.note}</div>}
             </Card>
           ))}
         </div>

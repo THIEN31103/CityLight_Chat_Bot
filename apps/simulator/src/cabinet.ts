@@ -95,6 +95,7 @@ export class SimCabinet {
       clientId: `ec25_${Math.floor(Math.random() * 2 ** 31)}`,
       keepalive: 60,
       reconnectPeriod: 30_000,
+      reconnectOnConnackError: true, // like the firmware link_task: retry every 30 s whatever the broker said
       connectTimeout: 10_000,
       clean: true,
     });

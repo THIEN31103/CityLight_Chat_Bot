@@ -324,6 +324,8 @@ export interface SystemStats {
   ackErrors24h: number;
   dbSizeGb: number;
   brokerConnections: number;
+  /** ingest <-> MQTT broker; null = ingest has not reported for 90 s (not running) */
+  brokerLink: { connected: boolean; since: string | null } | null;
   uptimeHours: number;
 }
 
