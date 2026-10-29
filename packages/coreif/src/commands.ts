@@ -81,13 +81,23 @@ export function buildCommandFrame(ltid: string, type: CommandType, params: Recor
   return frames[0]!;
 }
 
-/** Keys a frame expects to see acked (everything except LTID). */
+/** Keys added by signing (sign.ts, S59): the device does not ack them. */
+export const SIGN_KEYS: ReadonlySet<string> = new Set(['CSEQ', 'CEXP', 'CSIG']);
+/** Ack rc of a frame the signing firmware refused (bad / missing signature, old sequence, wrong boot, expired). */
+export const RC_SIGNATURE = -3;
+
+/** Keys a frame expects to see acked (everything except LTID and the signing keys). */
 export function expectedAckKeys(frame: string): string[] {
   return frame
     .slice(2, -1)
     .split('&')
     .map((p) => p.slice(0, p.indexOf("'")).toUpperCase())
-    .filter((k) => k !== 'LTID');
+    .filter((k) => k !== 'LTID' && !SIGN_KEYS.has(k));
+}
+
+/** The signing firmware refused the whole frame: its only ack is CSIG rc -3. */
+export function isSignatureReject(ack: Ack): boolean {
+  return ack.acks.length === 1 && ack.acks[0]!.key === 'CSIG' && ack.acks[0]!.rc === RC_SIGNATURE;
 }
 
 /**
@@ -104,6 +114,7 @@ export function ackMatches(ltid: string, frame: string, ack: Ack): boolean {
 const RC_TEXT: Record<number, string> = {
   [-1]: 'giá trị sai hoặc ghi Modbus xuống PLC thất bại',
   [-2]: 'thiết bị không hỗ trợ key',
+  [RC_SIGNATURE]: 'tủ từ chối chữ ký lệnh',
 };
 
 /** null when every key has rc 0, else a readable error such as "PLN1 rc=-1 (…)". */

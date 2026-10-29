@@ -9,11 +9,15 @@
 //  - topic (S53): cabinets with capability per_cabinet_topic (fw_profile v3 = telemetry LFWV'3) get their frames on
 //    citylight/cmd/<LTID>, the others on the shared stm32/ec25/cmd; one topic per frame, never both. Every cabinet
 //    on the shared topic receives every frame sent there, so first sends on it are paced (CMD_SHARED_SEND_PER_SEC).
+//  - signing (D7-lite, S59): frames to cabinets with signing on are signed on every send (sign.ts, DEVICE_MASTER_KEY);
+//    an ack CSIG rc -3 (refused) re-signs once after the cabinet's next boot is known, a second one fails the command
 import mqtt from 'mqtt';
 import { Redis } from 'ioredis';
 import {
-  RETRYABLE, TOPICS, ackError, ackMatches, buildCommandFrames, commandTopic, confirmRule, parseAck, parseTelemetry, type Ack,
+  FrameError, RETRYABLE, TOPICS, ackError, ackMatches, buildCommandFrames, commandTopic, confirmRule, isSignatureReject, parseAck, parseTelemetry,
+  type Ack,
 } from '@citylight/coreif';
+import { cabinetKey, parseMasterKey, signCommand } from '@citylight/coreif/sign';
 import { createSql } from '@citylight/db';
 import { SYSTEM_USER_ID, batchById } from '@citylight/db/batches';
 import { COMMANDS_NOTIFY, EVENTS_CHANNEL, commandById } from '@citylight/db/commands';
@@ -32,6 +36,12 @@ const SEND_PER_SEC = Number(process.env.CMD_SEND_PER_SEC ?? 20);
 /** Part of SEND_PER_SEC allowed on the shared topic: the LTE keeps only 2 pending frames during its AT waits. */
 const SHARED_SEND_PER_SEC = Number(process.env.CMD_SHARED_SEND_PER_SEC ?? 3);
 const TICK_MS = 500;
+/** D7-lite master key of this environment; null = commands to signing cabinets fail (S59). */
+const MASTER = parseMasterKey(process.env.DEVICE_MASTER_KEY);
+/** After a CSIG rc -3: wait at most this long for the cabinet's next boot before signing again (telemetry every 10 s). */
+const RESIGN_WAIT_MS = Number(process.env.CMD_RESIGN_WAIT_MS ?? 12_000);
+/** cmd_seq jump after a refusal: gets past the device's last sequence when the DB came from an older backup. */
+const SEQ_JUMP = 10_000;
 
 const sql = createSql(process.env.DATABASE_URL, 5);
 const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: 2 });
@@ -48,11 +58,13 @@ interface InFlight {
   phase: 'ack' | 'confirm';
   deadline: number;
   ackRc: Record<string, number>;
+  /** waiting to re-sign the current frame after a CSIG rc -3 (boot = sig_boot when it was refused) */
+  resign?: { boot: number | null; until: number; sent: boolean };
 }
 
 /** ltid -> the cabinet's command on the wire */
 const inflight = new Map<string, InFlight>();
-const stats = { sent: 0, resent: 0, acked: 0, confirmed: 0, unconfirmed: 0, failed: 0, timeout: 0, expired: 0, unmatchedAcks: 0 };
+const stats = { sent: 0, resent: 0, acked: 0, confirmed: 0, unconfirmed: 0, failed: 0, timeout: 0, expired: 0, unmatchedAcks: 0, signed: 0, sigRejected: 0 };
 
 // ---------------- helpers ----------------
 
@@ -144,13 +156,63 @@ function freshFrames(f: Pick<InFlight, 'ltid' | 'type' | 'params' | 'frames'>) {
 
 const perCabinetTopic = (fw: FwProfile) => capabilitiesFor(fw).includes('per_cabinet_topic');
 
-/** fw = the profile read with the command; later frames read it again (ingest keeps it in step with LFWV). */
-async function publishFrame(f: Pick<InFlight, 'cabinetId' | 'ltid'>, frame: string, fw?: FwProfile) {
-  if (!fw) {
-    const [c] = await sql<{ fw_profile: FwProfile }[]>`SELECT fw_profile FROM cabinets WHERE id = ${f.cabinetId}`;
-    fw = c?.fw_profile ?? 'v2-current';
+/** A frame that cannot be signed for a signing cabinet: the command fails instead of going out unsigned. */
+class SignError extends Error {}
+
+/**
+ * Publish one frame. Cabinets with signing on (S59, cabinets.signed set by ingest) get it signed here, so every send
+ * and re-send carries a fresh sequence number and expiry: CSEQ = the boot ingest last verified + cmd_seq + 1.
+ * The profile (topic) is read on every send: ingest keeps it in step with LFWV.
+ */
+async function publishFrame(f: Pick<InFlight, 'cabinetId' | 'ltid'>, frame: string) {
+  const [c] = await sql<{ fw_profile: FwProfile; signed: boolean; uid: string | null; sig_boot: number | null }[]>`
+    SELECT fw_profile, signed, uid, sig_boot FROM cabinets WHERE id = ${f.cabinetId}`;
+  let out = frame;
+  if (c?.signed) {
+    if (!MASTER) throw new SignError('Tủ chỉ nhận lệnh có chữ ký nhưng server chưa cấu hình DEVICE_MASTER_KEY');
+    if (!c.uid || c.sig_boot === null) throw new SignError('Tủ ký lệnh nhưng chưa có UID / BOOT hợp lệ, chờ telemetry kế tiếp của tủ rồi gửi lại');
+    const [s] = await sql<{ cmd_seq: number }[]>`UPDATE cabinets SET cmd_seq = cmd_seq + 1 WHERE id = ${f.cabinetId} RETURNING cmd_seq`;
+    out = signCommand(frame, cabinetKey(MASTER, c.uid), { boot: Number(c.sig_boot), m: Number(s!.cmd_seq) });
+    stats.signed++;
   }
-  mq.publish(commandTopic(f.ltid, perCabinetTopic(fw)), frame, { qos: 0 });
+  mq.publish(commandTopic(f.ltid, perCabinetTopic(c?.fw_profile ?? 'v2-current')), out, { qos: 0 });
+}
+
+/** publishFrame for an in-flight command: a frame that cannot be signed fails the command. */
+async function sendStep(f: InFlight): Promise<boolean> {
+  try {
+    await publishFrame(f, f.frames[f.step]!);
+    return true;
+  } catch (e) {
+    if (!(e instanceof SignError) && !(e instanceof FrameError)) throw e;
+    stats.failed++;
+    await finish(f, 'failed', e.message);
+    return false;
+  }
+}
+
+/**
+ * The cabinet refused the frame (CSIG rc -3): usually it rebooted and ingest has not seen its new boot yet, or the
+ * DB was restored from an older backup (cmd_seq behind the device). Jump cmd_seq, wait for a new boot (at most
+ * RESIGN_WAIT_MS) and sign once more (checkDeadlines); a second refusal fails the command.
+ */
+async function onSignatureReject(f: InFlight) {
+  stats.sigRejected++;
+  if (f.resign && !f.resign.sent) return; // duplicate of the refusal we are already handling
+  if (f.resign) {
+    stats.failed++;
+    const [c] = await sql<{ signed: boolean }[]>`SELECT signed FROM cabinets WHERE id = ${f.cabinetId}`;
+    const err = c?.signed
+      ? 'Tủ từ chối chữ ký lệnh (rc -3) cả sau khi ký lại: kiểm tra giờ tủ, khóa master của bản firmware và LKFP'
+      : 'Tủ chỉ nhận lệnh có chữ ký (rc -3) nhưng server chưa ghi nhận định danh ký của tủ: kiểm tra DEVICE_MASTER_KEY';
+    await finish(f, 'failed', err, { acked: true });
+    return eventAlarm(f, 'cmd_rejected', err);
+  }
+  const [c] = await sql<{ sig_boot: number | null }[]>`
+    UPDATE cabinets SET cmd_seq = cmd_seq + ${SEQ_JUMP} WHERE id = ${f.cabinetId} RETURNING sig_boot`;
+  f.resign = { boot: c?.sig_boot ?? null, until: Date.now() + RESIGN_WAIT_MS, sent: false };
+  f.deadline = f.resign.until + ACK_TIMEOUT_MS;
+  await sql`UPDATE commands SET deadline_at = ${new Date(f.deadline)} WHERE id = ${f.id}`;
 }
 
 // ---------------- dispatch ----------------
@@ -207,7 +269,7 @@ async function dispatch() {
       WHERE id = ${r.id} AND status = 'queued' RETURNING id`;
     if (!claimed.length) continue;
     inflight.set(ltid, f);
-    await publishFrame(f, f.frames[0]!, r.fw_profile);
+    if (!(await sendStep(f))) continue;
     sentThisSecond++;
     if (shared) sharedThisSecond++;
     stats.sent++;
@@ -233,6 +295,7 @@ async function onAck(payload: string) {
     return;
   }
   const f = ack.ltid ? inflight.get(ack.ltid) : undefined;
+  if (f && f.phase === 'ack' && isSignatureReject(ack)) return onSignatureReject(f);
   if (!f || f.phase !== 'ack' || !ackMatches(f.ltid, f.frames[f.step]!, ack)) {
     stats.unmatchedAcks++; // late ack after timeout, another sender, or old firmware (no id)
     return;
@@ -256,8 +319,9 @@ async function onAck(payload: string) {
     f.step++;
     f.attempts = 1;
     f.deadline = Date.now() + ACK_TIMEOUT_MS;
+    f.resign = undefined; // one re-sign per frame
     await sql`UPDATE commands SET step = ${f.step}, attempts = 1, deadline_at = ${new Date(f.deadline)} WHERE id = ${f.id}`;
-    await publishFrame(f, f.frames[f.step]!);
+    await sendStep(f);
     return;
   }
   stats.acked++;
@@ -298,6 +362,17 @@ async function onTelemetry(payload: string) {
 async function checkDeadlines() {
   const now = Date.now();
   for (const f of [...inflight.values()]) {
+    if (f.resign && !f.resign.sent) {
+      // re-sign after a CSIG rc -3 once ingest saw a new boot, or when the wait is over
+      const [c] = await sql<{ sig_boot: number | null }[]>`SELECT sig_boot FROM cabinets WHERE id = ${f.cabinetId}`;
+      if (now < f.resign.until && (c?.sig_boot ?? null) === f.resign.boot) continue;
+      f.resign.sent = true;
+      f.frames = freshFrames(f);
+      f.deadline = now + ACK_TIMEOUT_MS;
+      await sql`UPDATE commands SET frame = ${f.frames.join('\n')}, deadline_at = ${new Date(f.deadline)} WHERE id = ${f.id}`;
+      if (await sendStep(f)) stats.resent++;
+      continue;
+    }
     if (now < f.deadline) continue;
     if (f.phase === 'confirm') {
       stats.unconfirmed++;
@@ -309,8 +384,7 @@ async function checkDeadlines() {
       f.frames = freshFrames(f);
       f.deadline = now + ACK_TIMEOUT_MS;
       await sql`UPDATE commands SET attempts = ${f.attempts}, frame = ${f.frames.join('\n')}, deadline_at = ${new Date(f.deadline)} WHERE id = ${f.id}`;
-      await publishFrame(f, f.frames[f.step]!);
-      stats.resent++;
+      if (await sendStep(f)) stats.resent++;
     } else {
       stats.timeout++;
       const msg = `Không nhận được phản hồi từ tủ sau ${f.attempts} lần gửi (${ACK_TIMEOUT_MS / 1000} s mỗi lần)`;

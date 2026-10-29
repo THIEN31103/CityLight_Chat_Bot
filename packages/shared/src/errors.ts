@@ -172,7 +172,8 @@ export const ERROR_CATALOG: ErrorDef[] = [
   { code: 'E802', type: 'gps_drift', title: 'Lệch vị trí GPS', category: 'Thiết bị', severity: 'minor', source: 'GPS thiết bị cách vị trí khai báo > 200 m', cause: 'Tọa độ khai báo sai hoặc bộ điều khiển bị lắp sang tủ khác.', checks: ['Đối chiếu vị trí thực tế, cập nhật tọa độ tủ.'], supported: true },
   { code: 'E803', type: 'battery_low', title: 'Pin dự phòng yếu', category: 'Thiết bị', severity: 'minor', source: 'LBAT < ngưỡng mV', cause: 'Pin dự phòng của bộ điều khiển xuống cấp.', checks: ['Thay pin dự phòng.'], supported: true },
   { code: 'E804', type: 'fw_unsafe', title: 'Firmware cũ không lọc LTID', category: 'Thiết bị', severity: 'major', source: 'fw_profile = v2-1307ebc', cause: 'Firmware cũ thực thi mọi lệnh trên topic chung — web chặn điều khiển tủ này.', checks: ['Nâng cấp firmware LTE lên bản có lọc LTID.'], supported: true },
-  { code: 'E805', type: 'spoof_suspect', title: 'Nghi giả mạo tủ (IMEI không khớp)', category: 'Thiết bị', severity: 'major', source: 'Frame mang LTID của tủ nhưng IMEI (LIME) khác IMEI đã ghi nhận; frame bị bỏ qua', cause: 'Ai đó gửi dữ liệu giả lên broker bằng LTID của tủ, hoặc modem EC25 của tủ vừa được thay.', checks: ['Nếu vừa thay modem: Chấp nhận IMEI mới trong cảnh báo (hoặc Học lại IMEI).', 'Nếu không thay gì: dữ liệu giả, giữ nguyên IMEI; xem IP/thời điểm trong frame thô và báo người quản trị hệ thống.'], supported: true },
+  { code: 'E805', type: 'spoof_suspect', title: 'Nghi giả mạo tủ (IMEI không khớp)', category: 'Thiết bị', severity: 'major', source: 'Frame mang LTID của tủ nhưng IMEI (LIME) khác IMEI đã ghi nhận; frame bị bỏ qua. Tủ ký lệnh: cả UID board (LUID) khác UID đã ghi nhận', cause: 'Ai đó gửi dữ liệu giả lên broker bằng LTID của tủ, hoặc modem EC25 / board LTE của tủ vừa được thay.', checks: ['Nếu vừa thay modem / board LTE: Chấp nhận IMEI mới (và UID mới nếu có) trong cảnh báo (hoặc Học lại IMEI).', 'Nếu không thay gì: dữ liệu giả, giữ nguyên IMEI; xem IP/thời điểm trong frame thô và báo người quản trị hệ thống.'], supported: true },
+  { code: 'E806', type: 'sig_invalid', title: 'Chữ ký định danh không hợp lệ', category: 'Thiết bị', severity: 'major', source: 'Bộ định danh LUID/LSEQ/LSIG trong telemetry ký sai (khóa ký D7-lite)', cause: 'Ai đó gửi bộ định danh giả lên broker, hoặc firmware tủ được build với khóa master khác khóa của server.', checks: ['Đối chiếu dấu vân tay khóa (LKFP) trên UART2 SHOW với trang tủ.', 'Nếu tủ thật ký sai: nạp lại firmware build đúng khóa của khách này.', 'Nếu không: dữ liệu giả, báo người quản trị hệ thống.'], supported: true },
 ];
 
 export const ERROR_CATEGORY_LABELS: Record<Lang, Record<ErrorCategory, string>> = {
@@ -316,11 +317,21 @@ export const ERROR_CATALOG_EN: Partial<Record<string, ErrorText>> = {
   E804: { title: 'Old firmware without LTID filter', source: 'fw_profile = v2-1307ebc', cause: 'Old firmware executes every command on the shared topic — the web blocks control of this cabinet.', checks: ['Upgrade the LTE firmware to a version with the LTID filter.'] },
   E805: {
     title: 'Suspected cabinet spoofing (IMEI mismatch)',
-    source: "Frame carries the cabinet's LTID but an IMEI (LIME) other than the recorded one; frame ignored",
-    cause: "Someone is publishing fake data to the broker with the cabinet's LTID, or the cabinet's EC25 modem was just replaced.",
+    source: "Frame carries the cabinet's LTID but an IMEI (LIME) other than the recorded one; frame ignored. Signing cabinets: also a board UID (LUID) other than the recorded one",
+    cause: "Someone is publishing fake data to the broker with the cabinet's LTID, or the cabinet's EC25 modem / LTE board was just replaced.",
     checks: [
-      'If the modem was just replaced: accept the new IMEI in the alarm (or relearn the IMEI).',
+      'If the modem / LTE board was just replaced: accept the new IMEI (and the new UID, if any) in the alarm (or relearn the IMEI).',
       'If nothing was replaced: the data is fake, keep the IMEI; look at the IP / time in the raw frame and report it to the system administrator.',
+    ],
+  },
+  E806: {
+    title: 'Invalid identity signature',
+    source: 'The LUID/LSEQ/LSIG identity block in the telemetry has a wrong signature (D7-lite signing key)',
+    cause: 'Someone is publishing a fake identity to the broker, or the cabinet firmware was built with a master key other than the server one.',
+    checks: [
+      'Compare the key fingerprint (LKFP) in UART2 SHOW with the cabinet page.',
+      "If the real cabinet signs wrongly: flash firmware built with this customer's key.",
+      'Otherwise: the data is fake, report it to the system administrator.',
     ],
   },
 };

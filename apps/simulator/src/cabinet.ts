@@ -6,8 +6,12 @@
 //  - boot JSON on stm32/ec25/boot, LDIA report on stm32/ec25/demo
 //  - cmdTopic (firmware dev_lte_cmd_topic_dgb): also subscribes citylight/cmd/<LTID>; telemetry LFWV'3 when the
 //    broker granted it, LFWV'2 when it refused (shared topic only)
+//  - sign (D7-lite, S59): telemetry carries LUID/LSEQ/LSIG and LFWV'4; only signed commands for this cabinet run,
+//    others are acked CSIG rc -3 (at most one per 5 s); LTID'ALL is dropped; reboot() moves to the next boot
 import mqtt, { type MqttClient } from 'mqtt';
+import { createHash } from 'node:crypto';
 import { TOPICS, cabinetCommandTopic, encodeFrame, isoVn, parseFrame, parseIso } from '@citylight/coreif';
+import { cabinetKey, identPairs, verifyCommand } from '@citylight/coreif/sign';
 
 export type Fault =
   | 'none'
@@ -34,6 +38,8 @@ export interface CabinetOptions {
   imei?: string;
   /** firmware with its own command topic + LFWV (default false = older firmware: shared topic, no LFWV) */
   cmdTopic?: boolean;
+  /** signing firmware (S59): master of this environment; uid default derived from the LTID, boot default 1 */
+  sign?: { master: Buffer; uid?: string; boot?: number };
 }
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -47,6 +53,11 @@ export function imeiFor(ltid: string): string {
   return `86${String(h).padStart(10, '0').slice(0, 7)}${String(h2).padStart(10, '0').slice(0, 6)}`;
 }
 const f1 = (n: number) => n.toFixed(1);
+
+/** Stable fake 96-bit chip UID for an LTID. */
+export function uidFor(ltid: string): string {
+  return createHash('sha256').update(`uid:${ltid.toUpperCase()}`).digest('hex').slice(0, 24);
+}
 
 function minutes(hhmm: string) {
   const [h, m] = hhmm.split(':').map(Number);
@@ -74,11 +85,24 @@ export class SimCabinet {
   private frozenPtim: string | null = null;
   /** own command topic while the broker grants it (cmdTopic option) */
   private ownTopic: string | null = null;
-  stats = { telemetry: 0, acks: 0, commands: 0 };
+  /** signing state: key from master + UID, boot counter, last accepted CSEQ m (RAM, reset on boot) */
+  readonly uid: string;
+  private key: Buffer | null = null;
+  boot = 1;
+  private lastM = 0;
+  private lastRejectAck = 0;
+  /** why the last signed frame was refused (e2e) */
+  lastReject: string | null = null;
+  stats = { telemetry: 0, acks: 0, commands: 0, rejected: 0 };
 
   constructor(private readonly o: CabinetOptions) {
     this.ltid = o.ltid.toUpperCase();
     this.imei = o.imei ?? imeiFor(this.ltid);
+    this.uid = o.sign?.uid ?? uidFor(this.ltid);
+    if (o.sign) {
+      this.key = cabinetKey(o.sign.master, this.uid);
+      this.boot = o.sign.boot ?? 1;
+    }
     if (o.fault === 'logo_lost') this.frozenPtim = isoVn(new Date(Date.now() - 14 * 60_000)).replace('+07:00', '.000+07:00');
   }
 
@@ -127,6 +151,15 @@ export class SimCabinet {
     setTimeout(() => {
       this.teleTimer = setInterval(() => this.publishTelemetry(), every);
     }, Math.random() * every);
+  }
+
+  /** Signing firmware boot: the counter moves on, the accepted sequence starts again; telemetry right away
+   *  unless announce = false (e2e: the server must meet the new boot through a refused command). */
+  reboot(announce = true) {
+    this.boot++;
+    this.lastM = 0;
+    this.bootTick = Date.now();
+    if (announce) this.publishTelemetry();
   }
 
   async stop() {
@@ -220,12 +253,16 @@ export class SimCabinet {
       pairs.push(['LQ2', plc ? (b1 ? 1 : 0) : 'X'], ['LQ3', plc ? (b2 ? 1 : 0) : 'X'], ['PMAN', plc ? (this.manual ? 1 : 0) : 'X']);
     }
     pairs.push(['PTIM', plc ? this.ptim() : 'X']);
-    if (this.o.cmdTopic) pairs.push(['LFWV', this.ownTopic ? 3 : 2]);
+    if (this.key) pairs.push(['LFWV', this.ownTopic ? 4 : 2], ...identPairs(this.key, this.ltid, this.uid, this.boot));
+    else if (this.o.cmdTopic) pairs.push(['LFWV', this.ownTopic ? 3 : 2]);
     return encodeFrame(pairs);
   }
 
+  /** e2e: no telemetry while true (commands still answered) */
+  muted = false;
+
   publishTelemetry() {
-    if (!this.client?.connected) return;
+    if (!this.client?.connected || this.muted) return;
     this.client.publish(TOPICS.telemetry, this.buildTelemetry(), { qos: 0 });
     this.lastPub = Date.now();
     this.stats.telemetry++;
@@ -241,6 +278,22 @@ export class SimCabinet {
   // ---------------- commands ----------------
 
   private onCommand(raw: string) {
+    if (this.key) {
+      const target = /^\*#LTID'([^&$]*)/i.exec(raw)?.[1]?.toUpperCase();
+      if (target !== this.ltid) return; // other cabinets and LTID'ALL: dropped silently
+      const v = verifyCommand(raw, this.key, { boot: this.boot, lastM: this.lastM, nowMs: Date.now() });
+      if (!v.ok) {
+        this.stats.rejected++;
+        this.lastReject = v.reason;
+        if (Date.now() - this.lastRejectAck >= 5000) {
+          this.lastRejectAck = Date.now();
+          this.client?.publish(TOPICS.echo, JSON.stringify({ id: this.ltid, ack: [{ k: 'CSIG', rc: -3 }], ts: Date.now() - this.bootTick }));
+        }
+        return;
+      }
+      this.lastM = v.m;
+      raw = v.frame;
+    }
     let fields: Record<string, string>;
     let order: string[];
     try {

@@ -315,7 +315,8 @@ export type AlarmType =
   | 'gps_drift'
   | 'battery_low'
   | 'fw_unsafe'
-  | 'spoof_suspect';
+  | 'spoof_suspect'
+  | 'sig_invalid';
 
 export interface Alarm {
   id: string;

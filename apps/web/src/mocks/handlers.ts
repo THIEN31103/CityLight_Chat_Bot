@@ -77,6 +77,18 @@ const notify = {
 
 // Dimming (M9): cabinet > zone > system > default, with a fake lamp count (20 × 150 W per cabinet) for the estimate.
 const zoneDimming = new Map<string, DimmingProfile>();
+/** command signing (S59): the first cabinet signs, so the info tab shows the card filled in */
+const signing = new Map<string, { signed: boolean; uid: string | null; uidPending: string | null; keyFp: string | null; boot: number | null; cmdSeq: number; lastInvalidAt: string | null }>();
+const signingOf = (id: string, first: boolean) => {
+  let s = signing.get(id);
+  if (!s) {
+    s = first
+      ? { signed: true, uid: '3a00470013504d3437323920', uidPending: null, keyFp: 'bc8e4b3a', boot: 42, cmdSeq: 17, lastInvalidAt: null }
+      : { signed: false, uid: null, uidPending: null, keyFp: null, boot: null, cmdSeq: 0, lastInvalidAt: null };
+    signing.set(id, s);
+  }
+  return s;
+};
 function mockEstimate(segments: DimmingProfile['segments'], cabs: number) {
   const lamps = cabs * 20;
   return { ...estimateDimming(segments, lamps, lamps * 150, 2000), ratedW: lamps * 150, pricePerKwh: 2000, lampsWithoutPower: 0 };
@@ -387,6 +399,32 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
     for (const a of alarms) if (a.cabinetId === c.id && a.type === 'spoof_suspect' && a.active) Object.assign(a, { active: false, endedAt: new Date().toISOString() });
     addLog(u.email, imei ? 'Đổi IMEI tủ' : 'Học lại IMEI tủ', 'cabinet', `${c.code} - ${c.name}`, old, imei ?? '(học từ frame tiếp theo)');
     return HttpResponse.json({ id: c.id, imei });
+  })),
+  http.get(`${API}/cabinets/:id/signing`, wrap(({ params }: { params: Record<string, string> }) => {
+    requireUser();
+    return HttpResponse.json(signingOf(params.id!, params.id === cabinets[0]?.id));
+  })),
+  http.put(`${API}/cabinets/:id/uid`, wrap(async ({ params, request }: { params: Record<string, string>; request: Request }) => {
+    requireReauth();
+    const u = requireUser();
+    if (u.role !== 'admin') return problem(403, 'forbidden', 'Bạn không có quyền thực hiện thao tác này');
+    const c = cabinetById.get(params.id!)!;
+    const s = signingOf(c.id, c.id === cabinets[0]?.id);
+    const { uid } = (await request.json()) as { uid: string };
+    if (s.uidPending !== uid.toLowerCase()) return problem(409, 'uid_not_pending', 'UID này không phải UID đang chờ chấp nhận của tủ');
+    addLog(u.email, 'Chấp nhận UID board mới', 'cabinet', `${c.code} - ${c.name}`, s.uid, uid);
+    Object.assign(s, { uid: uid.toLowerCase(), uidPending: null, boot: null });
+    return HttpResponse.json({ id: c.id, uid });
+  })),
+  http.post(`${API}/cabinets/:id/signing/disable`, wrap(({ params }: { params: Record<string, string> }) => {
+    requireReauth();
+    const u = requireUser();
+    if (u.role !== 'admin') return problem(403, 'forbidden', 'Bạn không có quyền thực hiện thao tác này');
+    const c = cabinetById.get(params.id!)!;
+    const s = signingOf(c.id, c.id === cabinets[0]?.id);
+    if (s.signed) addLog(u.email, 'Tắt ký lệnh', 'cabinet', `${c.code} - ${c.name}`, 'bật', 'tắt');
+    s.signed = false;
+    return HttpResponse.json({ id: c.id, signed: false });
   })),
   http.get(`${API}/map/gps-drift`, wrap(() => {
     requireUser();

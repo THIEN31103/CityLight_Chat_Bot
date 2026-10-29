@@ -3,6 +3,7 @@
 // (migrations/*_timescale.sql) because drizzle-kit does not model them.
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   bigserial,
   boolean,
   customType,
@@ -92,6 +93,19 @@ export const cabinets = pgTable(
     /** DS18B20 fitted on CT_KEY (S54): false = CTTE ignored (no E503 / over_temp, no temperature chart) */
     hasTempSensor: boolean('has_temp_sensor').notNull().default(false),
     imei: text('imei'),
+    // ---- command signing (D7-lite, S59): set by ingest from the telemetry identity block LUID/LSEQ/LSIG ----
+    /** chip UID of the LTE board (24 hex), locked on the first validly signed identity */
+    uid: text('uid'),
+    /** another validly signed UID under this LTID (board replaced?): E805 until the provider accepts it */
+    uidPending: text('uid_pending'),
+    /** one-way: the cabinet proved it signs, so every command to it is signed (only the provider turns it off) */
+    signed: boolean('signed').notNull().default(false),
+    /** device boot counter from the last valid identity; commands are signed for this boot */
+    sigBoot: bigint('sig_boot', { mode: 'number' }),
+    /** last command sequence number used (CSEQ m), incremented per signed frame */
+    cmdSeq: bigint('cmd_seq', { mode: 'number' }).notNull().default(0),
+    /** LKFP fingerprint of the cabinet key, to compare with UART2 SHOW */
+    keyFp: text('key_fp'),
     simIccid: text('sim_iccid'),
     photoUrl: text('photo_url'),
     installedAt: tsz('installed_at'),
@@ -107,6 +121,7 @@ export const cabinets = pgTable(
   (t) => [
     uniqueIndex('cabinets_ltid_uq').on(t.ltid),
     uniqueIndex('cabinets_code_uq').on(t.code),
+    uniqueIndex('cabinets_uid_uq').on(t.uid),
     index('cabinets_location_gix').using('gist', t.location),
     index('cabinets_district_idx').on(t.districtId),
   ],

@@ -10,6 +10,7 @@ import { Badge, Button, Modal, Spinner, confirm, toast } from '@/components/ui';
 import { dictNow, fill, useDict } from '@/i18n';
 import { CABINET } from '@/i18n/dict/cabinet';
 import { rich } from './rich';
+import { UidPending } from './Signing';
 
 export function ImeiDialog({ cabinetId, label, open, onOpenChange, onDone }: { cabinetId: string; label: string; open: boolean; onOpenChange: (v: boolean) => void; onDone?: () => void }) {
   const t = useDict(CABINET).imei;
@@ -77,6 +78,7 @@ export function ImeiDialog({ cabinetId, label, open, onOpenChange, onDone }: { c
             </tbody>
           </table>
         )}
+        <UidPending cabinetId={cabinetId} label={label} enabled={open} />
         <div className="flex justify-end">
           <Button size="sm" variant="ghost" onClick={() => void relearn()} disabled={set.isPending}>{t.relearnButton}</Button>
         </div>

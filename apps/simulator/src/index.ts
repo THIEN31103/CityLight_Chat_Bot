@@ -1,5 +1,6 @@
 // CLI: npm run start -w @citylight/simulator -- --count 100 --broker mqtt://localhost:1883
 import { fleetLocation } from '@citylight/db/fixtures';
+import { parseMasterKey } from '@citylight/coreif/sign';
 import { SimCabinet, type Fault } from './cabinet';
 
 function arg(name: string, fallback: string): string {
@@ -14,6 +15,9 @@ const faultRate = Number(arg('fault-rate', '0.08'));
 const telemetryMs = Number(arg('interval', '10000'));
 /** --cmd-topic: firmware with its own command topic citylight/cmd/<LTID> + LFWV (S53) */
 const cmdTopic = process.argv.includes('--cmd-topic');
+/** --sign: signing firmware (S59) with DEVICE_MASTER_KEY of this environment (use a test master, never a customer's) */
+const master = process.argv.includes('--sign') ? parseMasterKey(process.env.DEVICE_MASTER_KEY) : null;
+if (process.argv.includes('--sign') && !master) throw new Error('--sign needs DEVICE_MASTER_KEY (64 hex)');
 
 const FAULTS: Fault[] = ['offline', 'plc_lost', 'bus_down', 'pm_lost', 'ct_lost', 'dh_meter_lost', 'phase_loss', 'temp_sensor_fault', 'logo_lost', 'old_firmware', 'ack_lost'];
 
@@ -33,6 +37,7 @@ for (let i = 0; i < count; i++) {
     location: fleetLocation(i),
     telemetryMs,
     cmdTopic,
+    sign: master ? { master } : undefined,
     log: (m) => console.error(m),
   });
   cabinets.push(c);
@@ -40,7 +45,7 @@ for (let i = 0; i < count; i++) {
   setTimeout(() => c.start(), Math.floor(i * Math.min(20, 30_000 / count)));
 }
 
-console.log(`[sim] ${count} cabinets -> ${broker} (prefix ${prefix}, fault rate ${faultRate}, interval ${telemetryMs} ms${cmdTopic ? ', own cmd topic' : ''})`);
+console.log(`[sim] ${count} cabinets -> ${broker} (prefix ${prefix}, fault rate ${faultRate}, interval ${telemetryMs} ms${cmdTopic ? ', own cmd topic' : ''}${master ? ', signing' : ''})`);
 setInterval(() => {
   const t = cabinets.reduce((s, c) => s + c.stats.telemetry, 0);
   const a = cabinets.reduce((s, c) => s + c.stats.acks, 0);

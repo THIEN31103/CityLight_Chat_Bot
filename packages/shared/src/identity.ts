@@ -24,6 +24,31 @@ export function checkImei(registered: string | null, frame: string | null): Imei
   return got === reg ? 'ok' : 'mismatch';
 }
 
+/** A lower boot counter is accepted (chip erased / re-flashed) after this many valid identities in a row carry it. */
+export const BOOT_RESET_FRAMES = 3;
+
+export type IdentVerdict = 'learn' | 'same' | 'advance' | 'stale' | 'reset' | 'foreign';
+
+/**
+ * A validly signed telemetry identity (D7-lite, S59) against the cabinet's recorded UID and boot.
+ * learn = no UID yet (trust on first valid signature); foreign = another board (E805, decision K7);
+ * advance = boot went up (normal reboot); stale = lower boot, ignored until it repeats BOOT_RESET_FRAMES times
+ * in a row (reset). A replayed old identity can only delay commands: the device rejects a boot it is past.
+ * `lower` is the caller's running count of the lower boot (null after anything else).
+ */
+export function judgeIdent(
+  reg: { uid: string | null; boot: number | null },
+  got: { uid: string; boot: number },
+  lower: { boot: number; n: number } | null,
+): { verdict: IdentVerdict; lower: { boot: number; n: number } | null } {
+  if (!reg.uid) return { verdict: 'learn', lower: null };
+  if (got.uid !== reg.uid) return { verdict: 'foreign', lower };
+  if (reg.boot === null || got.boot > reg.boot) return { verdict: 'advance', lower: null };
+  if (got.boot === reg.boot) return { verdict: 'same', lower: null };
+  const n = lower?.boot === got.boot ? lower.n + 1 : 1;
+  return n >= BOOT_RESET_FRAMES ? { verdict: 'reset', lower: null } : { verdict: 'stale', lower: { boot: got.boot, n } };
+}
+
 /**
  * Per-key token bucket: `burst` frames at once, then `perSec`. Firmware sends at most one telemetry frame per
  * second (10 s period, 0.5 s coalesce on change, 1 s minimum gap), so a cabinet never hits the default.

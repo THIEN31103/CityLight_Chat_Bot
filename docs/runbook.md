@@ -146,6 +146,14 @@ Thứ tự S53: deploy server + ACL **trước** khi nạp firmware topic riêng
   - Giá trị vô lý → null; quá 1 frame/s cho một LTID → bỏ. Đếm trong log ingest: `throttled · sanitized · foreign IMEI`.
   - EMQX: 500 kết nối/s, gói ≤ 8 KB, flapping → cấm 5 phút. Xem cấm: `docker exec citylight-emqx emqx ctl banned list`, gỡ: `emqx ctl banned delete clientid <id>`.
   - Vẫn giả được: ack lệnh trên `stm32/ec25/echo` (không có IMEI). Hết hẳn khi có user/pass.
+- **Ký lệnh D7-lite (S59)**: tủ firmware ký (`LFWV'4`) chỉ chạy lệnh server ký; tủ cũ chạy như trước.
+  - **Master mỗi môi trường / khách** (production, trial, khách khác: mỗi nơi một master): `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` → `DEVICE_MASTER_KEY=` trong `infra/.env` của môi trường đó → `dc up -d ingest command-worker`. **Cất 1 bản ngoài VPS** (trình quản lý mật khẩu): mất master = nạp lại firmware mọi tủ của khách đó. Cùng giá trị phải nằm trong `Mylib/sign_secret.h` của bản firmware build cho khách đó; không gửi hex / master cho người ngoài, không commit.
+  - Không có master: ingest bỏ qua định danh, tủ không bật ký; tủ firmware ký sẽ từ chối mọi lệnh (`rc:-3`, lệnh báo "server chưa ghi nhận định danh ký của tủ").
+  - Tủ tự bật ký khi gửi định danh hợp lệ (xem tab Thông tin → "Ký lệnh": UID, LKFP, BOOT). Đối chiếu **LKFP** với `SHOW` qua UART2 tại tủ.
+  - **E806** = định danh ký sai: dữ liệu giả, hoặc firmware build với master khác (LKFP khác) → nạp lại đúng bản.
+  - **Thay board LTE** → E805 "UID board khác": hộp IMEI… / thẻ Ký lệnh → "Chấp nhận UID mới" (2FA). Board chuyển từ tủ khác: tủ cũ mất UID.
+  - Xóa chip / nạp lại board (BOOT về thấp): server tự nhận sau 3 frame. Khôi phục DB từ backup cũ: lệnh đầu bị `-3`, server tự nhảy `cmd_seq` + 10000 rồi ký lại, không cần làm gì.
+  - "Tắt ký" (2FA) chỉ dùng khi board đã nạp lại firmware không ký; nếu tủ vẫn ký, server tự bật lại.
 - **MQTT user/pass (S43)**: cổng 1883 bắt buộc tài khoản tủ chung `MQTT_DEVICE_USERNAME` / `MQTT_DEVICE_PASSWORD` (trong `/opt/citylight/infra/.env`); backend dùng 1885 trong mạng Docker (không mở ra ngoài). Tủ không có / sai mật khẩu: EMQX trả CONNACK 4/5, không thấy trong `emqx ctl clients list`. **Đổi mật khẩu**: sửa 2 dòng trong `.env` → `sh /opt/citylight/infra/scripts/emqx-device-account.sh` (tủ đang nối không bị ngắt; nạp firmware mật khẩu mới **trước**, không thì tủ không nối lại được). Kiểm local: `npm run e2e:mqtt-auth`.
 
 ## 8. Dung lượng (đo 2026-10-21; đã xử lý ở 8.1, S57)

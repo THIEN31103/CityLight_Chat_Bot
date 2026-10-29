@@ -231,6 +231,18 @@ export interface CabinetInput {
   imei?: string | null;
 }
 
+/** Command signing state of a cabinet (D7-lite, S59). */
+export interface CabinetSigning {
+  signed: boolean;
+  uid: string | null;
+  /** another validly signed board UID waiting for the provider (E805) */
+  uidPending: string | null;
+  keyFp: string | null;
+  boot: number | null;
+  cmdSeq: number;
+  lastInvalidAt: string | null;
+}
+
 export interface ImeiCandidates {
   registered: string | null;
   seen: { imei: string | null; frames: number; lastSeenAt: string; registered: boolean }[];
@@ -401,6 +413,9 @@ export const api = {
   imeiCandidates: (id: string) => req<ImeiCandidates>('GET', `/cabinets/${id}/imei-candidates`),
   /** null = forget it, the next frame's IMEI is learned */
   setImei: (id: string, imei: string | null) => req<{ id: string; imei: string | null }>('PUT', `/cabinets/${id}/imei`, { imei }),
+  signing: (id: string) => req<CabinetSigning>('GET', `/cabinets/${id}/signing`),
+  acceptUid: (id: string, uid: string) => req<{ id: string; uid: string }>('PUT', `/cabinets/${id}/uid`, { uid }),
+  disableSigning: (id: string) => req<{ id: string; signed: boolean }>('POST', `/cabinets/${id}/signing/disable`),
   telemetry: (id: string, metrics: string[], from: string, to: string) => req<TelemetryPoint[]>('GET', `/cabinets/${id}/telemetry${qs({ metrics: metrics.join(','), from, to, interval: 'auto' })}`),
   energy: (id: string, range: 'day' | '30d') => req<{ estimated: boolean; points: { label: string; kwh: number }[] }>('GET', `/cabinets/${id}/energy${qs({ range })}`),
   setSchedule: (id: string, s: Schedule) => req<Command>('PUT', `/cabinets/${id}/schedule`, s),

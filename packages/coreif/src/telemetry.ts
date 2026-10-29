@@ -8,7 +8,9 @@
 //   LQ2/LQ3/PMAN:   "X" while PCON=0
 //   PLGO:           0..5 LOGO link diagnosis from PLC_KEY [46] (firmware LOGO_DIAG), "X" while PCON=0
 //   LFWV:           firmware level: 3 = own command topic citylight/cmd/<LTID> subscribed, 2 = shared topic only;
-//                   not sent by older firmware
+//                   not sent by older firmware; 4 = signing firmware (D7-lite, S59), same topic meaning as 3
+//   LUID/LSEQ/LSIG: signing firmware identity block: chip UID 24 hex, boot counter 8 hex, 32 hex signature
+//                   (checked by the ingest worker with sign.ts verifyIdent)
 import type { GeoPoint } from '@citylight/shared';
 import { parseFrame, type ParsedFrame } from './frame';
 
@@ -52,6 +54,8 @@ export interface TelemetryPatch {
   logoLink: number | null;
   /** LFWV: 3 = the cabinet listens on its own command topic, 2 = shared topic only; null = not sent (older firmware). */
   fwLevel: number | null;
+  /** LUID/LSEQ/LSIG when all three are present and well formed (not verified here); null otherwise. */
+  ident: { uid: string; seq: string; sig: string } | null;
   /** All keys present in the frame (e.g. old firmware 1307ebc has no LQ2/LQ3/PMAN). */
   keys: string[];
   /** Keys present in the frame that this parser does not know (future firmware). */
@@ -63,6 +67,7 @@ const KNOWN = new Set([
   'LTID', 'LDOM', 'LPOR', 'LIME', 'LGPS', 'LTIM', 'LCLI', 'LBAT', 'LACI', 'LERR', 'CTVL', 'CTTE', 'MCON',
   'MPU1', 'MPU2', 'MPU3', 'MPI1', 'MPI2', 'MPI3', 'MCO1', 'MCO2', 'MCO3', 'MCOS', 'MPOW', 'PCON',
   'PIN5', 'LINE1', 'LINE2', 'LQ2', 'LQ3', 'PMAN', 'PTIM', 'PDOR', 'PFLT', 'PLGO', 'LFWV',
+  'LUID', 'LSEQ', 'LSIG',
 ]);
 
 const isX = (v: string | undefined) => v === undefined || v === '' || v.toUpperCase() === 'X';
@@ -108,6 +113,15 @@ export function parseIso(v: string | undefined): string | null {
 function logoLink(v: string | undefined): number | null {
   const n = num(v);
   return n !== null && Number.isInteger(n) && n >= 0 && n <= 5 ? n : null;
+}
+
+/** LUID/LSEQ/LSIG, lower-cased; any part missing or malformed = null. */
+function ident(f: Record<string, string>): TelemetryPatch['ident'] {
+  const uid = f.LUID?.toLowerCase();
+  const seq = f.LSEQ?.toLowerCase();
+  const sig = f.LSIG?.toLowerCase();
+  if (!uid || !seq || !sig || !/^[0-9a-f]{24}$/.test(uid) || !/^[0-9a-f]{8}$/.test(seq) || !/^[0-9a-f]{32}$/.test(sig)) return null;
+  return { uid, seq, sig };
 }
 
 /** LFWV: small positive integer; anything else = null. */
@@ -168,6 +182,7 @@ export function telemetryFromFields(p: ParsedFrame): TelemetryPatch {
     contactorFault: bool01(f.PFLT),
     logoLink: logoLink(f.PLGO),
     fwLevel: fwLevel(f.LFWV),
+    ident: ident(f),
     keys: [...p.order],
     unknownKeys,
     warnings,

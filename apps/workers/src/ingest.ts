@@ -9,15 +9,19 @@
 //  - publish state + alarm events on Redis for the API's Socket.IO gateway
 //  - anonymous-broker guards (S42): per-LTID frame budget, implausible values dropped, frames whose IMEI does
 //    not match the cabinet's are not applied (E805 spoof_suspect, shared/identity.ts)
+//  - command signing (D7-lite, S59): the telemetry identity block LUID/LSEQ/LSIG is checked with DEVICE_MASTER_KEY;
+//    a valid one locks the board UID, turns signing on and moves cabinets.sig_boot (read by the command worker);
+//    another board's UID = E805 (frame not applied), a wrong signature = E806 sig_invalid (frame applied)
 //  - frames_raw (S57): every non-telemetry frame, every telemetry frame with a note or from an unregistered LTID,
 //    otherwise 1 telemetry frame per cabinet per RAW_SAMPLE_MIN minutes (0 = all)
 import mqtt from 'mqtt';
 import { Redis } from 'ioredis';
 import { TOPICS, parseBoot, parseDemo, parseTelemetry, sanitizeTelemetry, type TelemetryPatch } from '@citylight/coreif';
+import { parseMasterKey, verifyIdent } from '@citylight/coreif/sign';
 import { createSql } from '@citylight/db';
 import {
   Debouncer, FrameBudget, LOGO_LINK, healthChecksPaused, MEASUREMENT_TYPES, OFFLINE_AFTER_MS, RAW_SAMPLE_MIN_DEFAULT, RawSampler, SPOOF_HOLD_MS, SWING_WINDOW_MS, activeHealthAlarms, checkImei, defaultThresholds,
-  deriveCabinetStatus, errorOf, measurementAlarms, normImei,
+  deriveCabinetStatus, errorOf, judgeIdent, measurementAlarms, normImei,
   type AlarmType, type FwProfile, type GeoPoint, type HealthInput, type MeasureSample, type ScheduleWindow, type Thresholds,
 } from '@citylight/shared';
 import { EVENTS_CHANNEL, type AlarmEvent, type CabinetStateEvent, type WorkerEvent } from './events';
@@ -33,6 +37,12 @@ const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', { max
 /** API / command-worker announce threshold and schedule changes here. */
 const CONFIG_CHANNEL = 'cl:config';
 const CONFIG_RELOAD_MS = 60_000;
+/** D7-lite master key of this environment; null = identity blocks are not checked (no cabinet gets signed). */
+const MASTER = parseMasterKey(process.env.DEVICE_MASTER_KEY);
+/** Alarms opened by the frame guards and closed by sweep SPOOF_HOLD_MS after the last bad frame. */
+const GUARD_TYPES = ['spoof_suspect', 'sig_invalid'] as const;
+type GuardType = (typeof GUARD_TYPES)[number];
+const isGuard = (t: AlarmType): t is GuardType => (GUARD_TYPES as readonly AlarmType[]).includes(t);
 
 // ---------------- registry + runtime ----------------
 
@@ -59,8 +69,15 @@ interface Runtime extends HealthInput {
   debouncer: Debouncer;
   /** registered IMEI (cabinets.imei); null = learn it from the next frame that carries one */
   imei: string | null;
-  /** last frame with a foreign IMEI: keeps E805 open SPOOF_HOLD_MS */
-  spoof: { lastAt: number; imei: string | null; frames: number } | null;
+  /** last frame with a foreign IMEI / board UID (E805) or a bad identity signature (E806): keeps it open SPOOF_HOLD_MS */
+  guards: Partial<Record<GuardType, { lastAt: number; frames: number }>>;
+  /** signing (S59): locked board UID, UID waiting for the provider, signing on, boot the commands are signed for */
+  uid: string | null;
+  uidPending: string | null;
+  signed: boolean;
+  sigBoot: number | null;
+  /** a lower boot seen in a row (judgeIdent) */
+  lowerBoot: { boot: number; n: number } | null;
 }
 
 const byLtid = new Map<string, Runtime>();
@@ -78,9 +95,11 @@ async function loadCabinets(ids: string[] | null) {
       lat: number | null; lng: number | null; device_time: Date | null; device_time_changed_at: Date | null;
       device_time_missing_since: Date | null; logo_link: number | null;
       zone1_id: string | null; decl_lat: number; decl_lng: number; imei: string | null;
+      uid: string | null; uid_pending: string | null; signed: boolean; sig_boot: number | null;
     }[]
   >`
     SELECT c.id, c.ltid, c.code, c.name, c.fw_profile, c.has_temp_sensor, c.zone1_id, ST_Y(c.location) AS decl_lat, ST_X(c.location) AS decl_lng, c.imei,
+           c.uid, c.uid_pending, c.signed, c.sig_boot,
            s.status, s.online, s.last_seen_at, s.last_boot_at, s.bus_status, s.branch1_on, s.branch2_on, s.manual_mode,
            s.plc_online, s.pm_online, s.v_l1, s.v_l2, s.v_l3, s.i_l1, s.i_l2, s.i_l3, s.leak_ma, s.temp_c, s.temp_sensor_fault,
            s.battery_mv, ST_Y(s.gps_device) AS lat, ST_X(s.gps_device) AS lng, s.device_time, s.device_time_changed_at,
@@ -103,7 +122,8 @@ async function loadCabinets(ids: string[] | null) {
       pf: { l1: null, l2: null, l3: null, total: null }, pTotalKw: null, doorOpen: null, contactorFault: null,
       zoneId: r.zone1_id, declaredLocation: { lat: Number(r.decl_lat), lng: Number(r.decl_lng) },
       thresholds: defaultThresholds(), schedule: null, samples: [], debouncer: new Debouncer(),
-      imei: normImei(r.imei), spoof: null,
+      imei: normImei(r.imei), guards: {},
+      uid: r.uid, uidPending: r.uid_pending, signed: r.signed, sigBoot: r.sig_boot === null ? null : Number(r.sig_boot), lowerBoot: null,
     };
     byLtid.set(rt.ltid, rt);
     byId.set(rt.id, rt);
@@ -122,8 +142,8 @@ async function loadRegistry() {
     rt.activeAlarms.set(a.type, { id: a.id, severity: a.severity });
     // measurement alarms open in the DB stay open until their condition is gone for the close hold
     if (MEASUREMENT_TYPES.includes(a.type)) rt.debouncer.seed([[a.type, a.message]]);
-    // an open E805 survives a restart for one more hold period
-    if (a.type === 'spoof_suspect') rt.spoof = { lastAt: Date.now(), imei: null, frames: 0 };
+    // an open E805 / E806 survives a restart for one more hold period
+    if (isGuard(a.type)) rt.guards[a.type] = { lastAt: Date.now(), frames: 0 };
   }
   const boots = await sql<{ cabinet_id: string; ts: Date }[]>`
     SELECT cabinet_id, ts FROM device_events WHERE kind = 'boot' AND ts > now() - interval '24 hours'`;
@@ -147,8 +167,12 @@ async function dropRegisteredUnknowns() {
  * position, decommissioned ones dropped. Runtime state of unchanged cabinets is kept.
  */
 async function refreshRegistry() {
-  const rows = await sql<{ id: string; ltid: string; code: string; name: string; zone1_id: string | null; fw_profile: FwProfile; has_temp_sensor: boolean; lat: number; lng: number; imei: string | null }[]>`
-    SELECT id, ltid, code, name, zone1_id, fw_profile, has_temp_sensor, ST_Y(location) AS lat, ST_X(location) AS lng, imei FROM cabinets WHERE active`;
+  const rows = await sql<{
+    id: string; ltid: string; code: string; name: string; zone1_id: string | null; fw_profile: FwProfile; has_temp_sensor: boolean; lat: number; lng: number;
+    imei: string | null; uid: string | null; uid_pending: string | null; signed: boolean; sig_boot: number | null;
+  }[]>`
+    SELECT id, ltid, code, name, zone1_id, fw_profile, has_temp_sensor, ST_Y(location) AS lat, ST_X(location) AS lng, imei,
+           uid, uid_pending, signed, sig_boot FROM cabinets WHERE active`;
   const seen = new Set<string>();
   const fresh: string[] = [];
   for (const r of rows) {
@@ -171,8 +195,17 @@ async function refreshRegistry() {
     // admin accepted a new IMEI or asked to re-learn it: E805 closes on the next sweep
     if (normImei(r.imei) !== rt.imei) {
       rt.imei = normImei(r.imei);
-      rt.spoof = null;
+      delete rt.guards.spoof_suspect;
     }
+    // provider accepted a new board UID (sig_boot restarts from its next identity) or turned signing off
+    if (r.uid !== rt.uid) {
+      rt.uid = r.uid;
+      rt.sigBoot = r.sig_boot === null ? null : Number(r.sig_boot);
+      rt.lowerBoot = null;
+      delete rt.guards.spoof_suspect;
+    }
+    rt.uidPending = r.uid_pending;
+    rt.signed = r.signed;
   }
   let dropped = 0;
   for (const [id, rt] of byId) {
@@ -226,7 +259,7 @@ const telemetryRows: Record<string, unknown>[] = [];
 const rawRows: { ts: Date; topic: string; ltid: string | null; payload: string; parse_error: string | null }[] = [];
 const dirty = new Set<string>();
 const stateEvents = new Map<string, CabinetStateEvent>();
-const stats = { frames: 0, telemetry: 0, unknown: 0, parseErrors: 0, throttled: 0, sanitized: 0, spoofed: 0, flushes: 0, lastFlushMs: 0, lagMs: 0 };
+const stats = { frames: 0, telemetry: 0, unknown: 0, parseErrors: 0, throttled: 0, sanitized: 0, spoofed: 0, badSig: 0, flushes: 0, lastFlushMs: 0, lagMs: 0 };
 /** ingest <-> broker link: offline checks pause while it is down (shared/health.ts healthChecksPaused) */
 const brokerLink = { connected: false, upSinceMs: null as number | null, downSinceMs: Date.now() as number | null };
 /** Read by the API (system page) and infra/scripts/watchdog.sh: {connected, since, at} */
@@ -295,8 +328,8 @@ async function syncAlarms(rt: Runtime, now = Date.now()) {
     }
   }
   for (const [type, a] of [...rt.activeAlarms]) {
-    // E805 is managed by the identity guard (onSpoof / sweep), not by the health / measurement rules
-    if (want.has(type) || !errorOf(type) || type === 'spoof_suspect') continue;
+    // E805 / E806 are managed by the frame guards (openGuard / sweep), not by the health / measurement rules
+    if (want.has(type) || !errorOf(type) || isGuard(type)) continue;
     const ended = new Date(now);
     await sql`UPDATE alarms SET active = false, ended_at = ${ended} WHERE id = ${a.id}`;
     rt.activeAlarms.delete(type);
@@ -307,37 +340,111 @@ async function syncAlarms(rt: Runtime, now = Date.now()) {
   if (status !== rt.status) rt.status = status;
 }
 
-/** A frame under this cabinet's LTID with another IMEI: not applied; E805 opened (closed by sweep after the hold). */
-async function onSpoof(rt: Runtime, imei: string | null, now = Date.now()) {
-  stats.spoofed++;
-  rt.spoof = { lastAt: now, imei, frames: (rt.spoof?.frames ?? 0) + 1 };
-  warnOnce(`spoof:${rt.ltid}`, `[ingest] ${rt.ltid}: frame with foreign IMEI ${imei ?? 'X'} ignored (registered ${rt.imei})`);
-  if (rt.activeAlarms.has('spoof_suspect')) return;
-  const def = errorOf('spoof_suspect')!;
+/**
+ * A frame the guards reject or distrust: E805 (foreign IMEI / board UID, frame not applied) or E806 (bad identity
+ * signature). Opened once; sweep closes it SPOOF_HOLD_MS after the last such frame.
+ */
+async function openGuard(rt: Runtime, type: GuardType, message: string, now = Date.now()) {
+  rt.guards[type] = { lastAt: now, frames: (rt.guards[type]?.frames ?? 0) + 1 };
+  warnOnce(`${type}:${rt.ltid}`, `[ingest] ${rt.ltid}: ${message}`);
+  if (rt.activeAlarms.has(type)) return;
+  const def = errorOf(type)!;
   const started = new Date(now);
-  const message = `Frame mang LTID ${rt.ltid} với IMEI ${imei ?? '(không có)'} khác IMEI đã ghi nhận ${rt.imei}: frame bị bỏ qua`;
   const rows = await sql<{ id: string }[]>`
     INSERT INTO alarms (cabinet_id, code, type, severity, message, started_at, active)
-    VALUES (${rt.id}, ${def.code}, 'spoof_suspect', ${def.severity}, ${message}, ${started}, true)
+    VALUES (${rt.id}, ${def.code}, ${type}, ${def.severity}, ${message}, ${started}, true)
     ON CONFLICT (cabinet_id, type) WHERE active DO NOTHING
     RETURNING id`;
   if (rows[0]) {
-    rt.activeAlarms.set('spoof_suspect', { id: rows[0].id, severity: def.severity });
-    void publish({ type: 'alarm.raised', alarm: alarmEvent(rt, rows[0].id, 'spoof_suspect', message, started, null) });
+    rt.activeAlarms.set(type, { id: rows[0].id, severity: def.severity });
+    void publish({ type: 'alarm.raised', alarm: alarmEvent(rt, rows[0].id, type, message, started, null) });
     markChanged(rt);
   }
 }
 
-/** E805 closes SPOOF_HOLD_MS after the last foreign frame, or at once when the admin changed the IMEI. */
-async function closeSpoofIfQuiet(rt: Runtime, now: number) {
-  const a = rt.activeAlarms.get('spoof_suspect');
-  if (!a || (rt.spoof && now - rt.spoof.lastAt < SPOOF_HOLD_MS)) return;
+/** A frame under this cabinet's LTID with another IMEI: not applied; E805 opened (closed by sweep after the hold). */
+async function onSpoof(rt: Runtime, imei: string | null, now = Date.now()) {
+  stats.spoofed++;
+  await openGuard(rt, 'spoof_suspect', `Frame mang LTID ${rt.ltid} với IMEI ${imei ?? '(không có)'} khác IMEI đã ghi nhận ${rt.imei}: frame bị bỏ qua`, now);
+}
+
+/** Guard alarms close SPOOF_HOLD_MS after the last bad frame, or at once when the admin changed the IMEI / UID. */
+async function closeGuardIfQuiet(rt: Runtime, type: GuardType, now: number) {
+  const a = rt.activeAlarms.get(type);
+  const g = rt.guards[type];
+  if (!a || (g && now - g.lastAt < SPOOF_HOLD_MS)) return;
   const ended = new Date(now);
   await sql`UPDATE alarms SET active = false, ended_at = ${ended} WHERE id = ${a.id}`;
-  rt.activeAlarms.delete('spoof_suspect');
-  rt.spoof = null;
-  void publish({ type: 'alarm.cleared', alarm: alarmEvent(rt, a.id, 'spoof_suspect', '', ended, ended) });
+  rt.activeAlarms.delete(type);
+  delete rt.guards[type];
+  void publish({ type: 'alarm.cleared', alarm: alarmEvent(rt, a.id, type, '', ended, ended) });
   markChanged(rt);
+}
+
+type IdentCheck = ReturnType<typeof verifyIdent> | null;
+
+/** Remember another validly signed board UID under this LTID for the provider's E805 decision. */
+async function setUidPending(rt: Runtime, uid: string) {
+  if (rt.uidPending === uid) return;
+  rt.uidPending = uid;
+  await sql`UPDATE cabinets SET uid_pending = ${uid} WHERE id = ${rt.id}`;
+}
+
+/**
+ * Telemetry identity block (S59), after the IMEI check passed. Returns true when the frame must not be applied
+ * (another board: E805). A wrong signature only raises E806: telemetry itself is not signed in D7-lite.
+ */
+async function onIdent(rt: Runtime, id: IdentCheck, now: number): Promise<boolean> {
+  if (!id) return false;
+  if (!id.ok) {
+    stats.badSig++;
+    await openGuard(rt, 'sig_invalid', `Bộ định danh (LUID/LSEQ/LSIG) mang LTID ${rt.ltid} ký sai: phần định danh bị bỏ qua`, now);
+    return false;
+  }
+  const j = judgeIdent({ uid: rt.uid, boot: rt.sigBoot }, { uid: id.uid, boot: id.boot }, rt.lowerBoot);
+  rt.lowerBoot = j.lower;
+  const log = (action: string, value: string) => sql`
+    INSERT INTO activity_logs (user_email, action, target_type, target_id, target_name, new_value)
+    VALUES ('hệ thống', ${action}, 'cabinet', ${rt.id}, ${rt.code}, ${value})`;
+  switch (j.verdict) {
+    case 'foreign':
+      stats.spoofed++;
+      await setUidPending(rt, id.uid);
+      await openGuard(rt, 'spoof_suspect', `Frame mang LTID ${rt.ltid} từ board UID ${id.uid} khác UID đã ghi nhận ${rt.uid}: frame bị bỏ qua`, now);
+      return true;
+    case 'learn': {
+      const owner = await sql<{ code: string }[]>`SELECT code FROM cabinets WHERE uid = ${id.uid} AND id <> ${rt.id}`;
+      if (owner[0]) {
+        // the board moved from another registered cabinet: the provider decides (accepting frees it there)
+        stats.spoofed++;
+        await setUidPending(rt, id.uid);
+        await openGuard(rt, 'spoof_suspect', `Board UID ${id.uid} đang ghi nhận cho tủ ${owner[0].code}: frame mang LTID ${rt.ltid} bị bỏ qua`, now);
+        return true;
+      }
+      await sql`UPDATE cabinets SET uid = ${id.uid}, uid_pending = NULL, signed = true, sig_boot = ${id.boot}, key_fp = ${id.fingerprint}
+                WHERE id = ${rt.id} AND uid IS NULL`;
+      Object.assign(rt, { uid: id.uid, uidPending: null, signed: true, sigBoot: id.boot });
+      await log('Ghi nhận UID board, bật ký lệnh', `UID ${id.uid}, LKFP ${id.fingerprint}, BOOT ${id.boot}`);
+      return false;
+    }
+    case 'advance':
+    case 'reset':
+      await sql`UPDATE cabinets SET sig_boot = ${id.boot}, signed = true, key_fp = ${id.fingerprint} WHERE id = ${rt.id}`;
+      if (j.verdict === 'reset') await log('BOOT tủ giảm (xóa chip / nạp lại)', `BOOT ${rt.sigBoot} -> ${id.boot}`);
+      if (!rt.signed) await log('Bật lại ký lệnh (tủ gửi định danh ký đúng)', `BOOT ${id.boot}`);
+      Object.assign(rt, { signed: true, sigBoot: id.boot });
+      return false;
+    case 'same':
+      if (!rt.signed) {
+        await sql`UPDATE cabinets SET signed = true WHERE id = ${rt.id}`;
+        rt.signed = true;
+        await log('Bật lại ký lệnh (tủ gửi định danh ký đúng)', `BOOT ${id.boot}`);
+      }
+      return false;
+    case 'stale':
+      warnOnce(`stale:${rt.ltid}`, `[ingest] ${rt.ltid}: identity with lower BOOT ${id.boot} (recorded ${rt.sigBoot}) ignored`);
+      return false;
+  }
 }
 
 function markChanged(rt: Runtime, cameOnline = false) {
@@ -378,8 +485,9 @@ async function onTelemetry(payload: string) {
   }
   const rt = byLtid.get(t.ltid);
   const verdict = rt ? checkImei(rt.imei, t.imei) : 'ok';
+  const id: IdentCheck = rt && MASTER && t.ident ? verifyIdent(MASTER, t.ltid, t.ident) : null;
   const foreign = verdict === 'mismatch' ? `IMEI ${normImei(t.imei) ?? 'X'} khác IMEI đã ghi nhận` : null;
-  const note = foreign ?? (dropped.length ? `bỏ giá trị: ${dropped.join(', ')}` : null);
+  const note = foreign ?? (id && !id.ok ? 'định danh ký sai' : null) ?? (dropped.length ? `bỏ giá trị: ${dropped.join(', ')}` : null);
   if (rawSampler.keep(t.ltid, Date.now(), note !== null || !rt)) raw(TOPICS.telemetry, t.ltid, payload, note);
   if (!rt) {
     stats.unknown++;
@@ -394,6 +502,8 @@ async function onTelemetry(payload: string) {
     return;
   }
   if (verdict === 'mismatch') {
+    // modem and board replaced together: keep the new UID too, so the provider accepts both in one E805 decision
+    if (id?.ok && rt.uid && id.uid !== rt.uid) await setUidPending(rt, id.uid);
     await onSpoof(rt, normImei(t.imei));
     return;
   }
@@ -403,6 +513,7 @@ async function onTelemetry(payload: string) {
     await sql`INSERT INTO activity_logs (user_email, action, target_type, target_id, target_name, new_value)
               VALUES ('hệ thống', 'Ghi nhận IMEI tủ (frame đầu tiên)', 'cabinet', ${rt.id}, ${rt.code}, ${rt.imei})`;
   }
+  if (await onIdent(rt, id, Date.now())) return;
   stats.telemetry++;
   indexImei(t.imei, rt);
   const now = new Date();
@@ -646,7 +757,7 @@ async function markOffline(list: Runtime[], now: number) {
     const chunk = ids.slice(i, i + MAX_BATCH);
     const closed = await sql<{ id: string; cabinet_id: string; type: AlarmType }[]>`
       UPDATE alarms SET active = false, ended_at = ${started}
-      WHERE active AND type NOT IN ('offline', 'spoof_suspect') AND cabinet_id = ANY(${chunk}::uuid[])
+      WHERE active AND type NOT IN ('offline', 'spoof_suspect', 'sig_invalid') AND cabinet_id = ANY(${chunk}::uuid[])
       RETURNING id, cabinet_id, type`;
     for (const c of closed) {
       const rt = byId.get(c.cabinet_id)!;
@@ -678,7 +789,7 @@ async function sweep() {
   const wentSilent: Runtime[] = [];
   for (const rt of byId.values()) {
     updateBootCounters(rt, now);
-    if (rt.activeAlarms.has('spoof_suspect')) await closeSpoofIfQuiet(rt, now);
+    for (const g of GUARD_TYPES) if (rt.activeAlarms.has(g)) await closeGuardIfQuiet(rt, g, now);
     const silent = !rt.lastSeenAt || now - Date.parse(rt.lastSeenAt) > offlineAfterMs;
     if (rt.online && silent) {
       wentSilent.push(rt);
@@ -764,7 +875,7 @@ mq.on('message', (topic, buf) => {
 setInterval(() => void flush(), FLUSH_MS);
 setInterval(() => void (chain = chain.then(sweep)), SWEEP_MS);
 setInterval(() => {
-  console.log(`[ingest] frames ${stats.frames} · telemetry ${stats.telemetry} · unknown ${stats.unknown} · parse errors ${stats.parseErrors} · throttled ${stats.throttled} · sanitized ${stats.sanitized} · foreign IMEI ${stats.spoofed} · last flush ${stats.lastFlushMs} ms · queue ${telemetryRows.length}`);
+  console.log(`[ingest] frames ${stats.frames} · telemetry ${stats.telemetry} · unknown ${stats.unknown} · parse errors ${stats.parseErrors} · throttled ${stats.throttled} · sanitized ${stats.sanitized} · foreign IMEI/UID ${stats.spoofed} · bad identity ${stats.badSig} · last flush ${stats.lastFlushMs} ms · queue ${telemetryRows.length}`);
   void redis.set('cl:ingest:stats', JSON.stringify({ ...stats, at: Date.now(), queue: telemetryRows.length })).catch(() => undefined);
   publishBrokerLink(); // refreshes "at": a stale key means ingest itself is stuck
 }, 30_000);

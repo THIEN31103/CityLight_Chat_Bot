@@ -331,6 +331,61 @@ export class AdminService {
     return { id: cid, imei: b.imei };
   }
 
+  /** Command signing state (D7-lite, S59), kept by ingest from the telemetry identity block. */
+  async signing(u: SessionUser, id: string) {
+    const cid = await this.cabinets.assertCabinet(u.scope, id);
+    const c = (await this.sql<{ signed: boolean; uid: string | null; uid_pending: string | null; key_fp: string | null; sig_boot: number | null; cmd_seq: number }[]>`
+      SELECT signed, uid, uid_pending, key_fp, sig_boot, cmd_seq FROM cabinets WHERE id = ${cid}`)[0]!;
+    const bad = (await this.sql<{ started_at: Date }[]>`
+      SELECT started_at FROM alarms WHERE cabinet_id = ${cid} AND type = 'sig_invalid' ORDER BY started_at DESC LIMIT 1`)[0];
+    return {
+      signed: c.signed, uid: c.uid, uidPending: c.uid_pending, keyFp: c.key_fp,
+      boot: c.sig_boot === null ? null : Number(c.sig_boot), cmdSeq: Number(c.cmd_seq), lastInvalidAt: bad ? bad.started_at.toISOString() : null,
+    };
+  }
+
+  /**
+   * Accept the board UID ingest is holding as pending (LTE board replaced, decision K7). A board that moved from
+   * another cabinet is released there. The boot counter restarts from the new board's next identity.
+   */
+  async acceptUid(u: SessionUser, id: string, body: unknown, ip?: string) {
+    const cid = await this.cabinets.assertCabinet(u.scope, id);
+    const b = z.object({ uid: z.string().regex(/^[0-9a-fA-F]{24}$/) }).parse(body);
+    const uidHex = b.uid.toLowerCase();
+    const cur = (await this.sql<{ code: string; uid: string | null; uid_pending: string | null }[]>`
+      SELECT code, uid, uid_pending FROM cabinets WHERE id = ${cid} AND organization_id = ${u.organizationId}`)[0];
+    if (!cur) throw new ApiError(404, 'not_found', 'Không tìm thấy tủ');
+    if (cur.uid_pending !== uidHex) throw new ApiError(409, 'uid_not_pending', 'UID này không phải UID đang chờ chấp nhận của tủ', { uid: uidHex });
+    await this.sql.begin(async (tx) => {
+      const freed = await tx<{ id: string; code: string }[]>`UPDATE cabinets SET uid = NULL, sig_boot = NULL WHERE uid = ${uidHex} AND id <> ${cid} RETURNING id, code`;
+      for (const f of freed)
+        await tx`INSERT INTO activity_logs (user_id, user_email, action, target_type, target_id, target_name, old_value, new_value, ip)
+                 VALUES (${u.id}, ${u.email}, 'Gỡ UID board (board chuyển sang tủ khác)', 'cabinet', ${f.id}, ${f.code}, ${uidHex}, ${cur.code}, ${ip ?? null})`;
+      await tx`UPDATE cabinets SET uid = ${uidHex}, uid_pending = NULL, sig_boot = NULL, updated_at = now() WHERE id = ${cid}`;
+      await tx`INSERT INTO activity_logs (user_id, user_email, action, target_type, target_id, target_name, old_value, new_value, ip)
+               VALUES (${u.id}, ${u.email}, 'Chấp nhận UID board mới', 'cabinet', ${cid}, ${cur.code}, ${cur.uid}, ${uidHex}, ${ip ?? null})`;
+    });
+    await this.reload('registry');
+    return { id: cid, uid: uidHex };
+  }
+
+  /**
+   * Turn signing off, e.g. after the LTE was flashed back to firmware that does not sign. Ingest turns it on again
+   * by itself if the cabinet still sends a valid identity (signing firmware rejects unsigned commands anyway).
+   */
+  async disableSigning(u: SessionUser, id: string, ip?: string) {
+    const cid = await this.cabinets.assertCabinet(u.scope, id);
+    const cur = (await this.sql<{ code: string; signed: boolean }[]>`
+      SELECT code, signed FROM cabinets WHERE id = ${cid} AND organization_id = ${u.organizationId}`)[0];
+    if (!cur) throw new ApiError(404, 'not_found', 'Không tìm thấy tủ');
+    if (!cur.signed) return { id: cid, signed: false };
+    await this.sql`UPDATE cabinets SET signed = false, updated_at = now() WHERE id = ${cid}`;
+    await this.sql`INSERT INTO activity_logs (user_id, user_email, action, target_type, target_id, target_name, old_value, new_value, ip)
+                   VALUES (${u.id}, ${u.email}, 'Tắt ký lệnh', 'cabinet', ${cid}, ${cur.code}, 'bật', 'tắt', ${ip ?? null})`;
+    await this.reload('registry');
+    return { id: cid, signed: false };
+  }
+
   /** Decommission: hidden everywhere (scopeWhere), workers drop it, open alarms closed, history kept. */
   async setActive(u: SessionUser, id: string, active: boolean, ip?: string) {
     const cid = uuid.parse(id);
@@ -423,6 +478,12 @@ export class AdminController {
   imeiCandidates(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.imeiCandidates(r.user!, id); }
   @Put('cabinets/:id/imei') @RequirePerm('device.identity') @RequireReauth()
   setImei(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.setImei(r.user!, id, b, r.ip); }
+  @Get('cabinets/:id/signing') @RequirePerm('device.identity')
+  signing(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.signing(r.user!, id); }
+  @Put('cabinets/:id/uid') @RequirePerm('device.identity') @RequireReauth()
+  acceptUid(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.acceptUid(r.user!, id, b, r.ip); }
+  @Post('cabinets/:id/signing/disable') @HttpCode(200) @RequirePerm('device.identity') @RequireReauth()
+  disableSigning(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.disableSigning(r.user!, id, r.ip); }
   @Post('cabinets/:id/decommission') @HttpCode(204) @RequirePerm('admin.devices') @RequireReauth()
   decommission(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.setActive(r.user!, id, false, r.ip); }
   @Post('cabinets/:id/reactivate') @HttpCode(204) @RequirePerm('admin.devices')

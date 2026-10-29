@@ -12,6 +12,7 @@ import { DimmingEditor } from '@/components/DimmingEditor';
 import { ErrorCodeBadge } from '@/components/ErrorHelp';
 import { RelocateGpsButton } from './RelocateGps';
 import { ImeiButton } from './ImeiDecision';
+import { SigningCard } from './Signing';
 import { DirectionsLink } from '@/components/Directions';
 import { dictNow, fill, useDict, useLabels, useLang } from '@/i18n';
 import { CABINET } from '@/i18n/dict/cabinet';
@@ -284,6 +285,7 @@ export function InfoTab({ detail, onLocate }: { detail: Detail; onLocate: (p: Ge
           <RelocateGpsButton cabinetId={c.id} label={`${c.code} - ${c.name}`} onLocate={onLocate} />
         </div>
       </Card>
+      <SigningCard cabinetId={c.id} label={`${c.code} - ${c.name}`} />
       <Card>
         <CardHeader title={t.admin} />
         <div className="px-4 py-2">
