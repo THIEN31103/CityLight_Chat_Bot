@@ -13,6 +13,7 @@ import { ErrorCodeBadge } from '@/components/ErrorHelp';
 import { RelocateGpsButton } from './RelocateGps';
 import { ImeiButton } from './ImeiDecision';
 import { SigningCard } from './Signing';
+import { EditCabinetButton } from './EditCabinet';
 import { DirectionsLink } from '@/components/Directions';
 import { dictNow, fill, useDict, useLabels, useLang } from '@/i18n';
 import { CABINET } from '@/i18n/dict/cabinet';
@@ -287,7 +288,7 @@ export function InfoTab({ detail, onLocate }: { detail: Detail; onLocate: (p: Ge
       </Card>
       <SigningCard cabinetId={c.id} label={`${c.code} - ${c.name}`} />
       <Card>
-        <CardHeader title={t.admin} />
+        <CardHeader title={t.admin} actions={<EditCabinetButton cabinet={c} />} />
         <div className="px-4 py-2">
           <KV label={t.address} value={c.address} />
           <KV label={t.street} value={c.street} />
