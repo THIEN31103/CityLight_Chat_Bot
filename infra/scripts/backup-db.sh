@@ -17,30 +17,34 @@ BACKUP_DIR=${BACKUP_DIR:-/opt/citylight/backups}
 KEEP_DAYS=${KEEP_DAYS:-14}
 AGE_RECIPIENTS=${AGE_RECIPIENTS:-/opt/citylight/infra/backup-recipients.txt}
 FULL=${FULL:-0}
+# trial stack (S60, trial-ctl.sh): DB_CONTAINER=citylight-trial-db UPLOADS_VOLUME=citylight-trial_uploads BACKUP_DIR=...-trial
+DB_CONTAINER=${DB_CONTAINER:-citylight-db}
+UPLOADS_VOLUME=${UPLOADS_VOLUME:-infra_uploads}
+LABEL=${LABEL:-backup}
 TS=$(date +%Y%m%d-%H%M)
 mkdir -p "$BACKUP_DIR"
 
 EXCLUDE=""
 if [ "$FULL" != 1 ]; then
   # the hypertable itself + its chunks (_hyper_<id>_<n>_chunk and, with compression, _hyper_<id>_<n>_chunk_compressed)
-  EXCLUDE=$(docker exec citylight-db psql -U citylight -d citylight -tAc \
+  EXCLUDE=$(docker exec "$DB_CONTAINER" psql -U citylight -d citylight -tAc \
     "SELECT string_agg(format('--exclude-table-data=public.%s --exclude-table-data=_timescaledb_internal._hyper_%s_*', table_name, id), ' ')
      FROM _timescaledb_catalog.hypertable WHERE schema_name = 'public' AND table_name IN ('telemetry', 'frames_raw')")
 fi
 # shellcheck disable=SC2086 # EXCLUDE is a list of options
-docker exec citylight-db pg_dump -U citylight -d citylight --no-owner $EXCLUDE | gzip > "$BACKUP_DIR/db-$TS.sql.gz.part"
+docker exec "$DB_CONTAINER" pg_dump -U citylight -d citylight --no-owner $EXCLUDE | gzip > "$BACKUP_DIR/db-$TS.sql.gz.part"
 mv "$BACKUP_DIR/db-$TS.sql.gz.part" "$BACKUP_DIR/db-$TS.sql.gz"
-docker run --rm -v infra_uploads:/u:ro -v "$BACKUP_DIR":/b alpine:3.20 tar czf "/b/uploads-$TS.tar.gz" -C /u .
+docker run --rm -v "$UPLOADS_VOLUME":/u:ro -v "$BACKUP_DIR":/b alpine:3.20 tar czf "/b/uploads-$TS.tar.gz" -C /u .
 
 # <file>.age, written aside then renamed, kept only when it starts with the age header
 encrypt() {
   age -R "$AGE_RECIPIENTS" -o "$1.age.part" "$1" && head -c 21 "$1.age.part" | grep -q 'age-encryption.org/v1' && mv "$1.age.part" "$1.age"
 }
 if [ -s "$AGE_RECIPIENTS" ]; then
-  command -v age >/dev/null 2>&1 || { echo "$(date -Is) backup FAIL: age not installed (sudo apt install age)"; exit 1; }
+  command -v age >/dev/null 2>&1 || { echo "$(date -Is) $LABEL FAIL: age not installed (sudo apt install age)"; exit 1; }
   if ! encrypt "$BACKUP_DIR/db-$TS.sql.gz" || ! encrypt "$BACKUP_DIR/uploads-$TS.tar.gz"; then
     find "$BACKUP_DIR" -name '*.age.part' -delete
-    echo "$(date -Is) backup FAIL: encryption (plain files kept)"
+    echo "$(date -Is) $LABEL FAIL: encryption (plain files kept)"
     exit 1
   fi
   ENC=encrypted
@@ -52,4 +56,4 @@ for p in 'db-*.sql.gz' 'uploads-*.tar.gz' 'db-*.sql.gz.age' 'uploads-*.tar.gz.ag
   find "$BACKUP_DIR" -name "$p" -mtime +"$KEEP_DAYS" -delete
 done
 [ "$FULL" = 1 ] && SCOPE=full || SCOPE="without telemetry / frames_raw rows"
-echo "$(date -Is) backup ok: db-$TS.sql.gz $(du -h "$BACKUP_DIR/db-$TS.sql.gz" | cut -f1), $SCOPE, $ENC"
+echo "$(date -Is) $LABEL ok: db-$TS.sql.gz $(du -h "$BACKUP_DIR/db-$TS.sql.gz" | cut -f1), $SCOPE, $ENC"

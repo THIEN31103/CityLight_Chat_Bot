@@ -8,8 +8,10 @@ set -eu
 BACKUP_DIR=${BACKUP_DIR:-/opt/citylight/backups}
 DUMP=${1:-$(ls -t "$BACKUP_DIR"/db-*.sql.gz | head -1)}
 [ -f "$DUMP" ] || DUMP="$BACKUP_DIR/$DUMP"
-IMAGE=$(docker inspect -f '{{.Config.Image}}' citylight-db)
-NAME=citylight-restore-drill
+# trial stack (S60, trial-ctl.sh): DB_CONTAINER=citylight-trial-db BACKUP_DIR=...-trial
+DB_CONTAINER=${DB_CONTAINER:-citylight-db}
+IMAGE=$(docker inspect -f '{{.Config.Image}}' "$DB_CONTAINER")
+NAME=${DB_CONTAINER%-db}-restore-drill # citylight-restore-drill / citylight-trial-restore-drill
 
 cleanup() { docker rm -f -v "$NAME" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -33,7 +35,7 @@ gunzip -c "$DUMP" | R >/dev/null
 R -c 'SELECT timescaledb_post_restore()' >/dev/null
 echo "drill: restore ok in $(( $(date +%s) - START )) s"
 
-TABLES=$(docker exec citylight-db psql -U citylight -d citylight -tAc \
+TABLES=$(docker exec "$DB_CONTAINER" psql -U citylight -d citylight -tAc \
   "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY 1")
 bad=0; n=0
 # S57: backup-db.sh leaves out the rows of these two (unless FULL=1): only check that the table came back
@@ -44,7 +46,7 @@ done
 # history lives in the aggregates (views, so not in TABLES): compare them like tables
 for t in $TABLES telemetry_5m telemetry_1h telemetry_1d; do
   case "$t" in telemetry|frames_raw) continue ;; esac
-  live=$(docker exec citylight-db psql -U citylight -d citylight -tAc "SELECT count(*) FROM public.\"$t\"")
+  live=$(docker exec "$DB_CONTAINER" psql -U citylight -d citylight -tAc "SELECT count(*) FROM public.\"$t\"")
   rest=$(docker exec "$NAME" psql -U citylight -d citylight -tAc "SELECT count(*) FROM public.\"$t\"" 2>/dev/null || echo MISSING)
   n=$((n + 1))
   if [ "$live" != "$rest" ]; then

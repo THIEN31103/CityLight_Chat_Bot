@@ -22,8 +22,9 @@ const DOMAIN = 'e2e-signing.citylight.test';
 const LTID = 'E2ESIG1';
 const CODE = 'E2E.SIG01';
 const HOST = process.env.E2E_MQTT_HOST ?? 'localhost';
-const CAB = `mqtt://${HOST}:1883`;
-const BACKEND = `mqtt://${HOST}:1885`;
+// trial stack (S60): the customer broker on other ports, backend listener with a password (MQTT_PASSWORD)
+const CAB = process.env.E2E_CAB_URL ?? `mqtt://${HOST}:1883`;
+const BACKEND = process.env.E2E_BACKEND_URL ?? `mqtt://${HOST}:1885`;
 const LOC = { lat: 10.8212, lng: 106.7123 };
 const NEW_UID = 'aa00000000000000000000bb';
 const sql = createSql(process.env.DATABASE_URL, 2);
@@ -82,7 +83,7 @@ async function main() {
 
   let sim = new SimCabinet({ ltid: LTID, brokerUrl: CAB, fault: 'none', location: LOC, telemetryMs: 2000, cmdTopic: true, sign: { master, boot: 7 } });
   // the broker owner (customer root): reads and publishes anything, here through the backend account
-  const owner = await connect(BACKEND, { username: process.env.MQTT_USERNAME });
+  const owner = await connect(BACKEND, { username: process.env.MQTT_USERNAME, password: process.env.MQTT_PASSWORD });
   const dev = await connect(CAB, { username: USER, password: PASS });
   const seen: { topic: string; frame: string }[] = [];
   owner.on('message', (topic, p) => seen.push({ topic, frame: p.toString() }));
