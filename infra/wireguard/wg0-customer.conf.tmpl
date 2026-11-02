@@ -1,0 +1,13 @@
+# /etc/wireguard/wg0.conf on the customer machine (trial A′, docs/trial.md). The customer side dials out (it is behind
+# NAT); only the VPS address goes through the tunnel. Key generated here, never copied:
+#   umask 077; wg genkey | tee /etc/wireguard/customer.key | wg pubkey > /etc/wireguard/customer.pub
+[Interface]
+Address = 10.88.0.2/24
+PrivateKey = <contents of /etc/wireguard/customer.key>
+
+[Peer]
+# CityLight VPS
+PublicKey = <contents of the VPS /etc/wireguard/vps.pub>
+Endpoint = 13.55.91.187:51820
+AllowedIPs = 10.88.0.1/32
+PersistentKeepalive = 25

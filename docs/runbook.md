@@ -124,6 +124,8 @@ grep -n "citylight/cmd" infra/emqx/acl.conf && docker restart citylight-emqx
 
 Thứ tự S53: deploy server + ACL **trước** khi nạp firmware topic riêng (firmware gặp ACL cũ vẫn chạy, chỉ ở topic chung + `LFWV'2`).
 
+**Bộ trial của khách (S60)** dùng chung image `citylight-server:dev`. Sau khi deploy production, bộ trial vẫn chạy code cũ cho tới khi chạy `sh infra/scripts/trial-ctl.sh migrate` (nếu có migration mới) rồi `sh infra/scripts/trial-ctl.sh up`. Từ S60, deploy phải chép thêm `infra/caddy-sites/` (Caddy mount thư mục này). Dựng, vận hành và hoàn tác bộ trial: `docs/trial.md`.
+
 ## 6. Sự cố thường gặp
 
 | Triệu chứng | Kiểm | Xử lý |

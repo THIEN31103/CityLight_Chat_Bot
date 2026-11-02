@@ -1,0 +1,18 @@
+# Laptop test of the trial stack (TRIAL_LOCAL=1 trial-ctl.sh ...): ports on 127.0.0.1 so tests and the simulator reach
+# it, broker = the customer bundle running on this machine (infra/customer/out, MQTT_PORT=21883 BACKEND_BIND=127.0.0.1
+# BACKEND_PORT=21885), plain HTTP cookies. Never on the VPS.
+services:
+  trial-db:
+    ports: ["127.0.0.1:15432:5432"]
+  trial-redis:
+    ports: ["127.0.0.1:16379:6379"]
+  trial-api:
+    ports: ["127.0.0.1:3100:3000"]
+    environment:
+      COOKIE_SECURE: "false"
+  trial-ingest:
+    environment:
+      MQTT_URL: mqtt://host.docker.internal:21885
+  trial-command:
+    environment:
+      MQTT_URL: mqtt://host.docker.internal:21885

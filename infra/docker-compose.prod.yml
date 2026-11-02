@@ -65,8 +65,11 @@ services:
       - "443:443/udp"
     environment:
       SITE_HOST: ${SITE_HOST:?set SITE_HOST in infra/.env}
+      # S60 trial site, read only when infra/caddy-sites/trial.caddy is enabled (docs/trial.md)
+      TRIAL_HOST: ${TRIAL_HOST:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-sites:/etc/caddy/caddy-sites:ro
       - ../web-dist:/srv/web:ro
       - caddy-data:/data
       - caddy-config:/config

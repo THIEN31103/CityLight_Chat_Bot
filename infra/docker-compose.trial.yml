@@ -1,0 +1,168 @@
+# Trial stack for one customer (A′, docs/trial.md): database + api + workers on the VPS, isolated from production.
+# The broker is NOT here: cabinets connect to EMQX on the customer machine (infra/customer/), the workers reach its
+# backend listener over WireGuard (10.88.0.2:1885). Nothing is published on the host; Caddy (production compose)
+# reaches trial-api on the production network, see infra/caddy/trial.caddy.
+#   sh infra/scripts/trial-ctl.sh up        (= docker compose -f infra/docker-compose.trial.yml --env-file infra/.env.trial up -d)
+# Every service name starts with trial-: trial-api also sits on the production network, where db / redis / api resolve
+# to the production containers.
+name: citylight-trial
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+x-app-env: &app-env
+  DATABASE_URL: postgres://${POSTGRES_USER:-citylight}:${POSTGRES_PASSWORD:?set in infra/.env.trial}@trial-db:5432/${POSTGRES_DB:-citylight}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set in infra/.env.trial}@trial-redis:6379
+
+x-mqtt-env: &mqtt-env
+  MQTT_URL: ${TRIAL_MQTT_URL:-mqtt://10.88.0.2:1885}
+  MQTT_USERNAME: ${MQTT_BACKEND_USER:?set in infra/.env.trial}
+  # the customer broker checks the backend password on 1885 (not inside a private Docker network like production)
+  MQTT_PASSWORD: ${MQTT_BACKEND_PASSWORD:?set in infra/.env.trial}
+  # this customer's master (D7-lite): the trial firmware build carries the same value
+  DEVICE_MASTER_KEY: ${DEVICE_MASTER_KEY:?set in infra/.env.trial}
+
+# Limits keep a runaway trial (flood through the customer broker, leak) from starving production on the same VPS.
+services:
+  trial-db:
+    image: timescale/timescaledb-ha:pg16@sha256:9c6c86701e9b9ea0d7af055338443cd66741528406fa383e5de5171d2a7a366b
+    container_name: citylight-trial-db
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 768m
+    cpus: 1.0
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-citylight}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-citylight}
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - db-data:/home/postgres/pgdata/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-citylight} -d ${POSTGRES_DB:-citylight}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  trial-redis:
+    image: redis:7.4-alpine
+    container_name: citylight-trial-redis
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 192m
+    cpus: 0.5
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  trial-api:
+    image: citylight-server:dev
+    container_name: citylight-trial-api
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 384m
+    cpus: 0.5
+    working_dir: /app/apps/api
+    command: ["node", "--import", "tsx", "src/main.ts"]
+    environment:
+      <<: *app-env
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      TOTP_ENC_KEY: ${TOTP_ENC_KEY:?set in infra/.env.trial}
+      AUTH_REQUIRE_2FA: ${AUTH_REQUIRE_2FA:-true}
+      UPLOAD_DIR: /data/uploads
+      # Caddy, on the production network (docker-compose.prod.yml subnet)
+      TRUST_PROXY: ${TRIAL_TRUST_PROXY:-172.30.0.0/24}
+    volumes:
+      - uploads:/data/uploads
+    networks: [default, edge]
+    depends_on:
+      trial-db: { condition: service_healthy }
+      trial-redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  trial-ingest:
+    image: citylight-server:dev
+    container_name: citylight-trial-ingest
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 384m
+    cpus: 0.5
+    working_dir: /app/apps/workers
+    command: ["node", "--import", "tsx", "src/ingest.ts"]
+    environment:
+      <<: [*app-env, *mqtt-env]
+    depends_on:
+      trial-api: { condition: service_started }
+
+  trial-command:
+    image: citylight-server:dev
+    container_name: citylight-trial-command
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 256m
+    cpus: 0.5
+    working_dir: /app/apps/workers
+    command: ["node", "--import", "tsx", "src/command-worker.ts"]
+    environment:
+      <<: [*app-env, *mqtt-env]
+    depends_on:
+      trial-api: { condition: service_started }
+
+  trial-notify:
+    image: citylight-server:dev
+    container_name: citylight-trial-notify
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 192m
+    cpus: 0.25
+    working_dir: /app/apps/workers
+    command: ["node", "--import", "tsx", "src/notify-worker.ts"]
+    environment:
+      <<: *app-env
+      # a bot of its own or empty: Telegram allows one getUpdates poller per bot (production already polls its bot)
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      WEB_URL: https://${SITE_HOST:?set SITE_HOST in infra/.env.trial}
+      NODE_OPTIONS: --network-family-autoselection-attempt-timeout=2000
+    depends_on:
+      trial-api: { condition: service_started }
+
+  trial-scheduler:
+    image: citylight-server:dev
+    container_name: citylight-trial-scheduler
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 256m
+    cpus: 0.25
+    working_dir: /app/apps/workers
+    command: ["node", "--import", "tsx", "src/scheduler.ts"]
+    environment:
+      <<: *app-env
+    depends_on:
+      trial-api: { condition: service_started }
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${TRIAL_SUBNET:-172.31.0.0/24}
+  # the production network, where Caddy runs (project "infra")
+  edge:
+    external: true
+    name: ${EDGE_NETWORK:-infra_default}
+
+volumes:
+  db-data:
+  redis-data:
+  uploads:
