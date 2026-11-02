@@ -7,10 +7,13 @@
 [Interface]
 Address = 10.88.0.1/24
 ListenPort = 51820
-PrivateKey = <contents of /etc/wireguard/vps.key>
+# private key read from its file, so this config holds no secret (as deployed 2026-11-02)
+PostUp = wg set %i private-key /etc/wireguard/vps.key
 PostUp = iptables -I INPUT -i %i -m conntrack --ctstate NEW -j DROP; iptables -N DOCKER-USER 2>/dev/null || true; iptables -I DOCKER-USER -i %i -m conntrack --ctstate NEW -j DROP
 PostDown = iptables -D INPUT -i %i -m conntrack --ctstate NEW -j DROP; iptables -D DOCKER-USER -i %i -m conntrack --ctstate NEW -j DROP
 
+# Added once the customer key exists (step 4): sudo wg set wg0 peer <customer.pub> allowed-ips 10.88.0.2/32, and the
+# same block in this file so it survives a restart.
 [Peer]
 # customer machine
 PublicKey = <contents of the customer's /etc/wireguard/customer.pub>
