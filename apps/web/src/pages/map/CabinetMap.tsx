@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { ExpressionSpecification, GeoJSONSource, Map as MlMap, MapMouseEvent, PaddingOptions } from 'maplibre-gl';
-import type { CabinetSummary, GeoPoint, GpsDriftItem } from '@citylight/shared';
+import type { CabinetSummary, GeoPoint, GpsDriftItem, RegionView } from '@citylight/shared';
 import { api, type MapAssets, type PoleAsset } from '@/lib/api';
 import { useUi } from '@/stores/session';
 import { dictNow, fill, useLang } from '@/i18n';
@@ -59,6 +59,8 @@ interface Props {
   onPoleDrag?: (pole: PoleAsset, p: GeoPoint) => void;
   /** cabinets with an open E802: dashed line declared -> GPS fix, so a misplaced cabinet shows on the map */
   gpsDrift?: GpsDriftItem[];
+  /** S62 service region: its outline is drawn and the map cannot be panned far from it */
+  region?: RegionView | null;
 }
 
 const HCMC: [number, number] = [106.7, 10.79];
@@ -100,6 +102,7 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
   themeRef.current = theme;
   const editMarker = useRef<maplibregl.Marker | null>(null);
   const poleCache = useRef<PoleAsset[]>([]);
+  const regionShown = useRef(false);
   // map text (pole labels, GPS drift labels, custom basemap attribution) is baked into the style: a language
   // change reloads the style like a theme change, and 'style.load' re-installs the overlay in the new language
   const lang = useLang((s) => s.lang);
@@ -154,6 +157,16 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
     const t = dictNow(MAP).overlay;
 
     // Routes: lit = amber, off = grey, unknown = violet; casing keeps them readable on any basemap.
+    // Service region outline (S62), under everything else
+    m.addSource('region', { type: 'geojson', data: EMPTY });
+    m.addLayer({
+      id: 'region-outline',
+      type: 'line',
+      source: 'region',
+      paint: { 'line-color': dark ? '#a78bfa' : '#7c3aed', 'line-width': 2, 'line-opacity': 0.7, 'line-dasharray': [4, 2] },
+    });
+    applyRegion(m);
+
     m.addSource('routes', { type: 'geojson', data: EMPTY });
     m.addLayer({
       id: 'routes-casing',
@@ -309,6 +322,26 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
     applyDraft(m);
     applyGpsDrift(m);
     void loadPoles(m);
+  }
+
+  /** Outline + max bounds (bbox + ~15 km); the first time, a view outside the region jumps to it. */
+  function applyRegion(m: MlMap) {
+    const r = propsRef.current.region;
+    (m.getSource('region') as GeoJSONSource | undefined)?.setData(
+      r ? { type: 'Feature', geometry: { type: 'MultiLineString', coordinates: r.outline }, properties: {} } : EMPTY,
+    );
+    if (!r) {
+      m.setMaxBounds(null);
+      return;
+    }
+    const [x0, y0, x1, y1] = r.bbox;
+    const pad = 0.15;
+    m.setMaxBounds([[x0 - pad, y0 - pad], [x1 + pad, y1 + pad]]);
+    if (!regionShown.current) {
+      regionShown.current = true;
+      const c = m.getCenter();
+      if (c.lng < x0 || c.lng > x1 || c.lat < y0 || c.lat > y1) m.fitBounds([[x0, y0], [x1, y1]], { padding: 40, duration: 0 });
+    }
   }
 
   function applyGpsDrift(m: MlMap) {
@@ -505,6 +538,12 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
     if (m) applyGpsDrift(m);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.gpsDrift]);
+
+  useEffect(() => {
+    const m = map.current;
+    if (m?.getSource('region')) applyRegion(m);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.region]);
 
   useEffect(() => {
     const m = map.current;

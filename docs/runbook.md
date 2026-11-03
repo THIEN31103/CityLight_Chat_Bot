@@ -153,6 +153,7 @@ Thứ tự S53: deploy server + ACL **trước** khi nạp firmware topic riêng
   - Không có master: ingest bỏ qua định danh, tủ không bật ký; tủ firmware ký sẽ từ chối mọi lệnh (`rc:-3`, lệnh báo "server chưa ghi nhận định danh ký của tủ").
   - Tủ tự bật ký khi gửi định danh hợp lệ (xem tab Thông tin → "Ký lệnh": UID, LKFP, BOOT). Đối chiếu **LKFP** với `SHOW` qua UART2 tại tủ.
   - **E806** = định danh ký sai: dữ liệu giả, hoặc firmware build với master khác (LKFP khác) → nạp lại đúng bản.
+  - **E807** (chỉ trial, S62) = GPS tủ ngoài TP. Hồ Chí Minh quá 300 m: bộ điều khiển bị mang đi, hoặc board khác mang LTID này → xác minh tủ ở đâu.
   - **Thay board LTE** → E805 "UID board khác": hộp IMEI… / thẻ Ký lệnh → "Chấp nhận UID mới" (2FA). Board chuyển từ tủ khác: tủ cũ mất UID.
   - Xóa chip / nạp lại board (BOOT về thấp): server tự nhận sau 3 frame. Khôi phục DB từ backup cũ: lệnh đầu bị `-3`, server tự nhảy `cmd_seq` + 10000 rồi ký lại, không cần làm gì.
   - "Tắt ký" (2FA) chỉ dùng khi board đã nạp lại firmware không ký; nếu tủ vẫn ký, server tự bật lại.

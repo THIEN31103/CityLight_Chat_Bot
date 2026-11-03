@@ -1,6 +1,6 @@
 #!/bin/sh
 # Trial stack helper (S60, docs/trial.md). Everything reads infra/.env.trial; production is never touched.
-#   sh infra/scripts/trial-ctl.sh up | down | ps | logs [svc] | migrate | seed | backup | drill [dump] | watchdog [--test] | bundle
+#   sh infra/scripts/trial-ctl.sh up | down | ps | logs [svc] | migrate | seed | seed-region | backup | drill [dump] | watchdog [--test] | bundle
 # cron (VPS, user ubuntu):
 #   45 2 * * *   sh /opt/citylight/infra/scripts/trial-ctl.sh backup   >> /opt/citylight/backups-trial/backup.log 2>&1
 #   */5 * * * *  sh /opt/citylight/infra/scripts/trial-ctl.sh watchdog >> /opt/citylight/backups-trial/watchdog.log 2>&1
@@ -33,6 +33,9 @@ case "$cmd" in
   seed)
     SEED_ADMIN_EMAIL=$(envv SEED_ADMIN_EMAIL) SEED_ADMIN_PASSWORD=$(envv SEED_ADMIN_PASSWORD) \
       dc run --rm --no-deps -w /app/packages/db -e SEED_ADMIN_EMAIL -e SEED_ADMIN_PASSWORD trial-api node --import tsx src/seed.ts ;;
+  seed-region)
+    # S62: area tree = the SERVICE_REGION ward list (trial-api has SERVICE_REGION from the compose file)
+    dc run --rm --no-deps -w /app/packages/db trial-api node --import tsx src/seed-region.ts ;;
   backup)
     DB_CONTAINER=citylight-trial-db UPLOADS_VOLUME=citylight-trial_uploads BACKUP_DIR="$BACKUP_DIR" LABEL=trial-backup \
       sh "$ROOT/infra/scripts/backup-db.sh" ;;

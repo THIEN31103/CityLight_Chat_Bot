@@ -21,6 +21,7 @@ import type {
   ManagementUnit,
   MapStats,
   Page,
+  RegionView,
   Schedule,
   TelemetryPoint,
   Thresholds,
@@ -410,6 +411,7 @@ export const api = {
   relocateFromGps: (id: string, expected: GeoPoint) =>
     req<{ id: string; location: GeoPoint; movedM: number }>('POST', `/cabinets/${id}/location-from-gps`, { expected }),
   gpsDrift: () => req<GpsDriftItem[]>('GET', '/map/gps-drift'),
+  mapRegion: () => req<{ region: RegionView | null }>('GET', '/map/region'),
   imeiCandidates: (id: string) => req<ImeiCandidates>('GET', `/cabinets/${id}/imei-candidates`),
   /** null = forget it, the next frame's IMEI is learned */
   setImei: (id: string, imei: string | null) => req<{ id: string; imei: string | null }>('PUT', `/cabinets/${id}/imei`, { imei }),

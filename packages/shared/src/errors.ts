@@ -174,6 +174,7 @@ export const ERROR_CATALOG: ErrorDef[] = [
   { code: 'E804', type: 'fw_unsafe', title: 'Firmware cũ không lọc LTID', category: 'Thiết bị', severity: 'major', source: 'fw_profile = v2-1307ebc', cause: 'Firmware cũ thực thi mọi lệnh trên topic chung — web chặn điều khiển tủ này.', checks: ['Nâng cấp firmware LTE lên bản có lọc LTID.'], supported: true },
   { code: 'E805', type: 'spoof_suspect', title: 'Nghi giả mạo tủ (IMEI không khớp)', category: 'Thiết bị', severity: 'major', source: 'Frame mang LTID của tủ nhưng IMEI (LIME) khác IMEI đã ghi nhận; frame bị bỏ qua. Tủ ký lệnh: cả UID board (LUID) khác UID đã ghi nhận', cause: 'Ai đó gửi dữ liệu giả lên broker bằng LTID của tủ, hoặc modem EC25 / board LTE của tủ vừa được thay.', checks: ['Nếu vừa thay modem / board LTE: Chấp nhận IMEI mới (và UID mới nếu có) trong cảnh báo (hoặc Học lại IMEI).', 'Nếu không thay gì: dữ liệu giả, giữ nguyên IMEI; xem IP/thời điểm trong frame thô và báo người quản trị hệ thống.'], supported: true },
   { code: 'E806', type: 'sig_invalid', title: 'Chữ ký định danh không hợp lệ', category: 'Thiết bị', severity: 'major', source: 'Bộ định danh LUID/LSEQ/LSIG trong telemetry ký sai (khóa ký D7-lite)', cause: 'Ai đó gửi bộ định danh giả lên broker, hoặc firmware tủ được build với khóa master khác khóa của server.', checks: ['Đối chiếu dấu vân tay khóa (LKFP) trên UART2 SHOW với trang tủ.', 'Nếu tủ thật ký sai: nạp lại firmware build đúng khóa của khách này.', 'Nếu không: dữ liệu giả, báo người quản trị hệ thống.'], supported: true },
+  { code: 'E807', type: 'gps_out_of_region', title: 'Tủ ngoài phạm vi hoạt động', category: 'Thiết bị', severity: 'major', source: 'GPS thiết bị nằm ngoài vùng phục vụ của hệ thống (trial: TP. Hồ Chí Minh) quá 300 m', cause: 'Bộ điều khiển bị mang ra khỏi khu vực, hoặc board của tủ khác được nạp LTID này.', checks: ['Xác minh tủ / bộ điều khiển đang ở đâu.', 'Nếu không phải tủ thật: báo người quản trị hệ thống.'], supported: true },
 ];
 
 export const ERROR_CATEGORY_LABELS: Record<Lang, Record<ErrorCategory, string>> = {
@@ -334,6 +335,7 @@ export const ERROR_CATALOG_EN: Partial<Record<string, ErrorText>> = {
       'Otherwise: the data is fake, report it to the system administrator.',
     ],
   },
+  E807: { title: 'Cabinet outside the service area', source: 'Device GPS more than 300 m outside the service region of the system (trial: Ho Chi Minh City)', cause: 'The controller was taken out of the area, or another board was given this LTID.', checks: ['Find out where the cabinet / controller is.', 'If it is not the real cabinet: report it to the system administrator.'] },
 };
 
 const catalogCache: Partial<Record<Lang, ErrorDef[]>> = { vi: ERROR_CATALOG };

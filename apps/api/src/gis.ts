@@ -6,11 +6,12 @@ import ExcelJS from 'exceljs';
 import type { PendingQuery, Row as PgRow, TransactionSql } from 'postgres';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
-import { IMPORT_COLUMNS_I18N, parseImportRows, poleCode, pointsAlong, routeCode, type ImportPole, type Lang, type LngLat } from '@citylight/shared';
+import { IMPORT_COLUMNS_I18N, inRegion, parseImportRows, poleCode, pointsAlong, routeCode, type ImportPole, type Lang, type LngLat } from '@citylight/shared';
 import { CONFIG_CHANNEL } from '@citylight/db/notify';
 import { RequirePerm, type AuthedRequest, type SessionUser } from './auth';
 import { CabinetsModule, CabinetsService } from './cabinets';
 import { ApiError } from './errors';
+import { REGION, assertInRegion } from './region';
 import { XLSX_TEXT } from './xlsx';
 import { REDIS, SQL, type Sql } from './infra';
 import { inScope, scopeWhere } from './scope';
@@ -164,6 +165,9 @@ export class GisService {
       for (const [i, op] of ops.entries()) {
         const cab = await this.cabinetOf(tx, u, op, i);
         counts[op.op] = (counts[op.op] ?? 0) + 1;
+        // S62: every position this op writes must lie in the service region
+        if ('lat' in op && 'lng' in op) assertInRegion({ lat: op.lat, lng: op.lng });
+        if (op.op === 'upsertRoute') for (const [lng, lat] of op.path) assertInRegion({ lat, lng });
         switch (op.op) {
           case 'moveCabinet': {
             const cur = (await tx<{ updated_at: Date }[]>`SELECT updated_at FROM cabinets WHERE id = ${op.cabinetId} FOR UPDATE`)[0];
@@ -342,6 +346,7 @@ export class GisService {
       const c = byCode.get(p.cabinetCode);
       if (!c || !c.active) errors.push({ row: p.row, message: `Không có tủ ${p.cabinetCode}` });
       else if (!inScope(u.scope, c.district_id, c.ward_id)) errors.push({ row: p.row, message: `Tủ ${p.cabinetCode} ngoài khu vực của bạn` });
+      else if (REGION && !inRegion(REGION, p)) errors.push({ row: p.row, message: `Trụ ${p.lat}, ${p.lng} ngoài phạm vi hoạt động (${REGION.name})` });
       else ok.push(p);
     }
     errors.sort((a, b) => a.row - b.row);

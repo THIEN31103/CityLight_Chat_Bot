@@ -3,6 +3,7 @@
 // `Debouncer` turns that into alarms that open / close only after the condition has held for a while.
 // Device-health rules (offline, RS485, LOGO…) stay in health.ts and are not debounced.
 import type { AlarmType, GeoPoint, Schedule, Thresholds } from './domain';
+import { inRegion, type ServiceRegion } from './region';
 import { dhMeterLost, logoLost, phaseLoss, type HealthInput } from './health';
 import { LOCALE, defineDict, type Lang } from './i18n';
 
@@ -37,6 +38,7 @@ const PHASE_PRESENT_V = 50;
 export const MEASUREMENT_TYPES: readonly AlarmType[] = [
   'over_voltage', 'under_voltage', 'voltage_swing', 'over_current', 'current_swing', 'phase_unbalance', 'low_pf',
   'leak_current', 'over_temp', 'battery_low', 'clock_drift', 'schedule_mismatch', 'gps_drift',
+  'gps_out_of_region',
 ];
 
 /** How long a condition must hold before the alarm opens / closes (anti-flapping). */
@@ -46,6 +48,7 @@ export const HOLD_MS: Record<string, { open: number; close: number }> = {
   schedule_mismatch: { open: 20 * 60_000, close: 60_000 },
   clock_drift: { open: 2 * 60_000, close: 60_000 },
   gps_drift: { open: 5 * 60_000, close: 60_000 },
+  gps_out_of_region: { open: 5 * 60_000, close: 60_000 },
 };
 export const holdFor = (t: AlarmType) => HOLD_MS[t] ?? HOLD_MS.default!;
 
@@ -64,6 +67,7 @@ export const MEASUREMENT_TEXT = defineDict(
     branch: (b: number, on: boolean) => `nhánh ${b} ${on ? 'sáng ngoài lịch' : 'tắt trong lịch'}`,
     schedule: (diff: string, mode: number) => `${diff} (lịch Chế độ ${mode})`,
     gps: (m: number) => `GPS cách vị trí khai báo ${m} m`,
+    outOfRegion: (lat: number, lng: number, region: string) => `GPS ${lat.toFixed(5)}, ${lng.toFixed(5)} ngoài phạm vi ${region}`,
   },
   {
     voltageSwing: (bad: string, limit: number) => `5-min range ${bad} > ${limit} V`,
@@ -76,6 +80,7 @@ export const MEASUREMENT_TEXT = defineDict(
     branch: (b: number, on: boolean) => `branch ${b} ${on ? 'on outside the schedule' : 'off within the schedule'}`,
     schedule: (diff: string, mode: number) => `${diff} (Mode ${mode} schedule)`,
     gps: (m: number) => `GPS ${m} m from the registered position`,
+    outOfRegion: (lat: number, lng: number, region: string) => `GPS ${lat.toFixed(5)}, ${lng.toFixed(5)} outside ${region}`,
   },
 );
 
@@ -132,7 +137,7 @@ function swing(values: (number | null)[]): number {
 export function measurementAlarms(
   h: MeasureInput,
   t: Thresholds,
-  opts: { samples: MeasureSample[]; schedule: ScheduleWindow | null; now: number },
+  opts: { samples: MeasureSample[]; schedule: ScheduleWindow | null; now: number; region?: ServiceRegion | null },
   lang: Lang = 'vi',
 ): Map<AlarmType, string> {
   const T = MEASUREMENT_TEXT[lang];
@@ -212,6 +217,9 @@ export function measurementAlarms(
     const d = distanceM(h.gpsDevice, h.declaredLocation);
     if (d > GPS_DRIFT_M) out.set('gps_drift', T.gps(Math.round(d)));
   }
+  // ----- GPS vs the service region (S62, E807) -----
+  if (h.gpsDevice && opts.region && !inRegion(opts.region, h.gpsDevice))
+    out.set('gps_out_of_region', T.outOfRegion(h.gpsDevice.lat, h.gpsDevice.lng, opts.region.name));
   return out;
 }
 

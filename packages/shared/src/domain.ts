@@ -313,6 +313,7 @@ export type AlarmType =
   | 'cmd_timeout'
   | 'gps_nofix'
   | 'gps_drift'
+  | 'gps_out_of_region'
   | 'battery_low'
   | 'fw_unsafe'
   | 'spoof_suspect'

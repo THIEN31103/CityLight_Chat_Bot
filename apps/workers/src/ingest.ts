@@ -26,6 +26,7 @@ import {
   deriveCabinetStatus, errorOf, judgeIdent, measurementAlarms, normImei,
   type AlarmType, type FwProfile, type GeoPoint, type HealthInput, type MeasureSample, type ScheduleWindow, type Thresholds,
 } from '@citylight/shared';
+import { loadServiceRegion } from '@citylight/shared/region-node';
 import { EVENTS_CHANNEL, type AlarmEvent, type CabinetStateEvent, type WorkerEvent } from './events';
 
 const MQTT_URL = process.env.MQTT_URL ?? 'mqtt://localhost:1883';
@@ -40,6 +41,8 @@ const MAX_UNKNOWN = Number(process.env.INGEST_MAX_UNKNOWN ?? 0);
 /** above this size (pg_database_size) no telemetry / frames_raw row is written: the disk is shared with production */
 const MAX_DB_MB = Number(process.env.INGEST_MAX_DB_MB ?? 0);
 const GUARD_CHECK_MS = 60_000;
+/** S62 service region (SERVICE_REGION, trial = TP. Hồ Chí Minh): a GPS fix outside it raises E807; null = off */
+const REGION = loadServiceRegion();
 
 const sql = createSql();
 const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: 2 });
@@ -157,7 +160,7 @@ async function loadRegistry() {
   const boots = await sql<{ cabinet_id: string; ts: Date }[]>`
     SELECT cabinet_id, ts FROM device_events WHERE kind = 'boot' AND ts > now() - interval '24 hours'`;
   for (const b of boots) byId.get(b.cabinet_id)?.bootTimes.push(b.ts.getTime());
-  console.log(`[ingest] registry: ${byId.size} cabinets, ${active.length} active alarms`);
+  console.log(`[ingest] registry: ${byId.size} cabinets, ${active.length} active alarms${REGION ? `, service region ${REGION.id}` : ''}`);
   await dropRegisteredUnknowns();
   await loadConfig();
 }
@@ -332,7 +335,7 @@ async function syncAlarms(rt: Runtime, now = Date.now()) {
   const raw = measurementAlarms(
     { ...rt, pfTotal: rt.pf.total },
     rt.thresholds,
-    { samples: rt.samples, schedule: rt.schedule, now },
+    { samples: rt.samples, schedule: rt.schedule, now, region: REGION },
   );
   for (const [type, message] of rt.debouncer.update(raw, now)) want.set(type, message);
   for (const [type, message] of want) {
