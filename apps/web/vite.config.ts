@@ -17,10 +17,10 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // Real API (M1+). In mock mode MSW answers /api in the browser.
+    // Real API (M1+). In mock mode MSW answers /api in the browser. API_TARGET: another local API (trial stack: :3100).
     proxy: {
-      '/api': 'http://localhost:3000',
-      '/socket.io': { target: 'http://localhost:3000', ws: true },
+      '/api': process.env.API_TARGET ?? 'http://localhost:3000',
+      '/socket.io': { target: process.env.API_TARGET ?? 'http://localhost:3000', ws: true },
     },
   },
 });

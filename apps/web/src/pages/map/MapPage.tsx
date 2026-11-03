@@ -132,6 +132,7 @@ export function MapPage() {
   const cabinetsQ = useQuery({ queryKey: ['map-cabinets'], queryFn: api.mapCabinets });
   // open E802 alarms: declared -> GPS lines on the map (refreshed with the alarms)
   const gpsDriftQ = useQuery({ queryKey: ['gps-drift'], queryFn: api.gpsDrift, refetchInterval: 60_000 });
+  const regionQ = useQuery({ queryKey: ['map-region'], queryFn: api.mapRegion, staleTime: Infinity });
   const cabinets = useMemo(() => {
     const list = cabinetsQ.data ?? [];
     return list.map((c) => (moves[c.id] ? { ...c, location: moves[c.id]! } : c));
@@ -254,6 +255,7 @@ export function MapPage() {
           onMeasure={setMeasurePts}
           onViewChange={(c) => setCenter(c)}
           gpsDrift={gpsDriftQ.data}
+          region={regionQ.data?.region ?? null}
         />
 
         {/* Toolbar */}

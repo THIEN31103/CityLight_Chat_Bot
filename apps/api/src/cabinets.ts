@@ -3,9 +3,10 @@ import { Controller, Get, Inject, Injectable, Module, Param, Query, Req } from '
 import type { PendingQuery, Row } from 'postgres';
 import { z } from 'zod';
 import type { CabinetState, CabinetStatus, CabinetSummary, FwProfile, GpsDriftItem, GpsSuggestion, MapStats, Schedule, TelemetryPoint } from '@citylight/shared';
-import { GPS_RELOCATE_WINDOW_MIN, buildDiagnostics, capabilitiesFor, decodeRs485SelfTest, defaultSchedule, defaultThresholds, judgeGpsSuggestion, type HealthInput, type Lang } from '@citylight/shared';
+import { GPS_RELOCATE_WINDOW_MIN, buildDiagnostics, regionView, capabilitiesFor, decodeRs485SelfTest, defaultSchedule, defaultThresholds, judgeGpsSuggestion, type HealthInput, type Lang } from '@citylight/shared';
 import type { AuthedRequest } from './auth';
 import { ApiError } from './errors';
+import { REGION } from './region';
 import { SQL, type Sql } from './infra';
 import { inScope, scopeWhere, type Scope } from './scope';
 
@@ -357,6 +358,8 @@ export class CabinetsController {
 
   @Get('map/cabinets') mapCabinets(@Req() r: AuthedRequest) { return this.svc.mapCabinets(r.user!.scope); }
   @Get('map/stats') stats(@Req() r: AuthedRequest) { return this.svc.stats(r.user!.scope); }
+  // S62 service region for the map (null = no limit)
+  @Get('map/region') region() { return { region: REGION ? regionView(REGION) : null }; }
   @Get('map/gps-drift') gpsDrift(@Req() r: AuthedRequest) { return this.svc.gpsDrift(r.user!.scope); }
   @Get('search') search(@Req() r: AuthedRequest, @Query('q') q = '') { return q.trim().length >= 2 ? this.svc.search(r.user!.scope, q.trim()) : []; }
   @Get('areas/tree') tree(@Req() r: AuthedRequest) { return this.svc.areaTree(r.user!.scope); }

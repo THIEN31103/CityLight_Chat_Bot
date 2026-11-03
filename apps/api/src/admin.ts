@@ -10,6 +10,7 @@ import { CONFIG_CHANNEL } from '@citylight/db/notify';
 import { RequirePerm, RequireReauth, type AuthedRequest, type SessionUser } from './auth';
 import { CabinetsModule, CabinetsService } from './cabinets';
 import { ApiError } from './errors';
+import { assertAreasEditable, assertInRegion } from './region';
 import { REDIS, SQL, type Sql } from './infra';
 
 const uuid = z.string().uuid();
@@ -69,6 +70,7 @@ export class AdminService {
   // ---------------- areas ----------------
 
   async createArea(u: SessionUser, body: unknown, ip?: string) {
+    assertAreasEditable();
     const b = z.object({ kind: z.enum(['district', 'ward']), name: Name, parentId: uuid }).parse(body);
     const parent = (await this.sql<{ kind: string }[]>`SELECT kind FROM areas WHERE id = ${b.parentId} AND organization_id = ${u.organizationId}`)[0];
     if (!parent || parent.kind !== (b.kind === 'district' ? 'unit' : 'district'))
@@ -84,6 +86,7 @@ export class AdminService {
   }
 
   async renameArea(u: SessionUser, id: string, body: unknown, ip?: string) {
+    assertAreasEditable();
     const b = z.object({ name: Name }).parse(body);
     const r = (await this.sql<{ name: string }[]>`UPDATE areas SET name = ${b.name} WHERE id = ${uuid.parse(id)} AND organization_id = ${u.organizationId} RETURNING name`)[0];
     if (!r) throw new ApiError(404, 'not_found', 'Không tìm thấy khu vực');
@@ -92,6 +95,7 @@ export class AdminService {
   }
 
   async deleteArea(u: SessionUser, id: string, ip?: string) {
+    assertAreasEditable();
     const aid = uuid.parse(id);
     const a = (await this.sql<{ name: string; kind: string }[]>`SELECT name, kind FROM areas WHERE id = ${aid} AND organization_id = ${u.organizationId}`)[0];
     if (!a) throw new ApiError(404, 'not_found', 'Không tìm thấy khu vực');
@@ -206,6 +210,7 @@ export class AdminService {
   /** Register a cabinet (from an unknown device or by hand); the ingest worker picks it up at once. */
   async registerCabinet(u: SessionUser, body: unknown, ip?: string) {
     const b = CabinetBody.parse(body);
+    assertInRegion(b.location);
     // a ward implies its district
     const districtId = b.districtId ?? (b.wardId ? (await this.sql<{ p: string }[]>`SELECT parent_id AS p FROM areas WHERE id = ${b.wardId}`)[0]?.p ?? null : null);
     await this.checkPlaces(u, { ...b, districtId });
@@ -243,6 +248,7 @@ export class AdminService {
   async updateCabinet(u: SessionUser, id: string, body: unknown, ip?: string) {
     const cid = uuid.parse(id);
     const b = CabinetPatch.parse(body);
+    if (b.location) assertInRegion(b.location);
     const cur = (await this.sql<{ ltid: string; code: string; district_id: string | null }[]>`SELECT ltid, code, district_id FROM cabinets WHERE id = ${cid} AND organization_id = ${u.organizationId}`)[0];
     if (!cur) throw new ApiError(404, 'not_found', 'Không tìm thấy tủ');
     await this.checkPlaces(u, { districtId: b.districtId === undefined ? cur.district_id : b.districtId, wardId: b.wardId, zone1Id: b.zone1Id, managementUnitId: b.managementUnitId });
@@ -292,6 +298,7 @@ export class AdminService {
     }
     if (b.expected && distanceM(b.expected, s.gps) > GPS_RELOCATE_STALE_M)
       throw new ApiError(409, 'gps_changed', 'Vị trí GPS vừa thay đổi, mở lại hộp thoại để xem số mới');
+    assertInRegion(s.gps);
     await this.sql`UPDATE cabinets SET location = ST_SetSRID(ST_MakePoint(${s.gps.lng}, ${s.gps.lat}), 4326), updated_at = now() WHERE id = ${cid}`;
     const value = { from: s.declared, to: s.gps, movedM: s.distanceM, samples: s.samples, spreadM: s.spreadM };
     await this.log(u, 'Cập nhật vị trí tủ theo GPS', 'cabinet', cid, cur.code, JSON.stringify(value), ip);

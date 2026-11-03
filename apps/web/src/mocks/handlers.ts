@@ -426,6 +426,11 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
     s.signed = false;
     return HttpResponse.json({ id: c.id, signed: false });
   })),
+  // no service region in the mock data (S62)
+  http.get(`${API}/map/region`, wrap(() => {
+    requireUser();
+    return HttpResponse.json({ region: null });
+  })),
   http.get(`${API}/map/gps-drift`, wrap(() => {
     requireUser();
     const items: GpsDriftItem[] = [];
