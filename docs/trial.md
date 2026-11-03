@@ -8,7 +8,7 @@ Tủ (4G) ──1883──> Máy khách: EMQX (infra/customer/)          1885 ch
 VPS 13.55.91.187 ─ wg0 10.88.0.1 ┘
   production (project infra)         : giữ nguyên
   trial (project citylight-trial)    : trial-db, trial-redis, trial-api, trial-ingest, trial-command, trial-notify, trial-scheduler
-  caddy (chung)                      : SITE_HOST → api:3000, TRIAL_HOST → trial-api:3000 (trial-api có mặt trên mạng infra_default)
+  caddy (chung)                      : SITE_HOST → api:3000, TRIAL_HOST → trial-api:3000 (Caddy + trial-api chung mạng riêng `citylight-edge`, S61; trial-api không chạm mạng production)
 ```
 
 ## File
@@ -27,6 +27,12 @@ Các script `backup-db.sh`, `restore-drill.sh`, `watchdog.sh` nhận tham số q
 - kiểm `10.88.0.2:1885` qua VPN;
 - đọc `cl:ingest:mqtt` trong Redis trial;
 - gửi cảnh báo `[TRIAL] CityLight` qua **bot và admin của production**.
+
+## Siết thêm (S61)
+
+- Ingest trial bật 4 chốt chặn: tổng frame/s, dòng `frames_raw`/phút, số tủ lạ, kích thước DB (giá trị trong `docker-compose.trial.yml`, đổi bằng biến cùng tên trong `.env.trial`). DB chạm `INGEST_MAX_DB_MB` → ngừng ghi lịch sử, watchdog báo. Thử: `npm run e2e:flood` với cùng giá trị `INGEST_MAX_*`.
+- Caddy ↔ `trial-api` qua mạng riêng `citylight-edge`. Thứ tự lần đầu: `dc up -d caddy` (tạo mạng) rồi mới `trial-ctl.sh up`.
+- Backup trial được mã hóa `age` như production và kéo về `D:CityLightBackupsps-trial`.
 
 ## Dựng trên VPS (bước 3 của plan, hỏi Bảo trước)
 

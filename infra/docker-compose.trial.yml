@@ -1,9 +1,9 @@
 # Trial stack for one customer (A′, docs/trial.md): database + api + workers on the VPS, isolated from production.
 # The broker is NOT here: cabinets connect to EMQX on the customer machine (infra/customer/), the workers reach its
 # backend listener over WireGuard (10.88.0.2:1885). Nothing is published on the host; Caddy (production compose)
-# reaches trial-api on the production network, see infra/caddy/trial.caddy.
+# reaches trial-api on the edge network citylight-edge (Caddy + trial-api only, S61), see infra/caddy/trial.caddy.
 #   sh infra/scripts/trial-ctl.sh up        (= docker compose -f infra/docker-compose.trial.yml --env-file infra/.env.trial up -d)
-# Every service name starts with trial-: trial-api also sits on the production network, where db / redis / api resolve
+# Every service name starts with trial-: Caddy also sits on the production network, where db / redis / api resolve
 # to the production containers.
 name: citylight-trial
 
@@ -78,8 +78,8 @@ services:
       TOTP_ENC_KEY: ${TOTP_ENC_KEY:?set in infra/.env.trial}
       AUTH_REQUIRE_2FA: ${AUTH_REQUIRE_2FA:-true}
       UPLOAD_DIR: /data/uploads
-      # Caddy, on the production network (docker-compose.prod.yml subnet)
-      TRUST_PROXY: ${TRIAL_TRUST_PROXY:-172.30.0.0/24}
+      # Caddy, on the edge network (docker-compose.prod.yml)
+      TRUST_PROXY: ${TRIAL_TRUST_PROXY:-172.29.0.0/24}
     volumes:
       - uploads:/data/uploads
     networks: [default, edge]
@@ -103,6 +103,11 @@ services:
     command: ["node", "--import", "tsx", "src/ingest.ts"]
     environment:
       <<: [*app-env, *mqtt-env]
+      # S61 untrusted-broker guards: 500 cabinets send ~50 frames/s (1 per 10 s); the disk is shared with production
+      INGEST_MAX_FPS: ${INGEST_MAX_FPS:-200}
+      INGEST_MAX_RAW_PER_MIN: ${INGEST_MAX_RAW_PER_MIN:-600}
+      INGEST_MAX_UNKNOWN: ${INGEST_MAX_UNKNOWN:-1000}
+      INGEST_MAX_DB_MB: ${INGEST_MAX_DB_MB:-15000}
     depends_on:
       trial-api: { condition: service_started }
 
@@ -157,10 +162,10 @@ networks:
     ipam:
       config:
         - subnet: ${TRIAL_SUBNET:-172.31.0.0/24}
-  # the production network, where Caddy runs (project "infra")
+  # Caddy + trial-api only (S61, created by docker-compose.prod.yml); never the production default network
   edge:
     external: true
-    name: ${EDGE_NETWORK:-infra_default}
+    name: ${EDGE_NETWORK:-citylight-edge}
 
 volumes:
   db-data:

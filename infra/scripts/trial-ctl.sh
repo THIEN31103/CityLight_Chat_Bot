@@ -40,11 +40,12 @@ case "$cmd" in
     DB_CONTAINER=citylight-trial-db BACKUP_DIR="$BACKUP_DIR" sh "$ROOT/infra/scripts/restore-drill.sh" "$@" ;;
   watchdog)
     # broker check = the customer backend listener through WireGuard; alerts through the production bot to its admins
+    # (ALERT_ENV_FILE=/dev/null: no token, nothing is sent; --test then only prints the checks)
     url=$(envv TRIAL_MQTT_URL); hostport=${url#*://}
     ENV_FILE="$ENV_FILE" STATE=/var/tmp/citylight-trial-watchdog.state CHATS_CACHE="$ROOT/infra/.watchdog-chats-trial" \
       CONTAINER_PREFIX=citylight-trial- CONTAINERS="db redis api ingest command scheduler notify" \
       DB_CONTAINER=citylight-trial-db REDIS_CONTAINER=citylight-trial-redis MQTT_CHECK="${hostport:-10.88.0.2:1885}" \
-      BACKUP_DIR="$BACKUP_DIR" ALERT_ENV_FILE="$ROOT/infra/.env" ALERT_DB_CONTAINER=citylight-db LABEL="[TRIAL] CityLight" \
+      BACKUP_DIR="$BACKUP_DIR" ALERT_ENV_FILE="${ALERT_ENV_FILE:-$ROOT/infra/.env}" ALERT_DB_CONTAINER=citylight-db LABEL="[TRIAL] CityLight" \
       sh "$ROOT/infra/scripts/watchdog.sh" "$@" ;;
   bundle) ENV_FILE="$ENV_FILE" sh "$ROOT/infra/scripts/trial-customer-bundle.sh" ;;
   *) sed -n '2,8p' "$0"; exit 1 ;;

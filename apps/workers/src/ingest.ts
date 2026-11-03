@@ -14,6 +14,8 @@
 //    another board's UID = E805 (frame not applied), a wrong signature = E806 sig_invalid (frame applied)
 //  - frames_raw (S57): every non-telemetry frame, every telemetry frame with a note or from an unregistered LTID,
 //    otherwise 1 telemetry frame per cabinet per RAW_SAMPLE_MIN minutes (0 = all)
+//  - untrusted-broker guards (S61, trial: the customer has root on the broker): total frames/s, frames_raw rows/min,
+//    number of unknown LTIDs kept, database size. 0 = off (production default); the trial compose sets them.
 import mqtt from 'mqtt';
 import { Redis } from 'ioredis';
 import { TOPICS, parseBoot, parseDemo, parseTelemetry, sanitizeTelemetry, type TelemetryPatch } from '@citylight/coreif';
@@ -31,6 +33,13 @@ const FLUSH_MS = Number(process.env.INGEST_FLUSH_MS ?? 500);
 const MAX_BATCH = Number(process.env.INGEST_MAX_BATCH ?? 2000);
 const RAW_SAMPLE_MIN = Number(process.env.RAW_SAMPLE_MIN ?? RAW_SAMPLE_MIN_DEFAULT);
 const SWEEP_MS = 10_000;
+// S61 guards, 0 = off. A flood of random LTIDs passes the per-LTID budget, so these bound the total.
+const MAX_FPS = Number(process.env.INGEST_MAX_FPS ?? 0);
+const MAX_RAW_PER_MIN = Number(process.env.INGEST_MAX_RAW_PER_MIN ?? 0);
+const MAX_UNKNOWN = Number(process.env.INGEST_MAX_UNKNOWN ?? 0);
+/** above this size (pg_database_size) no telemetry / frames_raw row is written: the disk is shared with production */
+const MAX_DB_MB = Number(process.env.INGEST_MAX_DB_MB ?? 0);
+const GUARD_CHECK_MS = 60_000;
 
 const sql = createSql();
 const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: 2 });
@@ -259,7 +268,11 @@ const telemetryRows: Record<string, unknown>[] = [];
 const rawRows: { ts: Date; topic: string; ltid: string | null; payload: string; parse_error: string | null }[] = [];
 const dirty = new Set<string>();
 const stateEvents = new Map<string, CabinetStateEvent>();
-const stats = { frames: 0, telemetry: 0, unknown: 0, parseErrors: 0, throttled: 0, sanitized: 0, spoofed: 0, badSig: 0, flushes: 0, lastFlushMs: 0, lagMs: 0 };
+const stats = {
+  frames: 0, telemetry: 0, unknown: 0, parseErrors: 0, throttled: 0, sanitized: 0, spoofed: 0, badSig: 0, flushes: 0, lastFlushMs: 0, lagMs: 0,
+  // S61 guards
+  overRate: 0, rawDropped: 0, unknownDropped: 0, dbFullDropped: 0, dbFull: false, dbMb: 0,
+};
 /** ingest <-> broker link: offline checks pause while it is down (shared/health.ts healthChecksPaused) */
 const brokerLink = { connected: false, upSinceMs: null as number | null, downSinceMs: Date.now() as number | null };
 /** Read by the API (system page) and infra/scripts/watchdog.sh: {connected, since, at} */
@@ -281,8 +294,18 @@ function warnOnce(key: string, msg: string) {
   console.warn(msg);
 }
 
+// S61: one bucket for all frames / all raw rows (burst = 2 s of frames, 1 min of raw rows)
+const allFrames = MAX_FPS > 0 ? new FrameBudget(MAX_FPS * 2, MAX_FPS) : null;
+const allRaw = MAX_RAW_PER_MIN > 0 ? new FrameBudget(MAX_RAW_PER_MIN, MAX_RAW_PER_MIN / 60) : null;
+/** rows in unknown_devices at the last guard check: at MAX_UNKNOWN only existing rows are updated */
+let unknownRows = 0;
+
 /** parseError also carries guard notes (dropped values, foreign IMEI): frames_raw is the debugging record. */
 function raw(topic: string, ltid: string | null, payload: string, parseError: string | null = null) {
+  if (stats.dbFull || (allRaw && !allRaw.take('*'))) {
+    stats.rawDropped++;
+    return;
+  }
   rawRows.push({ ts: new Date(), topic, ltid, payload, parse_error: parseError });
 }
 const rawSampler = new RawSampler(RAW_SAMPLE_MIN);
@@ -667,6 +690,11 @@ async function flush() {
   dirty.clear();
   const events = [...stateEvents.values()];
   stateEvents.clear();
+  if (stats.dbFull && tele.length) {
+    // cabinet_state, alarms and unknown_devices still move (fixed size); only the history stops growing
+    stats.dbFullDropped += tele.length;
+    tele.length = 0;
+  }
   try {
     for (let i = 0; i < tele.length; i += MAX_BATCH) {
       await sql`INSERT INTO telemetry ${sql(tele.slice(i, i + MAX_BATCH) as never[])} ON CONFLICT DO NOTHING`;
@@ -707,6 +735,13 @@ async function flush() {
       unknownSeen.clear();
       for (const [ltid, u] of list) {
         if (byLtid.has(ltid)) continue; // registered since the frame arrived
+        if (MAX_UNKNOWN > 0 && unknownRows >= MAX_UNKNOWN) {
+          // S61 cap reached: LTIDs already listed are still counted, new ones are dropped
+          const r = await sql`UPDATE unknown_devices SET last_seen_at = now(), frames = frames + ${u.frames} WHERE ltid = ${ltid}`;
+          if (!r.count) stats.unknownDropped++;
+          continue;
+        }
+        unknownRows++;
         // the first IMEI seen is kept; a different one goes to other_imei (registration then asks which is real)
         await sql`INSERT INTO unknown_devices (ltid, imei, other_imei, frames, gps) VALUES (${ltid}, ${u.imei}, ${u.otherImei}, ${u.frames}, ${geom(u.gps)})
                   ON CONFLICT (ltid) DO UPDATE SET last_seen_at = now(), frames = unknown_devices.frames + excluded.frames,
@@ -862,8 +897,13 @@ mq.on('error', (e) => console.error('[ingest] mqtt', e.message));
 // Messages are processed one at a time per process so per-cabinet state stays ordered.
 let chain = Promise.resolve();
 mq.on('message', (topic, buf) => {
-  const payload = buf.toString();
   stats.frames++;
+  if (allFrames && !allFrames.take('*')) {
+    stats.overRate++;
+    warnOnce('rate', `[ingest] more than ${MAX_FPS} frames/s in total: dropping the excess (INGEST_MAX_FPS)`);
+    return;
+  }
+  const payload = buf.toString();
   chain = chain.then(async () => {
     if (topic === TOPICS.telemetry) await onTelemetry(payload);
     else if (topic === TOPICS.boot) await onBoot(payload);
@@ -872,10 +912,33 @@ mq.on('message', (topic, buf) => {
   }).catch((e) => console.error('[ingest] handler', (e as Error).message));
 });
 
+/** S61: database size and unknown_devices rows, read every GUARD_CHECK_MS (cheap: catalog size + a small table) */
+async function checkGuards() {
+  if (MAX_DB_MB <= 0 && MAX_UNKNOWN <= 0) return;
+  try {
+    if (MAX_UNKNOWN > 0) unknownRows = Number((await sql`SELECT count(*)::int AS n FROM unknown_devices`)[0]!.n);
+    if (MAX_DB_MB > 0) {
+      stats.dbMb = Math.round(Number((await sql`SELECT pg_database_size(current_database()) AS b`)[0]!.b) / 1048576);
+      const full = stats.dbMb >= MAX_DB_MB;
+      if (full !== stats.dbFull) {
+        console.warn(full
+          ? `[ingest] database ${stats.dbMb} MB >= INGEST_MAX_DB_MB ${MAX_DB_MB}: telemetry / frames_raw writes stopped`
+          : `[ingest] database ${stats.dbMb} MB back under ${MAX_DB_MB} MB: telemetry writes resumed`);
+      }
+      stats.dbFull = full;
+    }
+  } catch (e) {
+    console.error('[ingest] guard check failed:', (e as Error).message);
+  }
+}
+void checkGuards();
+setInterval(() => void checkGuards(), GUARD_CHECK_MS);
+
 setInterval(() => void flush(), FLUSH_MS);
 setInterval(() => void (chain = chain.then(sweep)), SWEEP_MS);
 setInterval(() => {
-  console.log(`[ingest] frames ${stats.frames} · telemetry ${stats.telemetry} · unknown ${stats.unknown} · parse errors ${stats.parseErrors} · throttled ${stats.throttled} · sanitized ${stats.sanitized} · foreign IMEI/UID ${stats.spoofed} · bad identity ${stats.badSig} · last flush ${stats.lastFlushMs} ms · queue ${telemetryRows.length}`);
+  console.log(`[ingest] frames ${stats.frames} · telemetry ${stats.telemetry} · unknown ${stats.unknown} · parse errors ${stats.parseErrors} · throttled ${stats.throttled} · sanitized ${stats.sanitized} · foreign IMEI/UID ${stats.spoofed} · bad identity ${stats.badSig} · last flush ${stats.lastFlushMs} ms · queue ${telemetryRows.length}` +
+    (allFrames || allRaw || MAX_UNKNOWN || MAX_DB_MB ? ` · guards: over rate ${stats.overRate}, raw dropped ${stats.rawDropped}, unknown dropped ${stats.unknownDropped}, db ${stats.dbMb} MB${stats.dbFull ? ' FULL' : ''}` : ''));
   void redis.set('cl:ingest:stats', JSON.stringify({ ...stats, at: Date.now(), queue: telemetryRows.length })).catch(() => undefined);
   publishBrokerLink(); // refreshes "at": a stale key means ingest itself is stuck
 }, 30_000);
