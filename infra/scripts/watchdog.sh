@@ -90,6 +90,11 @@ else
   fi
 fi
 
+# S61 ingest guards (trial): database at INGEST_MAX_DB_MB = history no longer written; frames over the total rate
+ist=$(docker exec "$REDIS_CONTAINER" redis-cli -a "$(envv REDIS_PASSWORD)" --no-auth-warning GET cl:ingest:stats 2>/dev/null)
+sfield() { echo "$ist" | grep -o "\"$1\":[^,}]*" | cut -d: -f2- | tr -d '"'; }
+[ "$(sfield dbFull)" = true ] && add "database $(sfield dbMb) MB reached INGEST_MAX_DB_MB: telemetry is no longer stored (flood or growth: check unknown devices / frames)"
+
 end=$(echo | timeout 10 openssl s_client -connect "$SITE:443" -servername "$SITE" 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
 if [ -n "$end" ]; then
   days=$(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))

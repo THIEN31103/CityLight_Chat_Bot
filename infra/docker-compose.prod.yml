@@ -73,6 +73,8 @@ services:
       - ../web-dist:/srv/web:ro
       - caddy-data:/data
       - caddy-config:/config
+    # edge (S61): Caddy + trial-api only, so the trial api never shares a network with the production db / redis
+    networks: [default, edge]
     depends_on:
       api: { condition: service_started }
 
@@ -81,6 +83,11 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/24
+  edge:
+    name: citylight-edge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24
 
 volumes:
   caddy-data:
