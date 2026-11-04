@@ -569,9 +569,9 @@ function DevicesAdmin() {
               <div className="col-span-2 mx-auto w-full max-w-xs">
                 <QrScanner
                   onRead={onScan}
-                  onCameraError={() => {
+                  onCameraError={(message) => {
                     setScanning(false);
-                    toast(t.noCamera, 'error');
+                    toast(message, 'error');
                   }}
                 />
               </div>

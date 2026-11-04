@@ -108,9 +108,9 @@ export function EnrollPage() {
                 <>
                   <QrScanner
                     onRead={accept}
-                    onCameraError={() => {
+                    onCameraError={(message) => {
                       setScanning(false);
-                      setError(t.noCamera);
+                      setError(message);
                     }}
                   />
                   <Button variant="outline" className="w-full" onClick={() => setScanning(false)}>{t.stopScan}</Button>

@@ -6,13 +6,27 @@ import { ENROLL } from '@/i18n/dict/enroll';
 const DECODE_SIZE = 640;
 const DECODE_EVERY_MS = 150;
 
+type CameraProblem = 'cameraDenied' | 'cameraMissing' | 'cameraBusy' | 'cameraInsecure' | 'cameraFailed';
+
+/** Why getUserMedia failed, so the person knows what to fix. */
+function cameraProblem(e: unknown): CameraProblem {
+  if (!navigator.mediaDevices) return 'cameraInsecure';
+  const name = e instanceof Error ? e.name : '';
+  if (name === 'NotAllowedError' || name === 'SecurityError') return 'cameraDenied';
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'cameraMissing';
+  if (name === 'NotReadableError' || name === 'AbortError') return 'cameraBusy';
+  return 'cameraFailed';
+}
+
 /** Live camera view that reports the first QR code it reads, then stops. */
-export function QrScanner({ onRead, onCameraError }: { onRead: (text: string) => void; onCameraError: () => void }) {
+export function QrScanner({ onRead, onCameraError }: { onRead: (text: string) => void; onCameraError: (message: string) => void }) {
   const t = useDict(ENROLL);
   const video = useRef<HTMLVideoElement>(null);
   const [live, setLive] = useState(false);
   const handlers = useRef({ onRead, onCameraError });
   handlers.current = { onRead, onCameraError };
+  const textRef = useRef(t);
+  textRef.current = t;
 
   useEffect(() => {
     let stopped = false;
@@ -22,9 +36,14 @@ export function QrScanner({ onRead, onCameraError }: { onRead: (text: string) =>
     const start = async () => {
       try {
         const { default: jsQR } = await import('jsqr');
+        if (stopped) return;
         stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' } } });
         const v = video.current;
-        if (stopped || !v) return;
+        // closed while the browser was asking: this stream would otherwise keep the camera on
+        if (stopped || !v) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         v.srcObject = stream;
         await v.play();
         setLive(true);
@@ -47,8 +66,9 @@ export function QrScanner({ onRead, onCameraError }: { onRead: (text: string) =>
           timer = setTimeout(tick, DECODE_EVERY_MS);
         };
         tick();
-      } catch {
-        if (!stopped) handlers.current.onCameraError();
+      } catch (e) {
+        console.error('[QrScanner]', e);
+        if (!stopped) handlers.current.onCameraError(textRef.current[cameraProblem(e)]);
       }
     };
     void start();
