@@ -16,6 +16,7 @@ import { ActivityLogPage } from './pages/logs/ActivityLogPage';
 import { SyncLogPage } from './pages/logs/SyncLogPage';
 import { AccountPage } from './pages/AccountPage';
 import { AdminPage } from './pages/admin/AdminPage';
+import { EnrollPage } from './pages/enroll/EnrollPage';
 import { SystemPage } from './pages/SystemPage';
 import { HelpPage } from './pages/HelpPage';
 import { ForbiddenPage, NotFoundPage } from './pages/ErrorPages';
@@ -46,6 +47,7 @@ export const router = createBrowserRouter([
       { path: 'account', element: <AccountPage /> },
       { path: 'admin', element: <Navigate to="/admin/users" replace /> },
       { path: 'admin/:tab', element: guard('admin.users', <AdminPage />) },
+      { path: 'enroll', element: guard('device.enroll', <EnrollPage />) },
       { path: 'system', element: guard('system.view', <SystemPage />) },
       { path: 'help', element: <HelpPage /> },
       { path: '403', element: <ForbiddenPage /> },

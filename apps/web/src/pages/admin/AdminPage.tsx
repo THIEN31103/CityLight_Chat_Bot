@@ -1,9 +1,9 @@
 import { Fragment, useState } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
+import { Plus, QrCode } from 'lucide-react';
 import type { AlarmType, Permission, RoleKey } from '@citylight/shared';
-import { LAMP_GROUP_LABELS, ROLE_PERMISSIONS, alarmTypeLabels, assignableRoles, roleRequires2fa, roleSeesAll } from '@citylight/shared';
+import { LAMP_GROUP_LABELS, ROLE_PERMISSIONS, alarmTypeLabels, assignableRoles, hasPermission, parseCabinetCode, roleRequires2fa, roleSeesAll } from '@citylight/shared';
 import { api, ApiError, type AdminUser, type UnknownDevice } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { ScopePicker, scopeLabel, useAreaNames, type ScopeValue } from '@/components/security';
@@ -13,6 +13,7 @@ import { COMMON } from '@/i18n/dict/common';
 import { ADMIN, PERMISSION_LABELS } from '@/i18n/dict/admin';
 import { Badge, Button, Card, CardHeader, Checkbox, Field, Input, Modal, PageHeader, Select, Spinner, Toggle, confirm, toast } from '@/components/ui';
 import { ErrorCatalogTable } from '@/components/ErrorHelp';
+import { QrScanner } from '@/pages/enroll/QrScanner';
 
 const TABS: { id: string; label: keyof (typeof ADMIN)['vi']['tabs']; perm?: Permission }[] = [
   { id: 'users', label: 'users' },
@@ -65,7 +66,7 @@ function UsersAdmin() {
   // S47: only roles below one's own (the provider: all); accounts at or above are listed read-only
   const roleChoices = me ? assignableRoles(me.role) : [];
   const [open, setOpen] = useState(false);
-  const blank = { email: '', fullName: '', role: 'viewer' as RoleKey, scopeAll: false, scopeAreaIds: [] as string[] };
+  const blank = { email: '', fullName: '', role: 'viewer' as RoleKey, scopeAll: false, scopeAreaIds: [] as string[], canEnroll: false };
   const [form, setForm] = useState(blank);
   const [scopeEdit, setScopeEdit] = useState<{ user: AdminUser; value: ScopeValue } | null>(null);
   const [secret, setSecret] = useState<{ email: string; tempPassword: string; created: boolean } | null>(null);
@@ -118,7 +119,7 @@ function UsersAdmin() {
         ) : (
           <table className="w-full text-sm">
             <thead className="bg-muted/60 text-left text-xs text-subtle">
-              <tr><th className="px-3 py-2">{t.col.fullName}</th><th className="px-3 py-2">{t.col.email}</th><th className="px-3 py-2">{t.col.role}</th><th className="px-3 py-2">{t.col.scope}</th><th className="px-3 py-2">{t.col.totp}</th><th className="px-3 py-2">{t.col.lastLogin}</th><th className="px-3 py-2">{t.col.active}</th><th className="px-3 py-2" /></tr>
+              <tr><th className="px-3 py-2">{t.col.fullName}</th><th className="px-3 py-2">{t.col.email}</th><th className="px-3 py-2">{t.col.role}</th><th className="px-3 py-2">{t.col.scope}</th><th className="px-3 py-2">{t.col.canEnroll}</th><th className="px-3 py-2">{t.col.totp}</th><th className="px-3 py-2">{t.col.lastLogin}</th><th className="px-3 py-2">{t.col.active}</th><th className="px-3 py-2" /></tr>
             </thead>
             <tbody>
               {data?.map((u) => {
@@ -146,6 +147,9 @@ function UsersAdmin() {
                       {!locked && !roleSeesAll(u.role) && (
                         <button className="ml-1 text-primary hover:underline" onClick={() => setScopeEdit({ user: u, value: { scopeAll: u.scopeAll, scopeAreaIds: u.scopeAreaIds } })}>{c.edit}</button>
                       )}
+                    </td>
+                    <td className="px-3 py-2" title={hasPermission(u.role, 'device.enroll') ? t.canEnrollByRole : t.canEnrollHint}>
+                      <Checkbox checked={u.canEnroll} disabled={locked || hasPermission(u.role, 'device.enroll')} onChange={(v) => update.mutate({ id: u.id, patch: { canEnroll: v } })} />
                     </td>
                     <td className="px-3 py-2">
                       {u.totpEnabled ? <Badge tone="green">{t.totpOn}</Badge> : u.totpRequired ? <Badge tone="orange">{t.totpRequiredOff}</Badge> : <Badge>{t.totpOff}</Badge>}
@@ -184,6 +188,7 @@ function UsersAdmin() {
           ) : (
             <Field label={t.scopeField}><ScopePicker value={form} onChange={(v) => setForm({ ...form, ...v })} /></Field>
           )}
+          {!hasPermission(form.role, 'device.enroll') && <Checkbox label={t.canEnrollField} checked={form.canEnroll} onChange={(v) => setForm({ ...form, canEnroll: v })} />}
           <p className="text-xs text-subtle">{t.tempNote}</p>
         </div>
       </Modal>
@@ -433,6 +438,7 @@ function DevicesAdmin() {
   const t = useDict(ADMIN).devices;
   const c = useDict(COMMON);
   const { data } = useQuery({ queryKey: ['unknown-devices'], queryFn: api.unknownDevices });
+  const history = useQuery({ queryKey: ['registration-history'], queryFn: api.registrationHistory });
   const tree = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
   const zones = useQuery({ queryKey: ['zones'], queryFn: api.zones });
   const districts = tree.data?.areas.filter((a) => a.kind === 'district') ?? [];
@@ -443,24 +449,42 @@ function DevicesAdmin() {
   const [fromGps, setFromGps] = useState(false);
   // S42: the IMEI becomes the cabinet's identity; two IMEIs under one LTID = the admin picks the real one
   const [imeiChoices, setImeiChoices] = useState<string[]>([]);
+  const [scanning, setScanning] = useState(false);
+  const closeForm = () => {
+    setForm(null);
+    setScanning(false);
+  };
   const review = (d: UnknownDevice) => {
     setTempSensor(false);
     setFromGps(!!d.gps);
     setImeiChoices(d.otherImei && d.imei ? [d.imei, d.otherImei] : []);
-    setForm({ ...blank, ltid: d.ltid, lat: d.gps ? d.gps.lat.toFixed(7) : '', lng: d.gps ? d.gps.lng.toFixed(7) : '', imei: d.otherImei ? '' : (d.imei ?? '') });
+    setForm({ ...blank, ltid: d.ltid, code: d.code ?? '', lat: d.gps ? d.gps.lat.toFixed(7) : '', lng: d.gps ? d.gps.lng.toFixed(7) : '', imei: d.otherImei ? '' : (d.imei ?? '') });
   };
+  // the QR label fills the code; on an empty form it also picks the device that reports this code
+  const onScan = (raw: string) => {
+    setScanning(false);
+    const code = parseCabinetCode(raw);
+    if (!code) return toast(fill(t.badQr, { text: raw.trim().slice(0, 40) }), 'error');
+    const device = data?.find((d) => d.code === code);
+    if (device && !form?.ltid) return review(device);
+    setForm((f) => f && { ...f, code });
+  };
+  // what this board itself reports (LCOD): a different code here means the wrong label or the wrong board
+  const boardCode = data?.find((d) => d.ltid === form?.ltid)?.code;
+  const codeMismatch = !!boardCode && !!form?.code && form.code !== boardCode;
   const wards = tree.data?.areas.filter((a) => a.kind === 'ward' && a.parentId === form?.districtId) ?? [];
   const reg = useMutation({
     mutationFn: () =>
       api.registerCabinet({
-        ltid: form!.ltid, code: form!.code, name: form!.name, location: { lat: Number(form!.lat), lng: Number(form!.lng) },
+        ltid: form!.ltid, code: form!.code, name: form!.name.trim() || null, location: form!.lat && form!.lng ? { lat: Number(form!.lat), lng: Number(form!.lng) } : null,
         districtId: form!.districtId || null, wardId: form!.wardId || null, zone1Id: form!.zone1Id || null, address: form!.address || null,
         imei: form!.imei || null, hasTempSensor: tempSensor,
       }),
     onSuccess: () => {
       toast(fill(dictNow(ADMIN).devices.registered, { code: form!.code }), 'success');
-      setForm(null);
+      closeForm();
       void qc.invalidateQueries({ queryKey: ['unknown-devices'] });
+      void qc.invalidateQueries({ queryKey: ['registration-history'] });
       void qc.invalidateQueries({ queryKey: ['map-cabinets'] });
     },
     onError: errToast,
@@ -477,7 +501,10 @@ function DevicesAdmin() {
             {!data?.length && <tr><td colSpan={7} className="px-3 py-4 text-center text-subtle">{t.none}</td></tr>}
             {data?.map((d) => (
               <tr key={d.ltid} className="border-t">
-                <td className="px-3 py-2 font-medium">{d.ltid}</td>
+                <td className="px-3 py-2 font-medium">
+                  {d.ltid}
+                  {d.code && <div className="text-xs font-normal text-subtle">{d.code}</div>}
+                </td>
                 <td className="px-3 py-2 font-mono text-xs">
                   {d.imei}
                   {d.otherImei && <div className="font-sans text-st-offline" title={t.twoImeiHint}>{fill(t.alsoImei, { imei: d.otherImei })}</div>}
@@ -490,20 +517,71 @@ function DevicesAdmin() {
           </tbody>
         </table>
       </Card>
+      <Card className="mt-4">
+        <CardHeader title={t.history.title} subtitle={fill(t.history.subtitle, { n: 100 })} />
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/60 text-left text-xs text-subtle">
+              <tr>
+                <th className="px-3 py-2">{t.history.col.at}</th>
+                <th className="px-3 py-2">{t.code}</th>
+                <th className="px-3 py-2">{t.name}</th>
+                <th className="px-3 py-2">LTID</th>
+                <th className="px-3 py-2">{t.history.col.by}</th>
+                <th className="px-3 py-2">{t.history.col.via}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!history.data?.length && <tr><td colSpan={6} className="px-3 py-4 text-center text-subtle">{t.history.none}</td></tr>}
+              {history.data?.map((r) => (
+                <tr key={`${r.at}-${r.code}`} className="border-t">
+                  <td className="whitespace-nowrap px-3 py-2 text-xs">{fmtTime(r.at)}</td>
+                  <td className="px-3 py-2 font-medium">
+                    {r.code}
+                    {!r.active && <Badge className="ml-2">{t.history.inactive}</Badge>}
+                  </td>
+                  <td className="px-3 py-2">{r.name}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{r.ltid ?? '-'}</td>
+                  <td className="px-3 py-2 text-xs">{r.by}</td>
+                  <td className="px-3 py-2"><Badge tone={r.via === 'qr' ? 'green' : 'blue'}>{r.via === 'qr' ? t.history.viaQr : t.history.viaForm}</Badge></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
       <Modal
         open={!!form}
-        onOpenChange={(v) => !v && setForm(null)}
+        onOpenChange={(v) => !v && closeForm()}
         title={t.title}
-        footer={<><Button variant="outline" onClick={() => setForm(null)}>{c.cancel}</Button><Button loading={reg.isPending} disabled={!form?.ltid || !form.code || !form.name || !form.lat || !form.lng || (imeiChoices.length > 0 && !form.imei)} onClick={() => reg.mutate()}>{t.register}</Button></>}
+        footer={<><Button variant="outline" onClick={closeForm}>{c.cancel}</Button><Button loading={reg.isPending} disabled={!form?.ltid || !form.code || !form.lat !== !form.lng || (imeiChoices.length > 0 && !form.imei)} onClick={() => reg.mutate()}>{t.register}</Button></>}
       >
         {form && (
           <div className="grid grid-cols-2 gap-3">
             <Field label={t.ltid}><Input value={form.ltid} onChange={set('ltid')} /></Field>
-            <Field label={t.code}><Input value={form.code} onChange={set('code')} placeholder="TL01.0123" /></Field>
+            <Field label={t.code}>
+              <div className="flex gap-2">
+                <Input value={form.code} onChange={set('code')} placeholder="TL01.0123" />
+                <Button type="button" variant={scanning ? 'primary' : 'outline'} title={t.scanQr} aria-label={t.scanQr} onClick={() => setScanning((s) => !s)}><QrCode className="h-4 w-4" /></Button>
+              </div>
+            </Field>
+            {scanning && (
+              <div className="col-span-2 mx-auto w-full max-w-xs">
+                <QrScanner
+                  onRead={onScan}
+                  onCameraError={() => {
+                    setScanning(false);
+                    toast(t.noCamera, 'error');
+                  }}
+                />
+              </div>
+            )}
+            {codeMismatch && <div className="col-span-2 text-sm text-st-offline">{fill(t.codeMismatch, { code: boardCode })}</div>}
             <Field label={t.name}><Input value={form.name} onChange={set('name')} /></Field>
             <Field label={t.address}><Input value={form.address} onChange={set('address')} /></Field>
-            <Field label={t.lat}><Input value={form.lat} onChange={set('lat')} placeholder="10.7769" /></Field>
-            <Field label={t.lng}><Input value={form.lng} onChange={set('lng')} placeholder="106.7009" /></Field>
+            <Field label={t.lat}><Input value={form.lat} onChange={set('lat')} placeholder={t.optional} /></Field>
+            <Field label={t.lng}><Input value={form.lng} onChange={set('lng')} placeholder={t.optional} /></Field>
+            {!fromGps && <p className="col-span-2 text-xs text-subtle">{t.optionalHint}</p>}
             {fromGps && (
               <div className="col-span-2 -mt-1 text-xs text-subtle">
                 {t.fromGps}

@@ -28,7 +28,7 @@ import type {
   User,
   Zone,
 } from '@citylight/shared';
-import { fill, type Lang } from '@citylight/shared';
+import { fill, type EnrollStatus, type Lang } from '@citylight/shared';
 import { dictNow } from '@/i18n';
 import { COMMON } from '@/i18n/dict/common';
 import { ERRORS } from '@/i18n/dict/errors';
@@ -218,8 +218,10 @@ export interface SystemSettings {
 export interface CabinetInput {
   ltid: string;
   code: string;
-  name: string;
-  location: GeoPoint;
+  /** empty = the cabinet code */
+  name?: string | null;
+  /** empty = the device GPS, else a default position */
+  location?: GeoPoint | null;
   address?: string | null;
   districtId?: string | null;
   wardId?: string | null;
@@ -359,6 +361,29 @@ export interface UnknownDevice {
   gps: GeoPoint | null;
   /** a second, different IMEI under the same LTID: the register form must pick one */
   otherImei: string | null;
+  /** cabinet code the board reports (LCOD), null on older firmware */
+  code: string | null;
+}
+
+/** One approved cabinet in the registration history. */
+export interface RegistrationRecord {
+  at: string;
+  code: string;
+  name: string;
+  /** null when the cabinet no longer exists */
+  ltid: string | null;
+  by: string;
+  via: 'form' | 'qr';
+  /** false = stopped or removed since */
+  active: boolean;
+}
+
+/** What a scanned cabinet code means now. The LTID is never sent to the installer. */
+export interface CabinetCodeLookup {
+  code: string;
+  status: EnrollStatus;
+  cabinet: { id: string; name: string } | null;
+  device: { lastSeenAt: string; imeiTail: string | null; gps: GeoPoint | null } | null;
 }
 
 export const api = {
@@ -490,12 +515,15 @@ export const api = {
 
   // admin
   users: () => req<AdminUser[]>('GET', '/users'),
-  createUser: (u: Pick<User, 'email' | 'fullName' | 'role' | 'scopeAll' | 'scopeAreaIds'>) => req<{ user: AdminUser; tempPassword: string }>('POST', '/users', u),
-  updateUser: (id: string, u: Partial<Pick<User, 'fullName' | 'role' | 'active' | 'scopeAll' | 'scopeAreaIds'>>) => req<AdminUser>('PATCH', `/users/${id}`, u),
+  createUser: (u: Pick<User, 'email' | 'fullName' | 'role' | 'scopeAll' | 'scopeAreaIds' | 'canEnroll'>) => req<{ user: AdminUser; tempPassword: string }>('POST', '/users', u),
+  updateUser: (id: string, u: Partial<Pick<User, 'fullName' | 'role' | 'active' | 'scopeAll' | 'scopeAreaIds' | 'canEnroll'>>) => req<AdminUser>('PATCH', `/users/${id}`, u),
   resetUserPassword: (id: string) => req<{ user: AdminUser; tempPassword: string }>('POST', `/users/${id}/reset-password`),
   unlockUser: (id: string) => req<AdminUser>('POST', `/users/${id}/unlock`),
   resetUser2fa: (id: string) => req<AdminUser>('POST', `/users/${id}/reset-2fa`),
   unknownDevices: () => req<UnknownDevice[]>('GET', '/devices/unknown'),
+  registrationHistory: () => req<RegistrationRecord[]>('GET', '/devices/registered'),
+  lookupCabinetCode: (code: string) => req<CabinetCodeLookup>('GET', `/devices/by-code/${encodeURIComponent(code)}`),
+  enrollCabinet: (b: { code: string; name: string | null; address: string | null; location: GeoPoint | null }) => req<{ id: string }>('POST', '/devices/enroll', b),
   fieldMap: () => req<{ entries: FieldMapEntry[]; unknownKeys: { key: string; cabinets: number; sample: string }[] }>('GET', '/field-map'),
   // admin catalog / devices / settings (M8)
   createArea: (b: { kind: 'district' | 'ward'; name: string; parentId: string }) => req<{ id: string }>('POST', '/areas', b),

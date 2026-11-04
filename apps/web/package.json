@@ -23,6 +23,7 @@
     "clsx": "^2.1.1",
     "dayjs": "^1.11.13",
     "echarts": "^6.1.0",
+    "jsqr": "^1.4.0",
     "lucide-react": "^0.468.0",
     "maplibre-gl": "^6.14.0",
     "qrcode": "^1.5.4",
