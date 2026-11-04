@@ -13,7 +13,7 @@ import { Redis } from 'ioredis';
 import { z } from 'zod';
 import { EVENTS_CHANNEL } from '@citylight/db/commands';
 import type { RoleKey, SecurityEvent, SecurityKind, User } from '@citylight/shared';
-import { DEFAULT_LANG, LANGS, hasPermission, isLang, roleRequires2fa, roleSeesAll, type Lang, type Permission } from '@citylight/shared';
+import { DEFAULT_LANG, LANGS, hasPermission, isLang, roleRequires2fa, roleSeesAll, userCan, type Lang, type Permission } from '@citylight/shared';
 import { NOTIFY_CHANGED_CHANNEL } from '@citylight/db/notify';
 import { ApiError } from './errors';
 import { REDIS, SQL, type Sql } from './infra';
@@ -72,6 +72,7 @@ interface UserRow {
   role: RoleKey;
   totp_enabled: boolean;
   scope_all: boolean;
+  can_enroll: boolean;
   password_change_required: boolean;
   active: boolean;
   last_login_at: Date | null;
@@ -365,6 +366,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       role: r.role,
       scopeAll: roleSeesAll(r.role) || r.scope_all,
       scopeAreaIds: direct.map((s) => s.area_id),
+      canEnroll: hasPermission(r.role, 'device.enroll') || r.can_enroll,
       totpEnabled: r.totp_enabled,
       totpRequired: require2faEnforced() && roleRequires2fa(r.role),
       passwordChangeRequired: r.password_change_required,
@@ -496,7 +498,7 @@ export class AuthGuard implements CanActivate {
     }
 
     const perm = this.reflector.getAllAndOverride<Permission | undefined>(PERM, targets);
-    if (perm && !hasPermission(user.role, perm)) throw new ApiError(403, 'forbidden', 'Không đủ quyền');
+    if (perm && !userCan(user, perm)) throw new ApiError(403, 'forbidden', 'Không đủ quyền');
     if (this.reflector.getAllAndOverride<boolean>(REAUTH, targets) && !(await this.auth.hasRecentReauth(user, sid)))
       throw new ApiError(403, 'reauth_required', 'Nhập mã xác thực 2 lớp để tiếp tục');
     return true;

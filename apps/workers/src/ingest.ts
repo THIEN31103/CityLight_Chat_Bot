@@ -313,7 +313,7 @@ function raw(topic: string, ltid: string | null, payload: string, parseError: st
 }
 const rawSampler = new RawSampler(RAW_SAMPLE_MIN);
 
-const unknownSeen = new Map<string, { imei: string | null; otherImei: string | null; frames: number; gps: { lat: number; lng: number } | null }>();
+const unknownSeen = new Map<string, { imei: string | null; otherImei: string | null; code: string | null; frames: number; gps: { lat: number; lng: number } | null }>();
 
 // ---------------- alarms ----------------
 
@@ -518,8 +518,9 @@ async function onTelemetry(payload: string) {
   if (!rt) {
     stats.unknown++;
     const imei = normImei(t.imei);
-    const u = unknownSeen.get(t.ltid) ?? { imei, otherImei: null, frames: 0, gps: null };
+    const u = unknownSeen.get(t.ltid) ?? { imei, otherImei: null, code: null, frames: 0, gps: null };
     u.frames++;
+    if (t.cabinetCode) u.code = t.cabinetCode;
     // first IMEI wins; a different one under the same LTID is kept apart so the admin sees the conflict
     if (!u.imei) u.imei = imei;
     else if (imei && imei !== u.imei) u.otherImei = imei;
@@ -746,13 +747,14 @@ async function flush() {
         }
         unknownRows++;
         // the first IMEI seen is kept; a different one goes to other_imei (registration then asks which is real)
-        await sql`INSERT INTO unknown_devices (ltid, imei, other_imei, frames, gps) VALUES (${ltid}, ${u.imei}, ${u.otherImei}, ${u.frames}, ${geom(u.gps)})
+        await sql`INSERT INTO unknown_devices (ltid, imei, other_imei, code, frames, gps) VALUES (${ltid}, ${u.imei}, ${u.otherImei}, ${u.code}, ${u.frames}, ${geom(u.gps)})
                   ON CONFLICT (ltid) DO UPDATE SET last_seen_at = now(), frames = unknown_devices.frames + excluded.frames,
                   imei = coalesce(unknown_devices.imei, excluded.imei),
                   other_imei = coalesce(unknown_devices.other_imei,
                     CASE WHEN unknown_devices.imei IS NULL THEN excluded.other_imei
                          WHEN excluded.imei IS NOT NULL AND excluded.imei <> unknown_devices.imei THEN excluded.imei
                          ELSE excluded.other_imei END),
+                  code = coalesce(excluded.code, unknown_devices.code),
                   gps = coalesce(excluded.gps, unknown_devices.gps)`;
       }
     }

@@ -15,6 +15,7 @@ export interface FieldMapEntry {
 export const DEFAULT_FIELD_MAP: FieldMapEntry[] = [
   { key: 'LTID', field: 'cabinet.ltid', type: 'string', scale: null, unit: null, note: 'Khóa nhận diện tủ', supported: true },
   { key: 'LIME', field: 'imei', type: 'string', scale: null, unit: null, note: '', supported: true },
+  { key: 'LCOD', field: 'cabinet.code', type: 'string', scale: null, unit: null, note: 'Mã tủ cài ở xưởng, khớp với tem QR', supported: true },
   { key: 'LGPS', field: 'gpsDevice', type: 'point', scale: null, unit: null, note: 'X trước khi có fix GNSS; định dạng cần frame mẫu', supported: true },
   { key: 'LBAT', field: 'batteryMv', type: 'int', scale: 1, unit: 'mV', note: '', supported: true },
   { key: 'LACI', field: 'acInput', type: 'string', scale: null, unit: null, note: 'Chưa rõ nghĩa', supported: true },
@@ -72,6 +73,7 @@ export const FIELD_MAP_NOTES_EN: Record<string, string> = {
   PTIM: 'X when PLC or LOGO is lost',
   PLGO: '0 OK, 1 LOGO lost, 2 ETH silent, 3 TCP down, 4 LOGO no Modbus reply, 5 ETH settings wrong',
   LFWV: '3 = commands on its own topic (v3), 2 = shared topic only',
+  LCOD: 'Cabinet code set at the factory, matches the QR label',
   PDOR: 'Waiting for the firmware flag',
   PFLT: 'Waiting for the firmware flag',
   MKWH: 'Future',

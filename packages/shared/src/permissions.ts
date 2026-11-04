@@ -17,6 +17,8 @@ export type Permission =
   | 'admin.users'
   | 'admin.catalog'
   | 'admin.devices'
+  /** scan a QR label and approve a cabinet; also granted account by account (users.can_enroll) */
+  | 'device.enroll'
   /** provider only (S47): cabinet IMEI identity (anti-spoofing) and the telemetry field map */
   | 'device.identity'
   /** provider only (S47): server / broker / database health */
@@ -25,7 +27,7 @@ export type Permission =
 const ALL: Permission[] = [
   'map.view', 'map.edit', 'cabinet.control', 'cabinet.configure', 'alarm.view', 'alarm.ack',
   'incident.view', 'incident.manage', 'incident.resolve', 'schedule.manage', 'dimming.manage',
-  'batch.run', 'log.view', 'admin.users', 'admin.catalog', 'admin.devices', 'device.identity', 'system.view',
+  'batch.run', 'log.view', 'admin.users', 'admin.catalog', 'admin.devices', 'device.enroll', 'device.identity', 'system.view',
 ];
 
 const OPERATOR: Permission[] = [
@@ -36,7 +38,7 @@ const OPERATOR: Permission[] = [
 export const ROLE_PERMISSIONS: Record<RoleKey, Permission[]> = {
   admin: ALL,
   // the customer's top account (S47): everything an operator does + its own users, catalog, cabinet registration
-  manager: [...OPERATOR, 'map.edit', 'incident.resolve', 'admin.users', 'admin.catalog', 'admin.devices'],
+  manager: [...OPERATOR, 'map.edit', 'incident.resolve', 'admin.users', 'admin.catalog', 'admin.devices', 'device.enroll'],
   operator: OPERATOR,
   viewer: ['map.view', 'alarm.view', 'incident.view'],
   maintenance: ['map.view', 'alarm.view', 'incident.view', 'incident.resolve'],
@@ -44,6 +46,11 @@ export const ROLE_PERMISSIONS: Record<RoleKey, Permission[]> = {
 
 export function hasPermission(role: RoleKey, perm: Permission): boolean {
   return ROLE_PERMISSIONS[role].includes(perm);
+}
+
+/** Role permissions, plus the one permission an account can be granted on its own. */
+export function userCan(u: { role: RoleKey; canEnroll: boolean }, perm: Permission): boolean {
+  return hasPermission(u.role, perm) || (perm === 'device.enroll' && u.canEnroll);
 }
 
 /** Roles that can switch lights need 2FA (spec 13). The server may relax this with AUTH_REQUIRE_2FA=false. */

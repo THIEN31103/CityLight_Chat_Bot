@@ -100,7 +100,7 @@ export class AlarmsController {
   unknown() {
     // gps = last fix the device sent (pre-fills the register form), null when it never had one
     // otherImei = a second IMEI under the same LTID (S42): registering then requires choosing one
-    return this.sql`SELECT ltid, imei, other_imei AS "otherImei", first_seen_at AS "firstSeenAt", last_seen_at AS "lastSeenAt", frames,
+    return this.sql`SELECT ltid, imei, other_imei AS "otherImei", code, first_seen_at AS "firstSeenAt", last_seen_at AS "lastSeenAt", frames,
                            CASE WHEN gps IS NULL THEN NULL ELSE json_build_object('lat', ST_Y(gps), 'lng', ST_X(gps)) END AS gps
                     FROM unknown_devices u
                     -- a row re-inserted by a frame buffered while the cabinet was being registered

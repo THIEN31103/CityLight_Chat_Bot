@@ -11,6 +11,7 @@
 //                   not sent by older firmware; 4 = signing firmware (D7-lite, S59), same topic meaning as 3
 //   LUID/LSEQ/LSIG: signing firmware identity block: chip UID 24 hex, boot counter 8 hex, 32 hex signature
 //                   (checked by the ingest worker with sign.ts verifyIdent)
+//   LCOD:           cabinet code written at the factory (printed in the QR label); not sent by older firmware
 import type { GeoPoint } from '@citylight/shared';
 import { parseFrame, type ParsedFrame } from './frame';
 
@@ -56,6 +57,8 @@ export interface TelemetryPatch {
   fwLevel: number | null;
   /** LUID/LSEQ/LSIG when all three are present and well formed (not verified here); null otherwise. */
   ident: { uid: string; seq: string; sig: string } | null;
+  /** LCOD: cabinet code stored in the board, matched against the scanned QR; null = not sent or malformed. */
+  cabinetCode: string | null;
   /** All keys present in the frame (e.g. old firmware 1307ebc has no LQ2/LQ3/PMAN). */
   keys: string[];
   /** Keys present in the frame that this parser does not know (future firmware). */
@@ -67,7 +70,7 @@ const KNOWN = new Set([
   'LTID', 'LDOM', 'LPOR', 'LIME', 'LGPS', 'LTIM', 'LCLI', 'LBAT', 'LACI', 'LERR', 'CTVL', 'CTTE', 'MCON',
   'MPU1', 'MPU2', 'MPU3', 'MPI1', 'MPI2', 'MPI3', 'MCO1', 'MCO2', 'MCO3', 'MCOS', 'MPOW', 'PCON',
   'PIN5', 'LINE1', 'LINE2', 'LQ2', 'LQ3', 'PMAN', 'PTIM', 'PDOR', 'PFLT', 'PLGO', 'LFWV',
-  'LUID', 'LSEQ', 'LSIG',
+  'LUID', 'LSEQ', 'LSIG', 'LCOD',
 ]);
 
 const isX = (v: string | undefined) => v === undefined || v === '' || v.toUpperCase() === 'X';
@@ -122,6 +125,13 @@ function ident(f: Record<string, string>): TelemetryPatch['ident'] {
   const sig = f.LSIG?.toLowerCase();
   if (!uid || !seq || !sig || !/^[0-9a-f]{24}$/.test(uid) || !/^[0-9a-f]{8}$/.test(seq) || !/^[0-9a-f]{32}$/.test(sig)) return null;
   return { uid, seq, sig };
+}
+
+/** LCOD: same characters as a cabinet code in the API; X, empty or anything else = null. */
+function cabinetCode(v: string | undefined): string | null {
+  if (isX(v)) return null;
+  const s = v!.trim();
+  return /^[\w.-]{2,40}$/.test(s) ? s : null;
 }
 
 /** LFWV: small positive integer; anything else = null. */
@@ -183,6 +193,7 @@ export function telemetryFromFields(p: ParsedFrame): TelemetryPatch {
     logoLink: logoLink(f.PLGO),
     fwLevel: fwLevel(f.LFWV),
     ident: ident(f),
+    cabinetCode: cabinetCode(f.LCOD),
     keys: [...p.order],
     unknownKeys,
     warnings,

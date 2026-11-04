@@ -28,6 +28,7 @@
     "e2e:incidents": "node --env-file=.env --import tsx apps/api/test/e2e-incidents.ts",
     "e2e:gis": "node --env-file=.env --import tsx apps/api/test/e2e-gis.ts",
     "e2e:admin": "node --env-file=.env --import tsx apps/api/test/e2e-admin.ts",
+    "e2e:qr": "node --env-file=.env --import tsx apps/api/test/e2e-qr.ts",
     "e2e:region": "node --env-file=.env --import tsx apps/api/test/e2e-region.ts",
     "e2e:dimming": "node --env-file=.env --import tsx apps/api/test/e2e-dimming.ts",
     "e2e:relocate": "node --env-file=.env --import tsx apps/api/test/e2e-relocate.ts",

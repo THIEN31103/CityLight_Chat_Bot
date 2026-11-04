@@ -15,6 +15,8 @@ const faultRate = Number(arg('fault-rate', '0.08'));
 const telemetryMs = Number(arg('interval', '10000'));
 /** --cmd-topic: firmware with its own command topic citylight/cmd/<LTID> + LFWV (S53) */
 const cmdTopic = process.argv.includes('--cmd-topic');
+/** --code-prefix TM: boards carry a factory cabinet code TM0001, TM0002... (telemetry LCOD), for the QR flow */
+const codePrefix = arg('code-prefix', '');
 /** --sign: signing firmware (S59) with DEVICE_MASTER_KEY of this environment (use a test master, never a customer's) */
 const master = process.argv.includes('--sign') ? parseMasterKey(process.env.DEVICE_MASTER_KEY) : null;
 if (process.argv.includes('--sign') && !master) throw new Error('--sign needs DEVICE_MASTER_KEY (64 hex)');
@@ -38,6 +40,7 @@ for (let i = 0; i < count; i++) {
     telemetryMs,
     cmdTopic,
     sign: master ? { master } : undefined,
+    cabinetCode: codePrefix ? `${codePrefix}${String(i + 1).padStart(4, '0')}` : undefined,
     log: (m) => console.error(m),
   });
   cabinets.push(c);

@@ -4,7 +4,7 @@
 import { Body, Controller, Delete, Get, HttpCode, Inject, Injectable, Module, Param, Patch, Post, Put, Req } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
-import { GPS_RELOCATE_STALE_M, LAMP_GROUP_LABELS, OFFLINE_AFTER_MS, defaultFieldMap, distanceM, judgeGpsSuggestion, type Lang } from '@citylight/shared';
+import { DEFAULT_CABINET_LOCATION, GPS_RELOCATE_STALE_M, LAMP_GROUP_LABELS, OFFLINE_AFTER_MS, defaultFieldMap, distanceM, judgeEnrollment, judgeGpsSuggestion, type Lang } from '@citylight/shared';
 import { SCHEDULES_CHANNEL } from '@citylight/db/batches';
 import { CONFIG_CHANNEL } from '@citylight/db/notify';
 import { RequirePerm, RequireReauth, type AuthedRequest, type SessionUser } from './auth';
@@ -38,6 +38,22 @@ const CabinetBody = z.object({
   /** only when registering: which IMEI to trust when the unknown device showed two (S42); default = the one it reported */
   imei: Imei.nullish(),
 });
+const REGISTERED_BY_FORM = 'Đăng ký tủ';
+const REGISTERED_BY_QR = 'Đăng ký tủ bằng QR';
+const REGISTRATION_HISTORY_LIMIT = 100;
+
+/** Only the LTID and the code are required: the name falls back to the code, the position to the device GPS. */
+const RegisterBody = CabinetBody.extend({ name: Name.nullish(), location: Point.nullish() });
+
+/** Registration from a QR label: the device supplies everything except what the installer chooses to add. */
+const EnrollBody = z.object({
+  code: CabinetCode,
+  name: Name.nullish(),
+  address: z.string().trim().max(300).nullish(),
+  /** the phone's position, used only while the device has no GPS fix */
+  location: Point.nullish(),
+});
+
 const CabinetPatch = CabinetBody.partial()
   .omit({ imei: true, fwProfile: true, hasTempSensor: true })
   .extend({ fwProfile: z.enum(['v2-1307ebc', 'v2-current', 'v3']).optional(), hasTempSensor: z.boolean().optional() });
@@ -208,9 +224,8 @@ export class AdminService {
   }
 
   /** Register a cabinet (from an unknown device or by hand); the ingest worker picks it up at once. */
-  async registerCabinet(u: SessionUser, body: unknown, ip?: string) {
-    const b = CabinetBody.parse(body);
-    assertInRegion(b.location);
+  async registerCabinet(u: SessionUser, body: unknown, ip?: string, via: 'form' | 'qr' = 'form') {
+    const b = RegisterBody.parse(body);
     // a ward implies its district
     const districtId = b.districtId ?? (b.wardId ? (await this.sql<{ p: string }[]>`SELECT parent_id AS p FROM areas WHERE id = ${b.wardId}`)[0]?.p ?? null : null);
     await this.checkPlaces(u, { ...b, districtId });
@@ -221,7 +236,8 @@ export class AdminService {
         : new ApiError(409, 'cabinet_code_taken', `Mã tủ ${b.code} đã có`, { code: b.code });
     // S42: the IMEI becomes the cabinet's identity on the anonymous broker. Two IMEIs under one unknown LTID
     // means someone else uses it too: the admin must say which one is the real cabinet.
-    const unk = (await this.sql<{ imei: string | null; other_imei: string | null }[]>`SELECT imei, other_imei FROM unknown_devices WHERE upper(ltid) = ${b.ltid}`)[0];
+    const unk = (await this.sql<{ imei: string | null; other_imei: string | null; lat: number | null; lng: number | null }[]>`
+      SELECT imei, other_imei, ST_Y(gps) AS lat, ST_X(gps) AS lng FROM unknown_devices WHERE upper(ltid) = ${b.ltid}`)[0];
     if (unk?.other_imei && !b.imei)
       throw new ApiError(409, 'imei_conflict', `LTID ${b.ltid} đã gửi frame với 2 IMEI khác nhau (${unk.imei} và ${unk.other_imei}): chọn IMEI của tủ thật`, {
         ltid: b.ltid,
@@ -229,20 +245,82 @@ export class AdminService {
         other: unk.other_imei,
       });
     const imei = b.imei ?? unk?.imei ?? null;
+    const name = b.name ?? b.code;
+    const location = b.location ?? (unk && unk.lat !== null && unk.lng !== null ? { lat: unk.lat, lng: unk.lng } : DEFAULT_CABINET_LOCATION);
+    assertInRegion(location);
     const id = await this.sql.begin(async (tx) => {
       const r = (await tx<{ id: string }[]>`
         INSERT INTO cabinets (organization_id, ltid, code, name, address, street, ward_id, district_id, management_unit_id, zone1_id, location, fw_profile, has_temp_sensor, notes, imei)
-        VALUES (${u.organizationId}, ${b.ltid}, ${b.code}, ${b.name}, ${b.address ?? null}, ${b.street ?? null}, ${b.wardId ?? null}, ${districtId},
-                ${b.managementUnitId ?? null}, ${b.zone1Id ?? null}, ST_SetSRID(ST_MakePoint(${b.location.lng}, ${b.location.lat}), 4326), ${b.fwProfile},
+        VALUES (${u.organizationId}, ${b.ltid}, ${b.code}, ${name}, ${b.address ?? null}, ${b.street ?? null}, ${b.wardId ?? null}, ${districtId},
+                ${b.managementUnitId ?? null}, ${b.zone1Id ?? null}, ST_SetSRID(ST_MakePoint(${location.lng}, ${location.lat}), 4326), ${b.fwProfile},
                 ${b.hasTempSensor}, ${b.notes ?? null}, ${imei})
         RETURNING id`)[0]!;
       await tx`INSERT INTO cabinet_state (cabinet_id, status, online) VALUES (${r.id}, 'offline', false) ON CONFLICT DO NOTHING`;
       await tx`DELETE FROM unknown_devices WHERE upper(ltid) = ${b.ltid}`;
       return r.id;
     });
-    await this.log(u, 'Đăng ký tủ', 'cabinet', id, `${b.code} - ${b.name}`, `LTID ${b.ltid}${imei ? `, IMEI ${imei}` : ''}`, ip);
+    await this.log(u, via === 'qr' ? REGISTERED_BY_QR : REGISTERED_BY_FORM, 'cabinet', id, `${b.code} - ${name}`, `LTID ${b.ltid}${imei ? `, IMEI ${imei}` : ''}`, ip);
     await this.reload('registry');
     return { id };
+  }
+
+  /** Cabinets approved so far, newest first, from the activity log so a later removal does not hide who approved it. */
+  async registrationHistory(u: SessionUser) {
+    const rows = await this.sql<{ ts: Date; user_email: string; action: string; target_name: string | null; code: string | null; name: string | null; ltid: string | null; active: boolean | null }[]>`
+      SELECT a.ts, a.user_email, a.action, a.target_name, c.code, c.name, c.ltid, c.active
+      FROM activity_logs a
+      LEFT JOIN cabinets c ON c.id::text = a.target_id AND c.organization_id = ${u.organizationId}
+      WHERE a.target_type = 'cabinet' AND a.action IN (${REGISTERED_BY_FORM}, ${REGISTERED_BY_QR})
+      ORDER BY a.ts DESC LIMIT ${REGISTRATION_HISTORY_LIMIT}`;
+    return rows.map((r) => {
+      // the log keeps "code - name" for a cabinet that no longer exists
+      const [loggedCode, ...loggedName] = (r.target_name ?? '').split(' - ');
+      return {
+        at: r.ts.toISOString(),
+        code: r.code ?? loggedCode ?? '',
+        name: r.name ?? loggedName.join(' - '),
+        ltid: r.ltid,
+        by: r.user_email,
+        via: r.action === REGISTERED_BY_QR ? ('qr' as const) : ('form' as const),
+        active: r.active ?? false,
+      };
+    });
+  }
+
+  /** What a scanned cabinet code means now. The LTID stays on the server: the installer never sees it. */
+  private async lookupCode(u: SessionUser, code: string) {
+    const cabinet = (await this.sql<{ id: string; code: string; name: string }[]>`SELECT id, code, name FROM cabinets WHERE code = ${code} AND organization_id = ${u.organizationId}`)[0] ?? null;
+    const devices = await this.sql<{ ltid: string; imei: string | null; other_imei: string | null; last_seen_at: Date; lat: number | null; lng: number | null }[]>`
+      SELECT ltid, imei, other_imei, last_seen_at, ST_Y(gps) AS lat, ST_X(gps) AS lng FROM unknown_devices u
+      WHERE code = ${code} AND NOT EXISTS (SELECT 1 FROM cabinets c WHERE c.active AND upper(c.ltid) = upper(u.ltid))
+      ORDER BY last_seen_at DESC LIMIT 5`;
+    const status = judgeEnrollment({ registered: !!cabinet, devices: devices.length, imeiConflict: devices.some((d) => d.other_imei) });
+    return { status, cabinet, device: devices[0] ?? null };
+  }
+
+  async findByCode(u: SessionUser, rawCode: string) {
+    const code = CabinetCode.parse(rawCode);
+    const { status, cabinet, device } = await this.lookupCode(u, code);
+    return {
+      code,
+      status,
+      cabinet: cabinet && { id: cabinet.id, name: cabinet.name },
+      device:
+        status === 'ready' && device
+          ? { lastSeenAt: device.last_seen_at.toISOString(), imeiTail: device.imei?.slice(-4) ?? null, gps: device.lat === null || device.lng === null ? null : { lat: device.lat, lng: device.lng } }
+          : null,
+    };
+  }
+
+  /** Register the one device that reports this cabinet code, after the installer scanned the label and confirmed. */
+  async enroll(u: SessionUser, body: unknown, ip?: string) {
+    const b = EnrollBody.parse(body);
+    const { status, device } = await this.lookupCode(u, b.code);
+    if (status === 'registered') throw new ApiError(409, 'cabinet_code_taken', `Mã tủ ${b.code} đã có`, { code: b.code });
+    if (status === 'conflict') throw new ApiError(409, 'enroll_conflict', `Có nhiều thiết bị cùng báo mã tủ ${b.code}`, { code: b.code });
+    if (status === 'waiting' || !device) throw new ApiError(409, 'enroll_not_seen', `Mã tủ ${b.code} chưa truyền về server`, { code: b.code });
+    const location = device.lat !== null && device.lng !== null ? { lat: device.lat, lng: device.lng } : b.location;
+    return this.registerCabinet(u, { ltid: device.ltid, code: b.code, name: b.name, location, address: b.address ?? null }, ip, 'qr');
   }
 
   async updateCabinet(u: SessionUser, id: string, body: unknown, ip?: string) {
@@ -474,6 +552,13 @@ export class AdminController {
   deleteZone(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.deleteZone(r.user!, id, r.ip); }
   @Post('zones/:id/assign') @HttpCode(200) @RequirePerm('admin.catalog')
   assignZone(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.assignZone(r.user!, id, b, r.ip); }
+
+  @Get('devices/registered') @RequirePerm('admin.devices')
+  registered(@Req() r: AuthedRequest) { return this.svc.registrationHistory(r.user!); }
+  @Get('devices/by-code/:code') @RequirePerm('device.enroll')
+  byCode(@Req() r: AuthedRequest, @Param('code') code: string) { return this.svc.findByCode(r.user!, code); }
+  @Post('devices/enroll') @RequirePerm('device.enroll')
+  enroll(@Req() r: AuthedRequest, @Body() b: unknown) { return this.svc.enroll(r.user!, b, r.ip); }
 
   @Post('cabinets') @RequirePerm('admin.devices')
   register(@Req() r: AuthedRequest, @Body() b: unknown) { return this.svc.registerCabinet(r.user!, b, r.ip); }
