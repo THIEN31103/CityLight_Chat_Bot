@@ -40,6 +40,8 @@ export interface CabinetOptions {
   cmdTopic?: boolean;
   /** signing firmware (S59): master of this environment; uid default derived from the LTID, boot default 1 */
   sign?: { master: Buffer; uid?: string; boot?: number };
+  /** cabinet code written at the factory: telemetry carries LCOD (default: none, like older firmware) */
+  cabinetCode?: string;
 }
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -253,6 +255,7 @@ export class SimCabinet {
       pairs.push(['LQ2', plc ? (b1 ? 1 : 0) : 'X'], ['LQ3', plc ? (b2 ? 1 : 0) : 'X'], ['PMAN', plc ? (this.manual ? 1 : 0) : 'X']);
     }
     pairs.push(['PTIM', plc ? this.ptim() : 'X']);
+    if (this.o.cabinetCode) pairs.push(['LCOD', this.o.cabinetCode]);
     if (this.key) pairs.push(['LFWV', this.ownTopic ? 4 : 2], ...identPairs(this.key, this.ltid, this.uid, this.boot));
     else if (this.o.cmdTopic) pairs.push(['LFWV', this.ownTopic ? 3 : 2]);
     return encodeFrame(pairs);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assignableRoles, canManageRole, hasPermission, roleRequires2fa, roleSeesAll } from '../src';
+import { assignableRoles, canManageRole, hasPermission, roleRequires2fa, roleSeesAll, userCan } from '../src';
 
 describe('role hierarchy (S47)', () => {
   it('provider manages every role, including other provider accounts', () => {
@@ -13,6 +13,23 @@ describe('role hierarchy (S47)', () => {
   it('operator / viewer / maintenance manage nobody they could matter to', () => {
     expect(assignableRoles('operator')).toEqual(['viewer', 'maintenance']); // and they have no admin.users anyway
     expect(assignableRoles('viewer')).toEqual([]);
+  });
+});
+
+describe('cabinet approval', () => {
+  it('comes with the admin and manager roles', () => {
+    expect(userCan({ role: 'admin', canEnroll: false }, 'device.enroll')).toBe(true);
+    expect(userCan({ role: 'manager', canEnroll: false }, 'device.enroll')).toBe(true);
+  });
+  it('is refused to other roles unless the account was granted it', () => {
+    for (const role of ['operator', 'viewer', 'maintenance'] as const) {
+      expect(userCan({ role, canEnroll: false }, 'device.enroll')).toBe(false);
+      expect(userCan({ role, canEnroll: true }, 'device.enroll')).toBe(true);
+    }
+  });
+  it('grants nothing else: no registration admin, no user management', () => {
+    const installer = { role: 'viewer', canEnroll: true } as const;
+    for (const p of ['admin.devices', 'admin.users', 'cabinet.control', 'device.identity'] as const) expect(userCan(installer, p)).toBe(false);
   });
 });
 

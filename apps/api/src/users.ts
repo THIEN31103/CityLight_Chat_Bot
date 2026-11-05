@@ -5,7 +5,7 @@ import { Body, Controller, Get, HttpCode, Inject, Injectable, Module, Param, Pat
 import { hash } from '@node-rs/argon2';
 import { z } from 'zod';
 import type { RoleKey, User } from '@citylight/shared';
-import { LABELS, ROLE_LABELS, canManageRole, isLang, roleRequires2fa, roleSeesAll } from '@citylight/shared';
+import { LABELS, ROLE_LABELS, canManageRole, hasPermission, isLang, roleRequires2fa, roleSeesAll } from '@citylight/shared';
 import { AuthModule, AuthService, RequirePerm, RequireReauth, require2faEnforced, type AuthedRequest, type SessionUser } from './auth';
 import { ApiError } from './errors';
 import { SQL, type Sql } from './infra';
@@ -33,6 +33,7 @@ const CreateBody = z.object({
   fullName: z.string().trim().min(1).max(120),
   role: z.enum(ROLES).default('viewer'),
   scopeAll: z.boolean().default(false),
+  canEnroll: z.boolean().default(false),
   scopeAreaIds: z.array(z.string().uuid()).max(500).default([]),
 });
 const PatchBody = z.object({
@@ -40,11 +41,12 @@ const PatchBody = z.object({
   role: z.enum(ROLES).optional(),
   active: z.boolean().optional(),
   scopeAll: z.boolean().optional(),
+  canEnroll: z.boolean().optional(),
   scopeAreaIds: z.array(z.string().uuid()).max(500).optional(),
 });
 
 interface ListRow {
-  id: string; email: string; full_name: string; role: RoleKey; scope_all: boolean; totp_enabled: boolean;
+  id: string; email: string; full_name: string; role: RoleKey; scope_all: boolean; can_enroll: boolean; totp_enabled: boolean;
   password_change_required: boolean; active: boolean; last_login_at: Date | null; locked_until: Date | null; areas: string[]; lang: string;
 }
 
@@ -56,6 +58,7 @@ export class UsersService {
     return {
       id: r.id, email: r.email, fullName: r.full_name, role: r.role,
       scopeAll: roleSeesAll(r.role) || r.scope_all, scopeAreaIds: r.areas,
+      canEnroll: hasPermission(r.role, 'device.enroll') || r.can_enroll,
       totpEnabled: r.totp_enabled, totpRequired: require2faEnforced() && roleRequires2fa(r.role),
       passwordChangeRequired: r.password_change_required, active: r.active,
       lastLoginAt: r.last_login_at ? r.last_login_at.toISOString() : null,
@@ -68,7 +71,7 @@ export class UsersService {
 
   async list(orgId: string, id?: string, actor?: RoleKey) {
     const rows = await this.sql<ListRow[]>`
-      SELECT u.id, u.email, u.full_name, u.role, u.scope_all, u.totp_enabled, u.password_change_required, u.active, u.last_login_at, u.locked_until, u.lang,
+      SELECT u.id, u.email, u.full_name, u.role, u.scope_all, u.can_enroll, u.totp_enabled, u.password_change_required, u.active, u.last_login_at, u.locked_until, u.lang,
              coalesce(array_agg(s.area_id::text) FILTER (WHERE s.area_id IS NOT NULL), '{}') AS areas
       FROM users u LEFT JOIN user_scopes s ON s.user_id = u.id
       WHERE u.organization_id = ${orgId} AND (${id ?? null}::uuid IS NULL OR u.id = ${id ?? null})
@@ -103,12 +106,12 @@ export class UsersService {
     const pwHash = await hash(pw);
     const id = await this.sql.begin(async (tx) => {
       const r = await tx<{ id: string }[]>`
-        INSERT INTO users (organization_id, email, full_name, password_hash, role, scope_all, password_change_required)
-        VALUES (${admin.organizationId}, ${b.email.trim()}, ${b.fullName}, ${pwHash}, ${b.role}, ${b.scopeAll}, true) RETURNING id`;
+        INSERT INTO users (organization_id, email, full_name, password_hash, role, scope_all, can_enroll, password_change_required)
+        VALUES (${admin.organizationId}, ${b.email.trim()}, ${b.fullName}, ${pwHash}, ${b.role}, ${b.scopeAll}, ${b.canEnroll}, true) RETURNING id`;
       for (const a of new Set(b.scopeAreaIds)) await tx`INSERT INTO user_scopes (user_id, area_id) VALUES (${r[0]!.id}, ${a})`;
       return r[0]!.id;
     });
-    const summary = `${b.role}${b.scopeAll ? ', toàn hệ thống' : `, ${b.scopeAreaIds.length} khu vực`}`;
+    const summary = `${b.role}${b.scopeAll ? ', toàn hệ thống' : `, ${b.scopeAreaIds.length} khu vực`}${b.canEnroll ? ', được duyệt tủ' : ''}`;
     await this.auth.log(admin, 'Tạo người dùng', ip, { type: 'user', id, name: b.email }, summary);
     // detail = the role key (language-neutral; Telegram readers may use English), the area scope is in the log
     await this.auth.securityAlert('user_created', { id, email: b.email }, { ip, by: admin.email, detail: b.role });
@@ -120,7 +123,7 @@ export class UsersService {
     const b = PatchBody.parse(body);
     const before = await this.one(admin.organizationId, uid);
     const self = uid === admin.id;
-    if (self && (b.role !== undefined || b.active !== undefined || b.scopeAll !== undefined || b.scopeAreaIds !== undefined))
+    if (self && (b.role !== undefined || b.active !== undefined || b.scopeAll !== undefined || b.scopeAreaIds !== undefined || b.canEnroll !== undefined))
       throw new ApiError(409, 'self_change', 'Không tự đổi vai trò, phạm vi hay trạng thái của chính mình');
     if (!self) assertCanManage(admin, before.role, 'account');
     if (b.role) assertCanManage(admin, b.role, 'role');
@@ -133,7 +136,8 @@ export class UsersService {
         full_name = coalesce(${b.fullName ?? null}, full_name),
         role = coalesce(${b.role ?? null}::role, role),
         active = coalesce(${b.active ?? null}::boolean, active),
-        scope_all = coalesce(${b.scopeAll ?? null}::boolean, scope_all)
+        scope_all = coalesce(${b.scopeAll ?? null}::boolean, scope_all),
+        can_enroll = coalesce(${b.canEnroll ?? null}::boolean, can_enroll)
         WHERE id = ${uid}`;
       if (b.scopeAreaIds) {
         await tx`DELETE FROM user_scopes WHERE user_id = ${uid}`;
@@ -143,7 +147,7 @@ export class UsersService {
 
     const after = await this.one(admin.organizationId, uid);
     const sameScope = before.scopeAll === after.scopeAll && [...before.scopeAreaIds].sort().join() === [...after.scopeAreaIds].sort().join();
-    const accessChanged = before.role !== after.role || before.active !== after.active || !sameScope;
+    const accessChanged = before.role !== after.role || before.active !== after.active || before.canEnroll !== after.canEnroll || !sameScope;
     if (accessChanged) await this.auth.revokeUser(uid);
     else await this.auth.userChanged(uid);
 
@@ -152,6 +156,7 @@ export class UsersService {
       before.role !== after.role && `vai trò: ${before.role} → ${after.role}`,
       before.active !== after.active && (after.active ? 'mở khóa tài khoản' : 'khóa tài khoản'),
       !sameScope && (after.scopeAll ? 'phạm vi: toàn hệ thống' : `phạm vi: ${after.scopeAreaIds.length} khu vực`),
+      before.canEnroll !== after.canEnroll && (after.canEnroll ? 'cấp quyền duyệt tủ' : 'bỏ quyền duyệt tủ'),
     ].filter(Boolean).join('; ');
     if (changes) await this.auth.log(admin, 'Sửa người dùng', ip, { type: 'user', id: uid, name: after.email }, changes);
     if (before.role !== after.role) await this.auth.securityAlert('role_changed', after, { ip, by: admin.email, detail: `${before.role} → ${after.role}` });

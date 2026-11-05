@@ -218,8 +218,10 @@ export interface SystemSettings {
 export interface CabinetInput {
   ltid: string;
   code: string;
-  name: string;
-  location: GeoPoint;
+  /** empty = the cabinet code */
+  name?: string | null;
+  /** empty = the device GPS, else a default position */
+  location?: GeoPoint | null;
   address?: string | null;
   districtId?: string | null;
   wardId?: string | null;
@@ -230,6 +232,8 @@ export interface CabinetInput {
   hasTempSensor?: boolean;
   /** the IMEI to trust when the unknown device showed two (S42) */
   imei?: string | null;
+  /** the code came from the QR label */
+  scanned?: boolean;
 }
 
 /** Command signing state of a cabinet (D7-lite, S59). */
@@ -359,6 +363,25 @@ export interface UnknownDevice {
   gps: GeoPoint | null;
   /** a second, different IMEI under the same LTID: the register form must pick one */
   otherImei: string | null;
+  /** cabinet code the board reports (LCOD), null on older firmware */
+  code: string | null;
+  /** last identity block: valid, invalid, null when the board sends none (older firmware) */
+  ident: 'valid' | 'invalid' | null;
+  /** the registered cabinet that already has this code: this is its new board */
+  replaces: { id: string; name: string } | null;
+}
+
+/** One approved cabinet in the registration history. */
+export interface RegistrationRecord {
+  at: string;
+  code: string;
+  name: string;
+  /** null when the cabinet no longer exists */
+  ltid: string | null;
+  by: string;
+  via: 'form' | 'qr' | 'replace';
+  /** false = stopped or removed since */
+  active: boolean;
 }
 
 export const api = {
@@ -490,12 +513,14 @@ export const api = {
 
   // admin
   users: () => req<AdminUser[]>('GET', '/users'),
-  createUser: (u: Pick<User, 'email' | 'fullName' | 'role' | 'scopeAll' | 'scopeAreaIds'>) => req<{ user: AdminUser; tempPassword: string }>('POST', '/users', u),
-  updateUser: (id: string, u: Partial<Pick<User, 'fullName' | 'role' | 'active' | 'scopeAll' | 'scopeAreaIds'>>) => req<AdminUser>('PATCH', `/users/${id}`, u),
+  createUser: (u: Pick<User, 'email' | 'fullName' | 'role' | 'scopeAll' | 'scopeAreaIds' | 'canEnroll'>) => req<{ user: AdminUser; tempPassword: string }>('POST', '/users', u),
+  updateUser: (id: string, u: Partial<Pick<User, 'fullName' | 'role' | 'active' | 'scopeAll' | 'scopeAreaIds' | 'canEnroll'>>) => req<AdminUser>('PATCH', `/users/${id}`, u),
   resetUserPassword: (id: string) => req<{ user: AdminUser; tempPassword: string }>('POST', `/users/${id}/reset-password`),
   unlockUser: (id: string) => req<AdminUser>('POST', `/users/${id}/unlock`),
   resetUser2fa: (id: string) => req<AdminUser>('POST', `/users/${id}/reset-2fa`),
-  unknownDevices: () => req<UnknownDevice[]>('GET', '/devices/unknown'),
+  unknownDevices: (code?: string) => req<UnknownDevice[]>('GET', code ? `/devices/unknown?code=${encodeURIComponent(code)}` : '/devices/unknown'),
+  registrationHistory: () => req<RegistrationRecord[]>('GET', '/devices/registered'),
+  replaceDevice: (code: string) => req<{ id: string }>('POST', '/devices/replace', { code }),
   fieldMap: () => req<{ entries: FieldMapEntry[]; unknownKeys: { key: string; cabinets: number; sample: string }[] }>('GET', '/field-map'),
   // admin catalog / devices / settings (M8)
   createArea: (b: { kind: 'district' | 'ward'; name: string; parentId: string }) => req<{ id: string }>('POST', '/areas', b),

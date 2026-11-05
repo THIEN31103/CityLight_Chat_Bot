@@ -26,6 +26,7 @@ export const SHELL = defineDict(
       batches: 'Đồng bộ hàng loạt',
       activityLog: 'Nhật ký thao tác',
       syncLog: 'Nhật ký đồng bộ',
+      enroll: 'Đăng ký tủ',
       admin: 'Quản trị',
       system: 'Giám sát hệ thống',
     },
@@ -54,6 +55,7 @@ export const SHELL = defineDict(
       report: 'Incident overview report',
     },
     functionMenu: {
+      enroll: 'Cabinet registration',
       alarms: 'Fault alarms',
       reports: 'Data reports (Excel)',
       schedules: 'Lighting schedules',

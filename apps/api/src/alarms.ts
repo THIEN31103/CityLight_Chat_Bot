@@ -96,15 +96,20 @@ export class AlarmsController {
   }
 
   @Get('devices/unknown')
-  @RequirePerm('admin.devices')
-  unknown() {
+  @RequirePerm('device.enroll')
+  unknown(@Req() req: AuthedRequest, @Query('code') code?: string) {
+    // code = the devices reporting one cabinet code: a scanned label finds its device however long the list is
     // gps = last fix the device sent (pre-fills the register form), null when it never had one
     // otherImei = a second IMEI under the same LTID (S42): registering then requires choosing one
-    return this.sql`SELECT ltid, imei, other_imei AS "otherImei", first_seen_at AS "firstSeenAt", last_seen_at AS "lastSeenAt", frames,
-                           CASE WHEN gps IS NULL THEN NULL ELSE json_build_object('lat', ST_Y(gps), 'lng', ST_X(gps)) END AS gps
+    // replaces = the registered cabinet in use that already has this code: a new board for it, not a new cabinet
+    // ident = last identity block: valid, invalid, null when the board sends none
+    return this.sql`SELECT ltid, imei, other_imei AS "otherImei", code, ident, first_seen_at AS "firstSeenAt", last_seen_at AS "lastSeenAt", frames,
+                           CASE WHEN gps IS NULL THEN NULL ELSE json_build_object('lat', ST_Y(gps), 'lng', ST_X(gps)) END AS gps,
+                           (SELECT json_build_object('id', c.id, 'name', c.name) FROM cabinets c WHERE c.active AND upper(c.code) = upper(u.code) AND c.organization_id = ${req.user!.organizationId} LIMIT 1) AS replaces
                     FROM unknown_devices u
                     -- a row re-inserted by a frame buffered while the cabinet was being registered
                     WHERE NOT EXISTS (SELECT 1 FROM cabinets c WHERE c.active AND upper(c.ltid) = upper(u.ltid))
+                      AND (${code ?? null}::text IS NULL OR upper(u.code) = upper(${code ?? null}))
                     ORDER BY last_seen_at DESC LIMIT 200`;
   }
 

@@ -148,6 +148,27 @@
       "when": 1793249157770,
       "tag": "0020_signing",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793801141296,
+      "tag": "0021_unknown_device_code",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793804330606,
+      "tag": "0022_user_can_enroll",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793895996507,
+      "tag": "0023_unknown_device_ident",
+      "breakpoints": true
     }
   ]
 }

@@ -413,6 +413,12 @@ export const deviceEvents = pgTable(
 export const unknownDevices = pgTable('unknown_devices', {
   ltid: text('ltid').primaryKey(),
   imei: text('imei'),
+  /** cabinet code the board reports (LCOD): a scanned QR label finds the device by this */
+  code: text('code'),
+  /** last identity block checked with the master: valid, invalid, null = no block (older firmware) or no master */
+  ident: text('ident', { enum: ['valid', 'invalid'] }),
+  /** board UID proven by a valid identity block */
+  uid: text('uid'),
   /** a second, different IMEI under the same LTID (spoofing or a reused LTID): registration must pick one */
   otherImei: text('other_imei'),
   firstSeenAt: tsz('first_seen_at').notNull().defaultNow(),
@@ -541,6 +547,8 @@ export const users = pgTable(
     totpLastStep: integer('totp_last_step'),
     // true = every cabinet; false = only cabinets under user_scopes areas (none by default)
     scopeAll: boolean('scope_all').notNull().default(false),
+    /** may scan and approve cabinets without a higher role */
+    canEnroll: boolean('can_enroll').notNull().default(false),
     // set for admin-issued temporary passwords; API allows only /me/password until changed
     passwordChangeRequired: boolean('password_change_required').notNull().default(false),
     active: boolean('active').notNull().default(true),

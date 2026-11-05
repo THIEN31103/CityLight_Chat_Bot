@@ -371,12 +371,12 @@ for (const c of cabinets) {
 // ---------- Users ----------
 
 export const users: User[] = [
-  { id: 'u1', email: 'admin@citylight.local', fullName: 'Quản trị hệ thống', role: 'admin', scopeAll: true, totpRequired: true, passwordChangeRequired: false, scopeAreaIds: [], totpEnabled: true, active: true, lang: 'vi', lastLoginAt: iso(now - 3600000) },
-  { id: 'u6', email: 'quanly@citylight.local', fullName: 'Võ Thị Quản', role: 'manager', scopeAll: true, totpRequired: true, passwordChangeRequired: false, scopeAreaIds: [], totpEnabled: true, active: true, lang: 'vi', lastLoginAt: iso(now - 5400000) },
-  { id: 'u2', email: 'dieuhanh@citylight.local', fullName: 'Nguyễn Văn Điều', role: 'operator', scopeAll: true, totpRequired: true, passwordChangeRequired: false, scopeAreaIds: [], totpEnabled: true, active: true, lang: 'vi', lastLoginAt: iso(now - 7200000) },
-  { id: 'u3', email: 'giamsat@citylight.local', fullName: 'Trần Thị Giám', role: 'viewer', scopeAll: false, totpRequired: false, passwordChangeRequired: false, scopeAreaIds: ['d1', 'd2'], totpEnabled: false, active: true, lang: 'vi', lastLoginAt: iso(now - 86400000) },
-  { id: 'u4', email: 'duytu@citylight.local', fullName: 'Lê Văn Tu', role: 'maintenance', scopeAll: false, totpRequired: false, passwordChangeRequired: false, scopeAreaIds: ['d12'], totpEnabled: false, active: true, lang: 'vi', lastLoginAt: null },
-  { id: 'u5', email: 'dieuhanh2@citylight.local', fullName: 'Phạm Minh Hành', role: 'operator', scopeAll: false, totpRequired: true, passwordChangeRequired: false, scopeAreaIds: ['d5', 'd6'], totpEnabled: false, active: false, lang: 'vi', lastLoginAt: iso(now - 40 * 86400000) },
+  { id: 'u1', email: 'admin@citylight.local', fullName: 'Quản trị hệ thống', role: 'admin', canEnroll: true, scopeAll: true, totpRequired: true, passwordChangeRequired: false, scopeAreaIds: [], totpEnabled: true, active: true, lang: 'vi', lastLoginAt: iso(now - 3600000) },
+  { id: 'u6', email: 'quanly@citylight.local', fullName: 'Võ Thị Quản', role: 'manager', canEnroll: true, scopeAll: true, totpRequired: true, passwordChangeRequired: false, scopeAreaIds: [], totpEnabled: true, active: true, lang: 'vi', lastLoginAt: iso(now - 5400000) },
+  { id: 'u2', email: 'dieuhanh@citylight.local', fullName: 'Nguyễn Văn Điều', role: 'operator', canEnroll: false, scopeAll: true, totpRequired: true, passwordChangeRequired: false, scopeAreaIds: [], totpEnabled: true, active: true, lang: 'vi', lastLoginAt: iso(now - 7200000) },
+  { id: 'u3', email: 'giamsat@citylight.local', fullName: 'Trần Thị Giám', role: 'viewer', canEnroll: false, scopeAll: false, totpRequired: false, passwordChangeRequired: false, scopeAreaIds: ['d1', 'd2'], totpEnabled: false, active: true, lang: 'vi', lastLoginAt: iso(now - 86400000) },
+  { id: 'u4', email: 'duytu@citylight.local', fullName: 'Lê Văn Tu', role: 'maintenance', canEnroll: false, scopeAll: false, totpRequired: false, passwordChangeRequired: false, scopeAreaIds: ['d12'], totpEnabled: false, active: true, lang: 'vi', lastLoginAt: null },
+  { id: 'u5', email: 'dieuhanh2@citylight.local', fullName: 'Phạm Minh Hành', role: 'operator', canEnroll: false, scopeAll: false, totpRequired: true, passwordChangeRequired: false, scopeAreaIds: ['d5', 'd6'], totpEnabled: false, active: false, lang: 'vi', lastLoginAt: iso(now - 40 * 86400000) },
 ];
 
 // ---------- Incidents ----------

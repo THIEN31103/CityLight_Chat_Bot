@@ -11,6 +11,7 @@ export * from './incidents';
 export * from './gis';
 export * from './dimming';
 export * from './relocate';
+export * from './enroll';
 export * from './identity';
 export * from './security';
 export * from './i18n';

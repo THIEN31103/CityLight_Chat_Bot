@@ -414,6 +414,8 @@ export interface User {
   /** true = every cabinet; false = only cabinets under scopeAreaIds (empty = none). */
   scopeAll: boolean;
   scopeAreaIds: string[];
+  /** may scan and approve cabinets: granted to this account, or included in its role */
+  canEnroll: boolean;
   totpEnabled: boolean;
   /** Role needs 2FA (permission cabinet.control) and the server enforces it: setup is forced until enabled. */
   totpRequired: boolean;

@@ -64,6 +64,10 @@ const vi: Record<string, string> = {
   // cabinets
   ltid_taken: 'LTID {ltid} đã được đăng ký',
   cabinet_code_taken: 'Mã tủ {code} đã có',
+  replace_no_device: 'Chưa có thiết bị mới báo mã tủ {code}',
+  device_bad_signature: 'Thiết bị {ltid} ký sai, không dùng được. Có thể là thiết bị giả',
+  device_unsigned: 'Thiết bị {ltid} chưa có chữ ký, cần quản lý duyệt',
+  enroll_conflict: 'Có nhiều thiết bị cùng báo mã tủ {code}, cần kiểm tra lại',
   imei_taken: 'IMEI {imei} đang thuộc một tủ khác',
   uid_not_pending: 'UID {uid} không phải UID đang chờ chấp nhận của tủ',
   imei_conflict: 'LTID {ltid} đã gửi frame với 2 IMEI khác nhau ({imei} và {other}): chọn IMEI của tủ thật',
@@ -180,6 +184,10 @@ const en: Record<string, string> = {
 
   ltid_taken: 'LTID {ltid} is already registered',
   cabinet_code_taken: 'Cabinet code {code} already exists',
+  replace_no_device: 'No new device reports cabinet code {code}',
+  device_bad_signature: 'Device {ltid} has a bad signature and cannot be used. It may be fake',
+  device_unsigned: 'Device {ltid} is unsigned, a manager must approve it',
+  enroll_conflict: 'Several devices report cabinet code {code}, please check them',
   imei_taken: 'IMEI {imei} belongs to another cabinet',
   uid_not_pending: 'UID {uid} is not the UID waiting for acceptance on this cabinet',
   imei_conflict: 'LTID {ltid} sent frames with 2 different IMEIs ({imei} and {other}): choose the IMEI of the real cabinet',

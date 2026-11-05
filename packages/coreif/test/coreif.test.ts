@@ -55,6 +55,17 @@ describe('parseFrame', () => {
 });
 
 describe('parseTelemetry', () => {
+  it('reads the factory cabinet code (LCOD) without treating it as an unknown key', () => {
+    const t = parseTelemetry("*#LTID'A&LCOD'TM0001$");
+    expect(t.cabinetCode).toBe('TM0001');
+    expect(t.unknownKeys).toEqual({});
+  });
+  it('has no cabinet code for older firmware, X or a malformed value', () => {
+    expect(parseTelemetry("*#LTID'A&PCON'1$").cabinetCode).toBeNull();
+    expect(parseTelemetry("*#LTID'A&LCOD'X$").cabinetCode).toBeNull();
+    expect(parseTelemetry("*#LTID'A&LCOD'T M$").cabinetCode).toBeNull();
+    expect(parseTelemetry(`*#LTID'A&LCOD'${'X'.repeat(25)}$`).cabinetCode).toBeNull();
+  });
   it('decodes a normal frame', () => {
     const t = parseTelemetry(TELE_OK);
     expect(t.ltid).toBe('CTY0005');

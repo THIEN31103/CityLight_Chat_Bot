@@ -45,7 +45,8 @@ export const router = createBrowserRouter([
       { path: 'logs/sync', element: guard('log.view', <SyncLogPage />) },
       { path: 'account', element: <AccountPage /> },
       { path: 'admin', element: <Navigate to="/admin/users" replace /> },
-      { path: 'admin/:tab', element: guard('admin.users', <AdminPage />) },
+      // AdminPage shows each account the tabs it may use
+      { path: 'admin/:tab', element: <AdminPage /> },
       { path: 'system', element: guard('system.view', <SystemPage />) },
       { path: 'help', element: <HelpPage /> },
       { path: '403', element: <ForbiddenPage /> },

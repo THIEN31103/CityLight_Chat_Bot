@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { User } from '@citylight/shared';
-import { hasPermission, type Permission } from '@citylight/shared';
+import { userCan, type Permission } from '@citylight/shared';
 import { api, AUTH_EVENT } from '@/lib/api';
 import { useLang } from '@/i18n';
 
@@ -19,7 +19,7 @@ export const useSession = create<SessionState>((set, get) => ({
   },
   can: (p) => {
     const u = get().user;
-    return !!u && hasPermission(u.role, p);
+    return !!u && userCan(u, p);
   },
 }));
 
