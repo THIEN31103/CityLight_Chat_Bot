@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useDict } from '@/i18n';
-import { ENROLL } from '@/i18n/dict/enroll';
+import { SCANNER } from '@/i18n/dict/scanner';
 
 /** Longest side of the frame given to the decoder: enough for a label and cheap on a phone. */
 const DECODE_SIZE = 640;
@@ -20,7 +20,7 @@ function cameraProblem(e: unknown): CameraProblem {
 
 /** Live camera view that reports the first QR code it reads, then stops. */
 export function QrScanner({ onRead, onCameraError }: { onRead: (text: string) => void; onCameraError: (message: string) => void }) {
-  const t = useDict(ENROLL);
+  const t = useDict(SCANNER);
   const video = useRef<HTMLVideoElement>(null);
   const [live, setLive] = useState(false);
   const handlers = useRef({ onRead, onCameraError });

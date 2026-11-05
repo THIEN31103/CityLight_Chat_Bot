@@ -28,7 +28,7 @@ import type {
   User,
   Zone,
 } from '@citylight/shared';
-import { fill, type EnrollStatus, type Lang } from '@citylight/shared';
+import { fill, type Lang } from '@citylight/shared';
 import { dictNow } from '@/i18n';
 import { COMMON } from '@/i18n/dict/common';
 import { ERRORS } from '@/i18n/dict/errors';
@@ -232,6 +232,8 @@ export interface CabinetInput {
   hasTempSensor?: boolean;
   /** the IMEI to trust when the unknown device showed two (S42) */
   imei?: string | null;
+  /** the code came from the QR label */
+  scanned?: boolean;
 }
 
 /** Command signing state of a cabinet (D7-lite, S59). */
@@ -363,6 +365,8 @@ export interface UnknownDevice {
   otherImei: string | null;
   /** cabinet code the board reports (LCOD), null on older firmware */
   code: string | null;
+  /** the registered cabinet that already has this code: this is its new board */
+  replaces: { id: string; name: string } | null;
 }
 
 /** One approved cabinet in the registration history. */
@@ -373,17 +377,9 @@ export interface RegistrationRecord {
   /** null when the cabinet no longer exists */
   ltid: string | null;
   by: string;
-  via: 'form' | 'qr';
+  via: 'form' | 'qr' | 'replace';
   /** false = stopped or removed since */
   active: boolean;
-}
-
-/** What a scanned cabinet code means now. The LTID is never sent to the installer. */
-export interface CabinetCodeLookup {
-  code: string;
-  status: EnrollStatus;
-  cabinet: { id: string; name: string } | null;
-  device: { lastSeenAt: string; imeiTail: string | null; gps: GeoPoint | null } | null;
 }
 
 export const api = {
@@ -522,8 +518,7 @@ export const api = {
   resetUser2fa: (id: string) => req<AdminUser>('POST', `/users/${id}/reset-2fa`),
   unknownDevices: () => req<UnknownDevice[]>('GET', '/devices/unknown'),
   registrationHistory: () => req<RegistrationRecord[]>('GET', '/devices/registered'),
-  lookupCabinetCode: (code: string) => req<CabinetCodeLookup>('GET', `/devices/by-code/${encodeURIComponent(code)}`),
-  enrollCabinet: (b: { code: string; name: string | null; address: string | null; location: GeoPoint | null }) => req<{ id: string }>('POST', '/devices/enroll', b),
+  replaceDevice: (code: string) => req<{ id: string }>('POST', '/devices/replace', { code }),
   fieldMap: () => req<{ entries: FieldMapEntry[]; unknownKeys: { key: string; cabinets: number; sample: string }[] }>('GET', '/field-map'),
   // admin catalog / devices / settings (M8)
   createArea: (b: { kind: 'district' | 'ward'; name: string; parentId: string }) => req<{ id: string }>('POST', '/areas', b),

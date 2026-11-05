@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import { NavLink, useParams } from 'react-router-dom';
+import { Navigate, NavLink, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, QrCode } from 'lucide-react';
 import type { AlarmType, Permission, RoleKey } from '@citylight/shared';
@@ -13,24 +13,28 @@ import { COMMON } from '@/i18n/dict/common';
 import { ADMIN, PERMISSION_LABELS } from '@/i18n/dict/admin';
 import { Badge, Button, Card, CardHeader, Checkbox, Field, Input, Modal, PageHeader, Select, Spinner, Toggle, confirm, toast } from '@/components/ui';
 import { ErrorCatalogTable } from '@/components/ErrorHelp';
-import { QrScanner } from '@/pages/enroll/QrScanner';
+import { ForbiddenPage } from '@/pages/ErrorPages';
+import { QrScanner } from '@/components/QrScanner';
 
-const TABS: { id: string; label: keyof (typeof ADMIN)['vi']['tabs']; perm?: Permission }[] = [
-  { id: 'users', label: 'users' },
-  { id: 'roles', label: 'roles' },
-  { id: 'areas', label: 'areas' },
-  { id: 'zones', label: 'zones' },
-  { id: 'devices', label: 'devices' },
+const TABS: { id: string; label: keyof (typeof ADMIN)['vi']['tabs']; perm: Permission }[] = [
+  { id: 'users', label: 'users', perm: 'admin.users' },
+  { id: 'roles', label: 'roles', perm: 'admin.users' },
+  { id: 'areas', label: 'areas', perm: 'admin.users' },
+  { id: 'zones', label: 'zones', perm: 'admin.users' },
+  // an account granted cabinet approval reaches this tab and no other
+  { id: 'devices', label: 'devices', perm: 'device.enroll' },
   { id: 'field-map', label: 'fieldMap', perm: 'device.identity' },
-  { id: 'alarm-rules', label: 'alarmRules' },
-  { id: 'settings', label: 'settings' },
+  { id: 'alarm-rules', label: 'alarmRules', perm: 'admin.users' },
+  { id: 'settings', label: 'settings', perm: 'admin.users' },
 ];
 
 export function AdminPage() {
   const { tab = 'users' } = useParams();
   const can = useSession((s) => s.can);
   const a = useDict(ADMIN);
-  const tabs = TABS.filter((t) => !t.perm || can(t.perm));
+  const tabs = TABS.filter((t) => can(t.perm));
+  if (!tabs.length) return <ForbiddenPage />;
+  if (!tabs.some((t) => t.id === tab)) return <Navigate to={`/admin/${tabs[0]!.id}`} replace />;
   return (
     <div className="flex h-full">
       <aside className="w-56 shrink-0 border-r bg-panel p-2">
@@ -437,7 +441,8 @@ function DevicesAdmin() {
   const qc = useQueryClient();
   const t = useDict(ADMIN).devices;
   const c = useDict(COMMON);
-  const { data } = useQuery({ queryKey: ['unknown-devices'], queryFn: api.unknownDevices });
+  // a board that was just powered shows up on its own
+  const { data } = useQuery({ queryKey: ['unknown-devices'], queryFn: api.unknownDevices, refetchInterval: 5000 });
   const history = useQuery({ queryKey: ['registration-history'], queryFn: api.registrationHistory });
   const tree = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
   const zones = useQuery({ queryKey: ['zones'], queryFn: api.zones });
@@ -450,9 +455,29 @@ function DevicesAdmin() {
   // S42: the IMEI becomes the cabinet's identity; two IMEIs under one LTID = the admin picks the real one
   const [imeiChoices, setImeiChoices] = useState<string[]>([]);
   const [scanning, setScanning] = useState(false);
+  // the code in the form came from the QR label (typing over it clears this)
+  const [scanned, setScanned] = useState(false);
+  const canReplace = useSession((s) => s.can('admin.devices'));
   const closeForm = () => {
     setForm(null);
     setScanning(false);
+    setScanned(false);
+  };
+  const replace = useMutation({
+    mutationFn: (code: string) => api.replaceDevice(code),
+    onSuccess: (_r, code) => {
+      toast(fill(dictNow(ADMIN).devices.replaced, { code }), 'success');
+      void qc.invalidateQueries({ queryKey: ['unknown-devices'] });
+      void qc.invalidateQueries({ queryKey: ['registration-history'] });
+      void qc.invalidateQueries({ queryKey: ['map-cabinets'] });
+    },
+    onError: errToast,
+  });
+  const askReplace = async (d: UnknownDevice) => {
+    if (!d.code || !d.replaces) return;
+    if (!canReplace) return toast(t.replaceDenied, 'error');
+    const ok = await confirm({ title: fill(t.replaceTitle, { code: d.code }), body: fill(t.replaceBody, { name: d.replaces.name }), danger: true, confirmLabel: t.replace });
+    if (ok) replace.mutate(d.code);
   };
   const review = (d: UnknownDevice) => {
     setTempSensor(false);
@@ -466,8 +491,13 @@ function DevicesAdmin() {
     const code = parseCabinetCode(raw);
     if (!code) return toast(fill(t.badQr, { text: raw.trim().slice(0, 40) }), 'error');
     const device = data?.find((d) => d.code === code);
-    if (device && !form?.ltid) return review(device);
-    setForm((f) => f && { ...f, code });
+    if (device?.replaces && !form?.ltid) {
+      closeForm();
+      return void askReplace(device);
+    }
+    if (device && !form?.ltid) review(device);
+    else setForm((f) => f && { ...f, code });
+    setScanned(true);
   };
   // what this board itself reports (LCOD): a different code here means the wrong label or the wrong board
   const boardCode = data?.find((d) => d.ltid === form?.ltid)?.code;
@@ -478,7 +508,7 @@ function DevicesAdmin() {
       api.registerCabinet({
         ltid: form!.ltid, code: form!.code, name: form!.name.trim() || null, location: form!.lat && form!.lng ? { lat: Number(form!.lat), lng: Number(form!.lng) } : null,
         districtId: form!.districtId || null, wardId: form!.wardId || null, zone1Id: form!.zone1Id || null, address: form!.address || null,
-        imei: form!.imei || null, hasTempSensor: tempSensor,
+        imei: form!.imei || null, hasTempSensor: tempSensor, scanned,
       }),
     onSuccess: () => {
       toast(fill(dictNow(ADMIN).devices.registered, { code: form!.code }), 'success');
@@ -511,7 +541,16 @@ function DevicesAdmin() {
                 </td>
                 <td className="px-3 py-2 font-mono text-xs">{d.gps ? `${d.gps.lat.toFixed(5)}, ${d.gps.lng.toFixed(5)}` : <span className="text-subtle">{t.noFix}</span>}</td>
                 <td className="px-3 py-2 text-xs">{fmtTime(d.firstSeenAt)}</td><td className="px-3 py-2 text-xs">{fmtTime(d.lastSeenAt)}</td><td className="px-3 py-2">{d.frames}</td>
-                <td className="px-3 py-2"><Button size="sm" onClick={() => review(d)}>{t.review}</Button></td>
+                <td className="px-3 py-2">
+                  {d.replaces ? (
+                    <>
+                      <div className="mb-1 text-xs text-st-fault">{fill(t.newBoardFor, { name: d.replaces.name })}</div>
+                      <Button size="sm" loading={replace.isPending} onClick={() => void askReplace(d)}>{t.replace}</Button>
+                    </>
+                  ) : (
+                    <Button size="sm" onClick={() => review(d)}>{t.review}</Button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -543,7 +582,7 @@ function DevicesAdmin() {
                   <td className="px-3 py-2">{r.name}</td>
                   <td className="px-3 py-2 font-mono text-xs">{r.ltid ?? '-'}</td>
                   <td className="px-3 py-2 text-xs">{r.by}</td>
-                  <td className="px-3 py-2"><Badge tone={r.via === 'qr' ? 'green' : 'blue'}>{r.via === 'qr' ? t.history.viaQr : t.history.viaForm}</Badge></td>
+                  <td className="px-3 py-2"><Badge tone={r.via === 'qr' ? 'green' : r.via === 'replace' ? 'orange' : 'blue'}>{r.via === 'qr' ? t.history.viaQr : r.via === 'replace' ? t.history.viaReplace : t.history.viaForm}</Badge></td>
                 </tr>
               ))}
             </tbody>
@@ -561,7 +600,7 @@ function DevicesAdmin() {
             <Field label={t.ltid}><Input value={form.ltid} onChange={set('ltid')} /></Field>
             <Field label={t.code}>
               <div className="flex gap-2">
-                <Input value={form.code} onChange={set('code')} placeholder="TL01.0123" />
+                <Input value={form.code} onChange={(e) => { setScanned(false); set('code')(e); }} placeholder="TL01.0123" />
                 <Button type="button" variant={scanning ? 'primary' : 'outline'} title={t.scanQr} aria-label={t.scanQr} onClick={() => setScanning((s) => !s)}><QrCode className="h-4 w-4" /></Button>
               </div>
             </Field>

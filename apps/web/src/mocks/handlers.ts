@@ -1,7 +1,7 @@
 // MSW handlers implementing the /api/v1 contract of docs/spec.md section 11 against the in-browser mock DB.
 import { http, HttpResponse, delay, type PathParams } from 'msw';
 import type { Alarm, CommandBatch, CommandType, DimmingProfile, GpsDriftItem, GpsSuggestion, Incident, LampGroup, Schedule, Thresholds, User } from '@citylight/shared';
-import { GPS_RELOCATE_WINDOW_MIN, canManageRole, categoryForAlarm, defaultFieldMap, errorCatalog, distanceM, judgeEnrollment, estimateDimming, judgeGpsSuggestion, roleRequires2fa, validateDimming } from '@citylight/shared';
+import { GPS_RELOCATE_WINDOW_MIN, canManageRole, categoryForAlarm, defaultFieldMap, errorCatalog, distanceM, estimateDimming, judgeGpsSuggestion, roleRequires2fa, validateDimming } from '@citylight/shared';
 import { getLang } from '@/i18n';
 import {
   MockApiError,
@@ -138,16 +138,10 @@ function requireReauth() {
 
 type Info = { request: Request; params: Record<string, string> };
 
-// QR registration: TM0001 ready, TM0002 ready without GPS, TM0003 on two boards; anything else is not seen yet
-const enrollDevices: { code: string; imei: string; gps: { lat: number; lng: number } | null }[] = [
-  { code: 'TM0001', imei: '861234567890123', gps: { lat: 10.7769, lng: 106.7009 } },
-  { code: 'TM0002', imei: '861234567890456', gps: null },
-  { code: 'TM0003', imei: '861234567890789', gps: { lat: 10.78, lng: 106.69 } },
-  { code: 'TM0003', imei: '861234567890999', gps: { lat: 10.79, lng: 106.68 } },
-];
-const enrolled = new Map<string, string>();
+// QR registration in the mock: TM0900 is already a cabinet, CTY9003 is its new board
+const enrolled = new Map<string, string>([['TM0900', 'Tủ Lê Lợi 1']]);
 const registeredLtids = new Set<string>();
-const registrationHistory: { at: string; code: string; name: string; ltid: string | null; by: string; via: 'form' | 'qr'; active: boolean }[] = [
+const registrationHistory: { at: string; code: string; name: string; ltid: string | null; by: string; via: 'form' | 'qr' | 'replace'; active: boolean }[] = [
   { at: new Date(Date.now() - 2 * 3600000).toISOString(), code: 'TM0900', name: 'Tủ Lê Lợi 1', ltid: 'CTY8001', by: 'admin@citylight.local', via: 'qr', active: true },
   { at: new Date(Date.now() - 26 * 3600000).toISOString(), code: 'TM0899', name: 'Tủ Nguyễn Huệ', ltid: 'CTY8000', by: 'manager@citylight.local', via: 'form', active: true },
   { at: new Date(Date.now() - 72 * 3600000).toISOString(), code: 'TM0850', name: 'Tủ Pasteur', ltid: 'CTY7900', by: 'admin@citylight.local', via: 'qr', active: false },
@@ -774,39 +768,28 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
     return HttpResponse.json(target);
   })),
   http.get(`${API}/devices/registered`, wrap(() => HttpResponse.json(registrationHistory))),
-  http.get(`${API}/devices/by-code/:code`, wrap(({ params }) => {
-    const code = params.code!;
-    const cabinet = cabinets.find((c) => c.code === code);
-    const taken = cabinet ? { id: cabinet.id, name: cabinet.name } : enrolled.has(code) ? { id: code, name: enrolled.get(code)! } : null;
-    const found = enrollDevices.filter((d) => d.code === code);
-    const status = judgeEnrollment({ registered: !!taken, devices: found.length, imeiConflict: false });
-    const d = found[0];
-    return HttpResponse.json({
-      code, status, cabinet: taken,
-      device: status === 'ready' && d ? { lastSeenAt: new Date().toISOString(), imeiTail: d.imei.slice(-4), gps: d.gps } : null,
-    });
-  })),
-  http.post(`${API}/devices/enroll`, wrap(async ({ request }) => {
-    const b = (await request.json()) as { code: string; name: string | null };
-    if (enrolled.has(b.code)) throw new MockApiError(409, 'cabinet_code_taken', `Mã tủ ${b.code} đã có`);
-    enrolled.set(b.code, b.name || b.code);
-    registrationHistory.unshift({ at: new Date().toISOString(), code: b.code, name: b.name || b.code, ltid: 'CTY9001', by: requireUser().email, via: 'qr', active: true });
+  http.post(`${API}/devices/replace`, wrap(async ({ request }) => {
+    requireReauth();
+    const b = (await request.json()) as { code: string };
+    registeredLtids.add('CTY9003');
+    registrationHistory.unshift({ at: new Date().toISOString(), code: b.code, name: enrolled.get(b.code) ?? b.code, ltid: 'CTY9003', by: requireUser().email, via: 'replace', active: true });
     return HttpResponse.json({ id: b.code });
   })),
   http.post(`${API}/cabinets`, wrap(async ({ request }) => {
-    const b = (await request.json()) as { ltid: string; code: string; name: string | null };
+    const b = (await request.json()) as { ltid: string; code: string; name: string | null; scanned?: boolean };
     const ltid = b.ltid.toUpperCase();
     if (registeredLtids.has(ltid) || cabinets.some((c) => c.ltid.toUpperCase() === ltid)) throw new MockApiError(409, 'ltid_taken', `LTID ${ltid} đã được đăng ký`);
     if (enrolled.has(b.code) || cabinets.some((c) => c.code === b.code)) throw new MockApiError(409, 'cabinet_code_taken', `Mã tủ ${b.code} đã có`);
     registeredLtids.add(ltid);
     enrolled.set(b.code, b.name || b.code);
-    registrationHistory.unshift({ at: new Date().toISOString(), code: b.code, name: b.name || b.code, ltid, by: requireUser().email, via: 'form', active: true });
+    registrationHistory.unshift({ at: new Date().toISOString(), code: b.code, name: b.name || b.code, ltid, by: requireUser().email, via: b.scanned ? 'qr' : 'form', active: true });
     return HttpResponse.json({ id: b.code }, { status: 201 });
   })),
   http.get(`${API}/devices/unknown`, wrap(() =>
     HttpResponse.json([
-      { ltid: 'CTY9001', code: 'TM0001', firstSeenAt: new Date(Date.now() - 3600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 352, imei: '861234567890123', otherImei: null, gps: { lat: 10.7769401, lng: 106.7008765 } },
-      { ltid: 'CTY9002', code: null, firstSeenAt: new Date(Date.now() - 86400000).toISOString(), lastSeenAt: new Date(Date.now() - 600000).toISOString(), frames: 8120, imei: '861234567890456', otherImei: '861999000111222', gps: null },
+      { ltid: 'CTY9001', code: 'TM0001', replaces: null, firstSeenAt: new Date(Date.now() - 3600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 352, imei: '861234567890123', otherImei: null, gps: { lat: 10.7769401, lng: 106.7008765 } },
+      { ltid: 'CTY9003', code: 'TM0900', replaces: { id: 'TM0900', name: 'Tủ Lê Lợi 1' }, firstSeenAt: new Date(Date.now() - 900000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 40, imei: '861234567891111', otherImei: null, gps: { lat: 10.7701, lng: 106.7002 } },
+      { ltid: 'CTY9002', code: null, replaces: null, firstSeenAt: new Date(Date.now() - 86400000).toISOString(), lastSeenAt: new Date(Date.now() - 600000).toISOString(), frames: 8120, imei: '861234567890456', otherImei: '861999000111222', gps: null },
     ].filter((d) => !registeredLtids.has(d.ltid))),
   )),
   http.get(`${API}/field-map`, wrap(() => HttpResponse.json({ entries: defaultFieldMap(getLang()), unknownKeys: [] }))),

@@ -173,7 +173,7 @@ const functionMenu = (t: ShellText): MenuEntry[] => [
   { label: t.functionMenu.batches, to: '/batches', perm: 'batch.run' },
   { label: t.functionMenu.activityLog, to: '/logs/activity', perm: 'log.view' },
   { label: t.functionMenu.syncLog, to: '/logs/sync', perm: 'log.view' },
-  { label: t.functionMenu.enroll, to: '/enroll', perm: 'device.enroll' },
+  { label: t.functionMenu.enroll, to: '/admin/devices', perm: 'device.enroll' },
   { label: t.functionMenu.admin, to: '/admin/users', perm: 'admin.users' },
   { label: t.functionMenu.system, to: '/system', perm: 'system.view' },
 ];
