@@ -45,6 +45,7 @@ describe('cabinet code from a QR label', () => {
     expect(parseCabinetCode('A')).toBeNull();
     expect(parseCabinetCode('https://example.com/x')).toBeNull();
     expect(parseCabinetCode('TM 0001')).toBeNull();
-    expect(parseCabinetCode('X'.repeat(41))).toBeNull();
+    expect(parseCabinetCode('X'.repeat(25))).toBeNull();
+    expect(parseCabinetCode('X'.repeat(24))).toBe('X'.repeat(24));
   });
 });

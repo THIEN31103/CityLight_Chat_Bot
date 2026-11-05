@@ -24,8 +24,8 @@ export function judgeEnrollment(input: { registered: boolean; devices: number; i
   return input.devices === 1 ? 'ready' : 'waiting';
 }
 
-/** Text read from a QR label or typed by hand -> cabinet code, or null when it cannot be one. */
+/** Text read from a QR label or typed by hand -> cabinet code (the board stores 24 characters), or null. */
 export function parseCabinetCode(text: string): string | null {
   const s = text.trim();
-  return /^[\w.-]{2,40}$/.test(s) ? s : null;
+  return /^[\w.-]{2,24}$/.test(s) ? s : null;
 }

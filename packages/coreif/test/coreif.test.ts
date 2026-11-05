@@ -64,6 +64,7 @@ describe('parseTelemetry', () => {
     expect(parseTelemetry("*#LTID'A&PCON'1$").cabinetCode).toBeNull();
     expect(parseTelemetry("*#LTID'A&LCOD'X$").cabinetCode).toBeNull();
     expect(parseTelemetry("*#LTID'A&LCOD'T M$").cabinetCode).toBeNull();
+    expect(parseTelemetry(`*#LTID'A&LCOD'${'X'.repeat(25)}$`).cabinetCode).toBeNull();
   });
   it('decodes a normal frame', () => {
     const t = parseTelemetry(TELE_OK);

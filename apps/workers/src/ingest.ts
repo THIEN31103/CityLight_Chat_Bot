@@ -313,7 +313,7 @@ function raw(topic: string, ltid: string | null, payload: string, parseError: st
 }
 const rawSampler = new RawSampler(RAW_SAMPLE_MIN);
 
-const unknownSeen = new Map<string, { imei: string | null; otherImei: string | null; code: string | null; frames: number; gps: { lat: number; lng: number } | null }>();
+const unknownSeen = new Map<string, { imei: string | null; otherImei: string | null; code: string | null; ident: 'valid' | 'invalid' | null; uid: string | null; frames: number; gps: { lat: number; lng: number } | null }>();
 
 // ---------------- alarms ----------------
 
@@ -511,16 +511,20 @@ async function onTelemetry(payload: string) {
   }
   const rt = byLtid.get(t.ltid);
   const verdict = rt ? checkImei(rt.imei, t.imei) : 'ok';
-  const id: IdentCheck = rt && MASTER && t.ident ? verifyIdent(MASTER, t.ltid, t.ident) : null;
+  const id: IdentCheck = MASTER && t.ident ? verifyIdent(MASTER, t.ltid, t.ident) : null;
   const foreign = verdict === 'mismatch' ? `IMEI ${normImei(t.imei) ?? 'X'} khác IMEI đã ghi nhận` : null;
   const note = foreign ?? (id && !id.ok ? 'định danh ký sai' : null) ?? (dropped.length ? `bỏ giá trị: ${dropped.join(', ')}` : null);
   if (rawSampler.keep(t.ltid, Date.now(), note !== null || !rt)) raw(TOPICS.telemetry, t.ltid, payload, note);
   if (!rt) {
     stats.unknown++;
     const imei = normImei(t.imei);
-    const u = unknownSeen.get(t.ltid) ?? { imei, otherImei: null, code: null, frames: 0, gps: null };
+    const u = unknownSeen.get(t.ltid) ?? { imei, otherImei: null, code: null, ident: null, uid: null, frames: 0, gps: null };
     u.frames++;
     if (t.cabinetCode) u.code = t.cabinetCode;
+    if (id) {
+      u.ident = id.ok ? 'valid' : 'invalid';
+      u.uid = id.ok ? id.uid : null;
+    }
     // first IMEI wins; a different one under the same LTID is kept apart so the admin sees the conflict
     if (!u.imei) u.imei = imei;
     else if (imei && imei !== u.imei) u.otherImei = imei;
@@ -747,14 +751,18 @@ async function flush() {
         }
         unknownRows++;
         // the first IMEI seen is kept; a different one goes to other_imei (registration then asks which is real)
-        await sql`INSERT INTO unknown_devices (ltid, imei, other_imei, code, frames, gps) VALUES (${ltid}, ${u.imei}, ${u.otherImei}, ${u.code}, ${u.frames}, ${geom(u.gps)})
+        await sql`INSERT INTO unknown_devices (ltid, imei, other_imei, code, ident, uid, frames, gps) VALUES (${ltid}, ${u.imei}, ${u.otherImei}, ${u.code}, ${u.ident}, ${u.uid}, ${u.frames}, ${geom(u.gps)})
                   ON CONFLICT (ltid) DO UPDATE SET last_seen_at = now(), frames = unknown_devices.frames + excluded.frames,
                   imei = coalesce(unknown_devices.imei, excluded.imei),
                   other_imei = coalesce(unknown_devices.other_imei,
                     CASE WHEN unknown_devices.imei IS NULL THEN excluded.other_imei
                          WHEN excluded.imei IS NOT NULL AND excluded.imei <> unknown_devices.imei THEN excluded.imei
                          ELSE excluded.other_imei END),
-                  code = coalesce(excluded.code, unknown_devices.code),
+                  -- LCOD is outside the signature: once the board proved itself, an unsigned frame cannot change its code
+                  code = CASE WHEN unknown_devices.ident = 'valid' AND excluded.ident IS DISTINCT FROM 'valid' THEN unknown_devices.code
+                              ELSE coalesce(excluded.code, unknown_devices.code) END,
+                  uid = CASE WHEN excluded.ident IS NULL THEN unknown_devices.uid ELSE excluded.uid END,
+                  ident = coalesce(excluded.ident, unknown_devices.ident),
                   gps = coalesce(excluded.gps, unknown_devices.gps)`;
       }
     }

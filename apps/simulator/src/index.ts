@@ -20,7 +20,7 @@ const codePrefix = arg('code-prefix', '');
 /** --ltid QR00001 --code TM0001: one board set up by hand, as the factory would */
 const oneLtid = arg('ltid', '');
 const oneCode = arg('code', '');
-if (oneLtid && !/^[A-Za-z0-9]{1,7}$/.test(oneLtid)) throw new Error('--ltid: 1-7 letters or digits, the firmware limit');
+if (oneLtid && !/^[A-Za-z0-9_-]{1,7}$/.test(oneLtid)) throw new Error('--ltid: 1-7 letters, digits, _ or -, the firmware limit');
 /** --sign: signing firmware (S59) with DEVICE_MASTER_KEY of this environment (use a test master, never a customer's) */
 const master = process.argv.includes('--sign') ? parseMasterKey(process.env.DEVICE_MASTER_KEY) : null;
 if (process.argv.includes('--sign') && !master) throw new Error('--sign needs DEVICE_MASTER_KEY (64 hex)');

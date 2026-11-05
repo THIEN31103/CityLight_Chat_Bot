@@ -131,7 +131,7 @@ function ident(f: Record<string, string>): TelemetryPatch['ident'] {
 function cabinetCode(v: string | undefined): string | null {
   if (isX(v)) return null;
   const s = v!.trim();
-  return /^[\w.-]{2,40}$/.test(s) ? s : null;
+  return /^[\w.-]{2,24}$/.test(s) ? s : null;
 }
 
 /** LFWV: small positive integer; anything else = null. */

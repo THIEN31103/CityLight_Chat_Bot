@@ -415,6 +415,10 @@ export const unknownDevices = pgTable('unknown_devices', {
   imei: text('imei'),
   /** cabinet code the board reports (LCOD): a scanned QR label finds the device by this */
   code: text('code'),
+  /** last identity block checked with the master: valid, invalid, null = no block (older firmware) or no master */
+  ident: text('ident', { enum: ['valid', 'invalid'] }),
+  /** board UID proven by a valid identity block */
+  uid: text('uid'),
   /** a second, different IMEI under the same LTID (spoofing or a reused LTID): registration must pick one */
   otherImei: text('other_imei'),
   firstSeenAt: tsz('first_seen_at').notNull().defaultNow(),

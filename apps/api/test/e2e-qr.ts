@@ -14,7 +14,7 @@ import { login, nextCode, reauth } from './client';
 const DOMAIN = 'e2e-qr.citylight.test';
 const CODE = 'E2E.QR01';
 const CODE_TWICE = 'E2E.QR02';
-const LTIDS = ['E2EQR01', 'E2EQR02', 'E2EQR03', 'E2EQR04', 'E2EQR05', 'E2EQR06', 'E2EQR07', 'E2EQR08', 'E2EQR09', 'E2EQR10', 'E2EQR11', 'E2EQR12'];
+const LTIDS = Array.from({ length: 19 }, (_, i) => `E2EQR${String(i + 1).padStart(2, '0')}`);
 const MQTT_URL = process.env.E2E_MQTT_URL ?? process.env.MQTT_URL ?? 'mqtt://localhost:1885';
 const sql = createSql(process.env.DATABASE_URL, 2);
 const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379');
@@ -34,8 +34,16 @@ async function waitFor<T>(what: string, fn: () => Promise<T | null | undefined |
   throw new Error(`timeout waiting for ${what}`);
 }
 
-const board = (ltid: string, cabinetCode: string) =>
-  new SimCabinet({ ltid, brokerUrl: MQTT_URL, fault: 'none', location: { lat: 10.77, lng: 106.69 }, telemetryMs: 2000, cabinetCode });
+const master = parseMasterKey(process.env.DEVICE_MASTER_KEY);
+if (!master) throw new Error('e2e:qr needs DEVICE_MASTER_KEY');
+const sim = (ltid: string, cabinetCode: string, signWith: Buffer | null) =>
+  new SimCabinet({ ltid, brokerUrl: MQTT_URL, fault: 'none', location: { lat: 10.77, lng: 106.69 }, telemetryMs: 2000, cabinetCode, cmdTopic: true, sign: signWith ? { master: signWith } : undefined });
+/** Firmware of the trial: signs its identity with this environment's master. */
+const board = (ltid: string, cabinetCode: string) => sim(ltid, cabinetCode, master);
+/** Older firmware: no identity block. */
+const unsigned = (ltid: string, cabinetCode: string) => sim(ltid, cabinetCode, null);
+/** Knows the broker password, not the master. */
+const forged = (ltid: string, cabinetCode: string) => sim(ltid, cabinetCode, Buffer.alloc(32, 0x11));
 
 async function main() {
   const cleanup = async () => {
@@ -60,7 +68,7 @@ async function main() {
 
   const boards = [board(LTIDS[0]!, CODE), board(LTIDS[1]!, CODE_TWICE), board(LTIDS[2]!, CODE_TWICE)];
   const started: SimCabinet[] = [...boards];
-  type Row = { ltid: string; code: string | null; replaces: { id: string; name: string } | null };
+  type Row = { ltid: string; code: string | null; ident: string | null; replaces: { id: string; name: string } | null };
   const listed = async () => (await manager.get('/devices/unknown')).data as Row[];
   const row = async (ltid: string) => (await listed()).find((r) => r.ltid === ltid);
   try {
@@ -72,6 +80,12 @@ async function main() {
     check('Board gửi mã tủ → nằm trong danh sách chưa đăng ký kèm mã tủ', (await row(LTIDS[0]!))?.code === CODE);
     check('Chưa duyệt thì chưa là tủ chính thức', (await sql`SELECT 1 FROM cabinets WHERE ltid = ANY(${LTIDS})`).length === 0);
     check('Board mới chưa bị coi là thay thế', (await row(LTIDS[0]!))?.replaces === null);
+    check('Board ký đúng được ghi nhận chữ ký hợp lệ', (await row(LTIDS[0]!))?.ident === 'valid');
+    const byCode = (await manager.get(`/devices/unknown?code=${CODE}`)).data as Row[];
+    check('Quét mã tìm đúng thiết bị của mã đó', byCode.length === 1 && byCode[0]!.ltid === LTIDS[0]);
+    check('Nhập mã chữ thường vẫn tìm được', ((await manager.get(`/devices/unknown?code=${CODE.toLowerCase()}`)).data as Row[])[0]?.ltid === LTIDS[0]);
+    check('Mã chưa có thiết bị → không trả về gì', ((await manager.get('/devices/unknown?code=E2E.QR99')).data as Row[]).length === 0);
+    check('Hai board cùng mã → trả về cả hai', ((await manager.get(`/devices/unknown?code=${CODE_TWICE}`)).data as Row[]).length === 2);
 
     // ---------- permissions ----------
     check('Không có quyền thì không xem được danh sách', (await viewer.get('/devices/unknown')).status === 403);
@@ -92,6 +106,7 @@ async function main() {
     check('Chỉ cần LTID và mã tủ, đăng ký bằng QR', done.status === 201, `HTTP ${done.status}`);
     const cab = (await sql<{ ltid: string; name: string }[]>`SELECT ltid, name FROM cabinets WHERE code = ${CODE}`)[0];
     check('Tủ gắn đúng ID, tên lấy theo mã tủ', cab?.ltid === LTIDS[0] && cab?.name === CODE);
+    check('UID đã kiểm được gán ngay khi đăng ký', (await sql<{ uid: string | null }[]>`SELECT uid FROM cabinets WHERE code = ${CODE}`)[0]?.uid === uidFor(LTIDS[0]!));
     await waitFor('online', async () => (await sql`SELECT 1 FROM cabinet_state s JOIN cabinets c ON c.id = s.cabinet_id WHERE c.code = ${CODE} AND s.online`).length === 1, 20_000);
     check('Ingest nhận tủ ngay sau khi đăng ký', true);
 
@@ -102,6 +117,61 @@ async function main() {
     await boards[2]!.stop();
     await sleep(6000);
     await sql`DELETE FROM unknown_devices WHERE ltid = ${LTIDS[2]!}`;
+
+    // ---------- signatures ----------
+    const fake = forged(LTIDS[12]!, 'E2E.QR13');
+    const old = unsigned(LTIDS[13]!, 'E2E.QR14');
+    started.push(fake, old);
+    fake.start();
+    old.start();
+    await waitFor('forged and unsigned boards', async () => (await row(LTIDS[12]!)) && (await row(LTIDS[13]!)), 30_000);
+    await sleep(2500);
+    check('Board ký sai bị ghi nhận chữ ký sai', (await row(LTIDS[12]!))?.ident === 'invalid');
+    check('Firmware cũ: chưa có chữ ký', (await row(LTIDS[13]!))?.ident === null);
+    const fakeByInstaller = await installer.post('/cabinets', { ltid: LTIDS[12]!, code: 'E2E.QR13' });
+    check('Người có quyền duyệt không duyệt được board ký sai', fakeByInstaller.status === 409 && fakeByInstaller.data.code === 'device_bad_signature', `HTTP ${fakeByInstaller.status}`);
+    const fakeByAdmin = await manager.post('/cabinets', { ltid: LTIDS[12]!, code: 'E2E.QR13' });
+    check('Admin cũng không duyệt được board ký sai', fakeByAdmin.status === 409 && fakeByAdmin.data.code === 'device_bad_signature', `HTTP ${fakeByAdmin.status}`);
+    const oldByInstaller = await installer.post('/cabinets', { ltid: LTIDS[13]!, code: 'E2E.QR14' });
+    check('Board chưa có chữ ký: quyền Duyệt tủ không đủ', oldByInstaller.status === 403 && oldByInstaller.data.code === 'device_unsigned', `HTTP ${oldByInstaller.status}`);
+    check('Board chưa có chữ ký: quản lý vẫn duyệt được', (await manager.post('/cabinets', { ltid: LTIDS[13]!, code: 'E2E.QR14' })).status === 201);
+    await Promise.all([fake.stop(), old.stop()]);
+
+    const fakeSpare = forged(LTIDS[14]!, CODE_TWICE);
+    started.push(fakeSpare);
+    fakeSpare.start();
+    await waitFor('forged spare', async () => (await row(LTIDS[14]!))?.ident === 'invalid', 30_000);
+    await reauth(manager, secret, step);
+    const fakeSwap = await manager.post('/devices/replace', { code: CODE_TWICE });
+    check('Board ký sai không thay được tủ thật', fakeSwap.status === 409 && fakeSwap.data.code === 'device_bad_signature', `HTTP ${fakeSwap.status}`);
+    await fakeSpare.stop();
+    await sleep(3000);
+    await sql`DELETE FROM unknown_devices WHERE ltid = ${LTIDS[14]!}`;
+
+    const proven = board(LTIDS[15]!, 'E2E.QR16');
+    started.push(proven);
+    proven.start();
+    await waitFor('signed board', async () => (await row(LTIDS[15]!))?.ident === 'valid', 30_000);
+    await proven.stop();
+    const hijack = unsigned(LTIDS[15]!, 'E2E.QR17');
+    started.push(hijack);
+    hijack.start();
+    await sleep(6000);
+    await hijack.stop();
+    await sleep(2000);
+    const held = await row(LTIDS[15]!);
+    check('Frame không ký không đổi được mã tủ của board đã chứng minh', held?.code === 'E2E.QR16' && held?.ident === 'valid', `${held?.code} ${held?.ident}`);
+
+    // ---------- cabinet code rule, same as the firmware ----------
+    check('Mã tủ 25 ký tự bị từ chối', (await manager.post('/cabinets', { ltid: 'E2EQRXX', code: 'X'.repeat(25) })).status === 422);
+    check('Mã tủ 24 ký tự đăng ký được', (await manager.post('/cabinets', { ltid: LTIDS[16]!, code: 'Y'.repeat(24) })).status === 201);
+    const oneChar = await manager.post('/cabinets', { ltid: 'E2EQRXX', code: 'X' });
+    check('Mã 1 ký tự bị từ chối', oneChar.status === 422, `HTTP ${oneChar.status} ${JSON.stringify(oneChar.data).slice(0, 90)}`);
+    check('Mã khác hoa thường vẫn tính là trùng', (await manager.post('/cabinets', { ltid: 'E2EQRXX', code: CODE.toLowerCase() })).status === 409);
+    await sql`UPDATE cabinets SET active = false WHERE ltid = ${LTIDS[16]!}`;
+    await sql`INSERT INTO unknown_devices (ltid, code, imei, ident) VALUES (${LTIDS[17]!}, ${'Y'.repeat(24)}, '861000000000018', 'valid')`;
+    check('Tủ đã ngừng dùng không hiện là thay board', (await row(LTIDS[17]!))?.replaces === null);
+    await sql`UPDATE cabinets SET active = true WHERE ltid = ${LTIDS[16]!}`;
 
     await reauth(manager, secret, step);
     await manager.call('PATCH', `/users/${viewerId}`, { canEnroll: false });
@@ -168,8 +238,7 @@ async function main() {
     check('Chọn IMEI xong đăng ký được', picked.status === 201);
 
     // ---------- signing board replaced by a signing board ----------
-    const master = parseMasterKey(process.env.DEVICE_MASTER_KEY);
-    if (master) {
+    {
       const signed = (ltid: string) => new SimCabinet({ ltid, brokerUrl: MQTT_URL, fault: 'none', location: { lat: 10.77, lng: 106.69 }, telemetryMs: 2000, cabinetCode: 'E2E.QR11', cmdTopic: true, sign: { master } });
       const firstSigned = signed(LTIDS[10]!);
       started.push(firstSigned);
@@ -192,8 +261,6 @@ async function main() {
       check('Board mới: tủ học UID mới, không cần chấp nhận tay', nextUid === uidFor(LTIDS[11]!));
       const cid = (await sql<{ id: string; uid_pending: string | null }[]>`SELECT id, uid_pending FROM cabinets WHERE code = 'E2E.QR11'`)[0]!;
       check('Thay board có chữ ký không báo E805', !cid.uid_pending && (await sql`SELECT 1 FROM alarms WHERE cabinet_id = ${cid.id} AND type = 'spoof_suspect' AND active`).length === 0);
-    } else {
-      check('Bỏ qua board có chữ ký: chưa đặt DEVICE_MASTER_KEY', true);
     }
   } finally {
     await Promise.all(started.map((b) => b.stop()));
