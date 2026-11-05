@@ -4,8 +4,10 @@
 // Run: npm run e2e:qr
 import { hash } from '@node-rs/argon2';
 import { Redis } from 'ioredis';
+import mqtt from 'mqtt';
 import { CONFIG_CHANNEL } from '@citylight/db/notify';
 import { createSql } from '@citylight/db';
+import { TOPICS } from '@citylight/coreif';
 import { parseMasterKey } from '@citylight/coreif/sign';
 import { SimCabinet, uidFor } from '../../simulator/src/cabinet';
 import { base32Decode } from '../src/totp';
@@ -161,6 +163,25 @@ async function main() {
     await sleep(2000);
     const held = await row(LTIDS[15]!);
     check('Frame không ký không đổi được mã tủ của board đã chứng minh', held?.code === 'E2E.QR16' && held?.ident === 'valid', `${held?.code} ${held?.ident}`);
+
+    // both frames in one ingest write batch (FLUSH_MS): the unsigned one arrives right after the signed one
+    const sender = mqtt.connect(MQTT_URL, { clientId: `e2e-qr-${Date.now()}`, clean: true });
+    await new Promise((resolve, reject) => {
+      sender.once('connect', resolve);
+      sender.once('error', reject);
+    });
+    // read after every pair: the next signed frame would put the right code back. 3 s between pairs stays inside the frame budget.
+    const sameBatch: (string | null | undefined)[] = [];
+    await sleep(6000);
+    for (let i = 0; i < 3; i++) {
+      sender.publish(TOPICS.telemetry, proven.buildTelemetry(), { qos: 0 });
+      sender.publish(TOPICS.telemetry, hijack.buildTelemetry(), { qos: 0 });
+      await sleep(1500);
+      sameBatch.push((await row(LTIDS[15]!))?.code);
+      await sleep(1500);
+    }
+    await sender.endAsync();
+    check('Frame không ký cùng đợt ghi với frame ký đúng không đổi được mã tủ', sameBatch.every((c) => c === 'E2E.QR16'), sameBatch.join(', '));
 
     // ---------- cabinet code rule, same as the firmware ----------
     check('Mã tủ 25 ký tự bị từ chối', (await manager.post('/cabinets', { ltid: 'E2EQRXX', code: 'X'.repeat(25) })).status === 422);

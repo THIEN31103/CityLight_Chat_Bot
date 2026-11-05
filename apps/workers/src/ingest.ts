@@ -520,7 +520,8 @@ async function onTelemetry(payload: string) {
     const imei = normImei(t.imei);
     const u = unknownSeen.get(t.ltid) ?? { imei, otherImei: null, code: null, ident: null, uid: null, frames: 0, gps: null };
     u.frames++;
-    if (t.cabinetCode) u.code = t.cabinetCode;
+    // a board that proved itself keeps its code until another signed frame says otherwise
+    if (t.cabinetCode && (id?.ok || u.ident !== 'valid')) u.code = t.cabinetCode;
     if (id) {
       u.ident = id.ok ? 'valid' : 'invalid';
       u.uid = id.ok ? id.uid : null;
