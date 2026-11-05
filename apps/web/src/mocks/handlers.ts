@@ -785,12 +785,13 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
     registrationHistory.unshift({ at: new Date().toISOString(), code: b.code, name: b.name || b.code, ltid, by: requireUser().email, via: b.scanned ? 'qr' : 'form', active: true });
     return HttpResponse.json({ id: b.code }, { status: 201 });
   })),
-  http.get(`${API}/devices/unknown`, wrap(() =>
+  http.get(`${API}/devices/unknown`, wrap(({ request }) =>
     HttpResponse.json([
-      { ltid: 'CTY9001', code: 'TM0001', replaces: null, firstSeenAt: new Date(Date.now() - 3600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 352, imei: '861234567890123', otherImei: null, gps: { lat: 10.7769401, lng: 106.7008765 } },
-      { ltid: 'CTY9003', code: 'TM0900', replaces: { id: 'TM0900', name: 'Tủ Lê Lợi 1' }, firstSeenAt: new Date(Date.now() - 900000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 40, imei: '861234567891111', otherImei: null, gps: { lat: 10.7701, lng: 106.7002 } },
-      { ltid: 'CTY9002', code: null, replaces: null, firstSeenAt: new Date(Date.now() - 86400000).toISOString(), lastSeenAt: new Date(Date.now() - 600000).toISOString(), frames: 8120, imei: '861234567890456', otherImei: '861999000111222', gps: null },
-    ].filter((d) => !registeredLtids.has(d.ltid))),
+      { ltid: 'CTY9001', code: 'TM0001', ident: 'valid', replaces: null, firstSeenAt: new Date(Date.now() - 3600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 352, imei: '861234567890123', otherImei: null, gps: { lat: 10.7769401, lng: 106.7008765 } },
+      { ltid: 'CTY9004', code: 'TM0004', ident: 'invalid', replaces: null, firstSeenAt: new Date(Date.now() - 600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 12, imei: '861234567892222', otherImei: null, gps: null },
+      { ltid: 'CTY9003', code: 'TM0900', ident: 'valid', replaces: { id: 'TM0900', name: 'Tủ Lê Lợi 1' }, firstSeenAt: new Date(Date.now() - 900000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 40, imei: '861234567891111', otherImei: null, gps: { lat: 10.7701, lng: 106.7002 } },
+      { ltid: 'CTY9002', code: null, ident: null, replaces: null, firstSeenAt: new Date(Date.now() - 86400000).toISOString(), lastSeenAt: new Date(Date.now() - 600000).toISOString(), frames: 8120, imei: '861234567890456', otherImei: '861999000111222', gps: null },
+    ].filter((d) => !registeredLtids.has(d.ltid) && [null, d.code?.toUpperCase()].includes(new URL(request.url).searchParams.get('code')?.toUpperCase() ?? null))),
   )),
   http.get(`${API}/field-map`, wrap(() => HttpResponse.json({ entries: defaultFieldMap(getLang()), unknownKeys: [] }))),
   http.get(`${API}/settings`, wrap(() => HttpResponse.json({ offlineAfterS: 60, pricePerKwh: 2000, lampGroupLabels: { 0: 'Đèn chính', 1: 'Đèn giao lộ', 2: 'Đèn trên cầu', 3: 'Nhóm mở rộng' }, updatedAt: null, updatedBy: null }))),

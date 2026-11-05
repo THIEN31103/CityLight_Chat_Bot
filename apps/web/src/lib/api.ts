@@ -365,6 +365,8 @@ export interface UnknownDevice {
   otherImei: string | null;
   /** cabinet code the board reports (LCOD), null on older firmware */
   code: string | null;
+  /** last identity block: valid, invalid, null when the board sends none (older firmware) */
+  ident: 'valid' | 'invalid' | null;
   /** the registered cabinet that already has this code: this is its new board */
   replaces: { id: string; name: string } | null;
 }
@@ -516,7 +518,7 @@ export const api = {
   resetUserPassword: (id: string) => req<{ user: AdminUser; tempPassword: string }>('POST', `/users/${id}/reset-password`),
   unlockUser: (id: string) => req<AdminUser>('POST', `/users/${id}/unlock`),
   resetUser2fa: (id: string) => req<AdminUser>('POST', `/users/${id}/reset-2fa`),
-  unknownDevices: () => req<UnknownDevice[]>('GET', '/devices/unknown'),
+  unknownDevices: (code?: string) => req<UnknownDevice[]>('GET', code ? `/devices/unknown?code=${encodeURIComponent(code)}` : '/devices/unknown'),
   registrationHistory: () => req<RegistrationRecord[]>('GET', '/devices/registered'),
   replaceDevice: (code: string) => req<{ id: string }>('POST', '/devices/replace', { code }),
   fieldMap: () => req<{ entries: FieldMapEntry[]; unknownKeys: { key: string; cabinets: number; sample: string }[] }>('GET', '/field-map'),

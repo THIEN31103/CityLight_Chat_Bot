@@ -442,7 +442,7 @@ function DevicesAdmin() {
   const t = useDict(ADMIN).devices;
   const c = useDict(COMMON);
   // a board that was just powered shows up on its own
-  const { data } = useQuery({ queryKey: ['unknown-devices'], queryFn: api.unknownDevices, refetchInterval: 5000 });
+  const { data } = useQuery({ queryKey: ['unknown-devices'], queryFn: () => api.unknownDevices(), refetchInterval: 5000 });
   const history = useQuery({ queryKey: ['registration-history'], queryFn: api.registrationHistory });
   const tree = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
   const zones = useQuery({ queryKey: ['zones'], queryFn: api.zones });
@@ -454,13 +454,13 @@ function DevicesAdmin() {
   const [fromGps, setFromGps] = useState(false);
   // S42: the IMEI becomes the cabinet's identity; two IMEIs under one LTID = the admin picks the real one
   const [imeiChoices, setImeiChoices] = useState<string[]>([]);
-  const [scanning, setScanning] = useState(false);
+  const [pageScan, setPageScan] = useState(false);
+  const [search, setSearch] = useState('');
   // the code in the form came from the QR label (typing over it clears this)
   const [scanned, setScanned] = useState(false);
   const canReplace = useSession((s) => s.can('admin.devices'));
   const closeForm = () => {
     setForm(null);
-    setScanning(false);
     setScanned(false);
   };
   const replace = useMutation({
@@ -473,6 +473,8 @@ function DevicesAdmin() {
     },
     onError: errToast,
   });
+  // a bad signature stops everyone; a board without one (older firmware) needs someone who can register by hand
+  const blocked = (d: UnknownDevice) => (d.ident === 'invalid' ? t.sigBad : !d.ident && !canReplace ? t.sigNeedsManager : null);
   const askReplace = async (d: UnknownDevice) => {
     if (!d.code || !d.replaces) return;
     if (!canReplace) return toast(t.replaceDenied, 'error');
@@ -485,23 +487,30 @@ function DevicesAdmin() {
     setImeiChoices(d.otherImei && d.imei ? [d.imei, d.otherImei] : []);
     setForm({ ...blank, ltid: d.ltid, code: d.code ?? '', lat: d.gps ? d.gps.lat.toFixed(7) : '', lng: d.gps ? d.gps.lng.toFixed(7) : '', imei: d.otherImei ? '' : (d.imei ?? '') });
   };
-  // the QR label fills the code; on an empty form it also picks the device that reports this code
-  const onScan = (raw: string) => {
-    setScanning(false);
+  // a scanned label or a typed code: go straight to that cabinet, however long the list is
+  const openByCode = async (raw: string, fromLabel: boolean) => {
+    setPageScan(false);
     const code = parseCabinetCode(raw);
     if (!code) return toast(fill(t.badQr, { text: raw.trim().slice(0, 40) }), 'error');
-    const device = data?.find((d) => d.code === code);
-    if (device?.replaces && !form?.ltid) {
-      closeForm();
-      return void askReplace(device);
+    try {
+      const rows = await api.unknownDevices(code);
+      const device = rows[0];
+      if (!device) return toast(fill(t.scanNotFound, { code }), 'error');
+      if (rows.length > 1) return toast(fill(t.scanMany, { code, n: rows.length }), 'error');
+      const stop = blocked(device);
+      if (stop) return toast(stop, 'error');
+      if (device.replaces) return void askReplace(device);
+      review(device);
+      setScanned(fromLabel);
+      setSearch('');
+    } catch (e) {
+      errToast(e);
     }
-    if (device && !form?.ltid) review(device);
-    else setForm((f) => f && { ...f, code });
-    setScanned(true);
   };
   // what this board itself reports (LCOD): a different code here means the wrong label or the wrong board
   const boardCode = data?.find((d) => d.ltid === form?.ltid)?.code;
   const codeMismatch = !!boardCode && !!form?.code && form.code !== boardCode;
+  const unsigned = !!data?.some((d) => d.ltid === form?.ltid && !d.ident);
   const wards = tree.data?.areas.filter((a) => a.kind === 'ward' && a.parentId === form?.districtId) ?? [];
   const reg = useMutation({
     mutationFn: () =>
@@ -522,9 +531,39 @@ function DevicesAdmin() {
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setForm((f) => ({ ...f!, [k]: e.target.value }));
   return (
     <>
-      <PageHeader title={t.title} subtitle={t.subtitle} actions={<Button onClick={() => { setFromGps(false); setTempSensor(false); setForm(blank); }}><Plus className="h-4 w-4" /> {t.registerNew}</Button>} />
+      <PageHeader title={t.title} subtitle={t.subtitle} actions={<>
+        <Button onClick={() => setPageScan(true)}><QrCode className="h-4 w-4" /> {t.scanPage}</Button>
+        <Button variant="outline" onClick={() => { setFromGps(false); setTempSensor(false); setForm(blank); }}><Plus className="h-4 w-4" /> {t.registerNew}</Button>
+      </>} />
+      <Modal open={pageScan} onOpenChange={setPageScan} title={t.scanPage}>
+        {pageScan && (
+          <div className="mx-auto w-full max-w-sm">
+            <QrScanner
+              onRead={(raw) => void openByCode(raw, true)}
+              onCameraError={(message) => {
+                setPageScan(false);
+                toast(message, 'error');
+              }}
+            />
+          </div>
+        )}
+      </Modal>
       <Card>
-        <CardHeader title={t.unknown} />
+        <CardHeader
+          title={t.unknown}
+          actions={
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void openByCode(search, false);
+              }}
+            >
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t.searchCode} aria-label={t.searchCode} className="w-44" spellCheck={false} />
+              <Button type="submit" variant="outline" disabled={!search.trim()}>{t.searchButton}</Button>
+            </form>
+          }
+        />
         <table className="w-full text-sm">
           <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">LTID</th><th className="px-3 py-2">IMEI</th><th className="px-3 py-2">GPS</th><th className="px-3 py-2">{t.col.firstSeen}</th><th className="px-3 py-2">{t.col.lastSeen}</th><th className="px-3 py-2">{t.col.frames}</th><th /></tr></thead>
           <tbody>
@@ -534,6 +573,7 @@ function DevicesAdmin() {
                 <td className="px-3 py-2 font-medium">
                   {d.ltid}
                   {d.code && <div className="text-xs font-normal text-subtle">{d.code}</div>}
+                  <Badge className="mt-1" tone={d.ident === 'valid' ? 'green' : d.ident === 'invalid' ? 'red' : 'orange'}>{d.ident === 'valid' ? t.sigOk : d.ident === 'invalid' ? t.sigBadShort : t.sigNone}</Badge>
                 </td>
                 <td className="px-3 py-2 font-mono text-xs">
                   {d.imei}
@@ -542,7 +582,9 @@ function DevicesAdmin() {
                 <td className="px-3 py-2 font-mono text-xs">{d.gps ? `${d.gps.lat.toFixed(5)}, ${d.gps.lng.toFixed(5)}` : <span className="text-subtle">{t.noFix}</span>}</td>
                 <td className="px-3 py-2 text-xs">{fmtTime(d.firstSeenAt)}</td><td className="px-3 py-2 text-xs">{fmtTime(d.lastSeenAt)}</td><td className="px-3 py-2">{d.frames}</td>
                 <td className="px-3 py-2">
-                  {d.replaces ? (
+                  {blocked(d) ? (
+                    <div className="max-w-[14rem] text-xs text-st-offline">{blocked(d)}</div>
+                  ) : d.replaces ? (
                     <>
                       <div className="mb-1 text-xs text-st-fault">{fill(t.newBoardFor, { name: d.replaces.name })}</div>
                       <Button size="sm" loading={replace.isPending} onClick={() => void askReplace(d)}>{t.replace}</Button>
@@ -556,6 +598,7 @@ function DevicesAdmin() {
           </tbody>
         </table>
       </Card>
+      <p className="mt-2 text-xs text-subtle">{t.replaceHint}</p>
       <Card className="mt-4">
         <CardHeader title={t.history.title} subtitle={fill(t.history.subtitle, { n: 100 })} />
         <div className="overflow-x-auto">
@@ -598,24 +641,9 @@ function DevicesAdmin() {
         {form && (
           <div className="grid grid-cols-2 gap-3">
             <Field label={t.ltid}><Input value={form.ltid} onChange={set('ltid')} /></Field>
-            <Field label={t.code}>
-              <div className="flex gap-2">
-                <Input value={form.code} onChange={(e) => { setScanned(false); set('code')(e); }} placeholder="TL01.0123" />
-                <Button type="button" variant={scanning ? 'primary' : 'outline'} title={t.scanQr} aria-label={t.scanQr} onClick={() => setScanning((s) => !s)}><QrCode className="h-4 w-4" /></Button>
-              </div>
-            </Field>
-            {scanning && (
-              <div className="col-span-2 mx-auto w-full max-w-xs">
-                <QrScanner
-                  onRead={onScan}
-                  onCameraError={(message) => {
-                    setScanning(false);
-                    toast(message, 'error');
-                  }}
-                />
-              </div>
-            )}
+            <Field label={t.code}><Input value={form.code} onChange={(e) => { setScanned(false); set('code')(e); }} placeholder="TL01.0123" /></Field>
             {codeMismatch && <div className="col-span-2 text-sm text-st-offline">{fill(t.codeMismatch, { code: boardCode })}</div>}
+            {unsigned && <div className="col-span-2 text-sm text-st-fault">{t.sigNoneHint}</div>}
             <Field label={t.name}><Input value={form.name} onChange={set('name')} /></Field>
             <Field label={t.address}><Input value={form.address} onChange={set('address')} /></Field>
             <Field label={t.lat}><Input value={form.lat} onChange={set('lat')} placeholder={t.optional} /></Field>

@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hash } from '@node-rs/argon2';
 import { chromium, type Browser, type Page } from '@playwright/test';
+import { parseMasterKey } from '@citylight/coreif/sign';
 import { createSql } from '@citylight/db';
 import { SimCabinet } from '../simulator/src/cabinet';
 import { base32Decode } from '../api/src/totp';
@@ -44,10 +45,13 @@ const row = () => ({ code: `TF${hex(2)}`, ltid: `Q${hex(3)}` });
 const first = row();
 const second = row();
 const spare = { code: first.code, ltid: `Q${hex(3)}` };
-const LTIDS = [first.ltid, second.ltid, spare.ltid];
+const fake = { code: `TF${hex(2)}`, ltid: `Q${hex(3)}` };
+const LTIDS = [first.ltid, second.ltid, spare.ltid, fake.ltid];
 
+const master = parseMasterKey(process.env.DEVICE_MASTER_KEY);
+if (!master) throw new Error('e2e:qr-flow needs DEVICE_MASTER_KEY');
 const board = (r: { code: string; ltid: string }) =>
-  new SimCabinet({ ltid: r.ltid, brokerUrl: MQTT_URL, fault: 'none', location: { lat: 10.77, lng: 106.69 }, telemetryMs: 2000, cabinetCode: r.code });
+  new SimCabinet({ ltid: r.ltid, brokerUrl: MQTT_URL, fault: 'none', location: { lat: 10.77, lng: 106.69 }, telemetryMs: 2000, cabinetCode: r.code, cmdTopic: true, sign: { master } });
 
 /** Runs the label tool and turns the label it drew into a video file Chrome can use as its camera. */
 async function labelVideo(browser: Browser, code: string): Promise<string> {
@@ -127,7 +131,8 @@ async function main() {
   await api.post('/auth/2fa/enable', { code: await freshCode(secret, step) });
   const totp = () => freshCode(secret, step);
 
-  const boards = [board(first), board(second)];
+  const forgedBoard = new SimCabinet({ ltid: fake.ltid, brokerUrl: MQTT_URL, fault: 'none', location: { lat: 10.77, lng: 106.69 }, telemetryMs: 2000, cabinetCode: fake.code, cmdTopic: true, sign: { master: Buffer.alloc(32, 0x11) } });
+  const boards = [board(first), board(second), forgedBoard];
   const tool = await chromium.launch({ channel: 'chromium' });
   const browsers: Browser[] = [tool];
   try {
@@ -153,14 +158,19 @@ async function main() {
     await installer.waitForURL('**/admin/devices');
     check('Tài khoản chỉ có quyền Duyệt tủ được đưa thẳng tới Đăng ký tủ', true);
     check('Tài khoản đó không thấy mục Người dùng', (await installer.getByRole('link', { name: 'Người dùng' }).count()) === 0);
-    const row1 = installer.getByRole('row').filter({ hasText: first.ltid });
-    await row1.getByRole('button', { name: 'Duyệt & đăng ký' }).click();
+    check('Board thật hiện Chữ ký hợp lệ', (await installer.getByRole('row').filter({ hasText: first.ltid }).getByText('Chữ ký hợp lệ').count()) === 1);
+    const fakeRow = installer.getByRole('row').filter({ hasText: fake.ltid });
+    await fakeRow.getByText('Chữ ký sai').waitFor();
+    check('Board ký sai bị báo và không có nút duyệt', (await fakeRow.getByRole('button').count()) === 0);
+    await installer.getByPlaceholder('Nhập mã tủ').fill(fake.code);
+    await installer.getByPlaceholder('Nhập mã tủ').press('Enter');
+    await installer.getByText('Thiết bị ký sai, không duyệt được').first().waitFor();
+    check('Tìm mã của board ký sai: không mở form', (await installer.locator('[role=dialog] input').count()) === 0);
+    await installer.getByRole('button', { name: 'Quét mã QR', exact: true }).click();
     const code1 = installer.locator('[role=dialog] input').nth(1);
-    check('Form tự điền mã tủ board báo lên', (await code1.inputValue()) === first.code);
-    await code1.fill('');
-    await installer.getByRole('button', { name: 'Quét mã QR trên tủ' }).click();
-    await waitFor('code from the label', async () => (await code1.inputValue()) === first.code);
-    check('Camera đọc được tem, điền đúng mã tủ', true);
+    await waitFor('form of the scanned cabinet', async () => (await installer.locator('[role=dialog] input').count()) > 2 && (await code1.inputValue()) === first.code);
+    check('Camera đọc được tem, mở đúng form của tủ', (await installer.locator('[role=dialog] input').first().inputValue()) === first.ltid);
+    check('Trong form không còn nút quét QR', (await installer.getByRole('button', { name: 'Quét mã QR trên tủ' }).count()) === 0);
     await installer.screenshot({ path: join(OUT, '1-form-da-quet.png') });
     await installer.getByRole('dialog').getByRole('button', { name: 'Đăng ký', exact: true }).click();
     await installer.getByRole('row').filter({ hasText: first.code }).filter({ hasText: 'Quét QR' }).waitFor();
@@ -174,22 +184,37 @@ async function main() {
     check('Trang chạy dưới CSP thật, không vi phạm', csp1.length === 0, csp1.join(' | ').slice(0, 200));
     await cam1.close();
 
-    // ---------- 3. the QR button on an empty form fills everything ----------
+    // ---------- 3. no camera: open the row and type the code ----------
     const video2 = await labelVideo(tool, second.code);
     const cam3 = await camera(video2);
     browsers.push(cam3);
     const { page: admin, csp: csp3 } = await desktop(cam3);
     await signIn(admin, `admin@${DOMAIN}`, pw, totp);
     await admin.goto(`${BASE}/admin/devices`);
-    await admin.getByRole('button', { name: 'Đăng ký tủ mới' }).click();
-    await admin.getByRole('button', { name: 'Quét mã QR trên tủ' }).click();
-    await waitFor('form filled from the label', async () => (await admin.locator('[role=dialog] input').nth(1).inputValue()) === second.code);
-    check('Quét trong form trống điền mã tủ', true);
-    check('Quét trong form trống tự điền ID của thiết bị', (await admin.locator('[role=dialog] input').first().inputValue()) === second.ltid);
-    await admin.screenshot({ path: join(OUT, '3-form-trong.png') });
+    const row2nd = admin.getByRole('row').filter({ hasText: second.ltid });
+    await admin.screenshot({ path: join(OUT, '0-trang-dang-ky.png') });
+    await row2nd.getByRole('button', { name: 'Duyệt & đăng ký' }).click();
+    const code2 = admin.locator('[role=dialog] input').nth(1);
+    check('Duyệt từ danh sách: form tự điền mã tủ board báo lên', (await code2.inputValue()) === second.code);
+    await admin.getByRole('dialog').getByRole('button', { name: 'Hủy' }).click();
+
+    const search = admin.getByPlaceholder('Nhập mã tủ');
+    await search.fill('TF0000');
+    await search.press('Enter');
+    await admin.getByText('Chưa thấy thiết bị nào báo mã tủ TF0000').waitFor();
+    check('Tìm mã chưa có thiết bị: báo chưa thấy', true);
+    await search.fill(second.code.toLowerCase());
+    await search.press('Enter');
+    await waitFor('form from the typed code', async () => (await admin.locator('[role=dialog] input').count()) > 2 && (await admin.locator('[role=dialog] input').first().inputValue()) === second.ltid);
+    check('Nhập mã tủ, kể cả chữ thường: mở đúng form của tủ', (await code2.inputValue()) === second.code);
+    await code2.fill('TF9999');
+    await admin.getByText('khác với mã đang nhập').waitFor();
+    check('Nhập tay sai mã: hiện cảnh báo', true);
+    await code2.fill(second.code);
+    await admin.screenshot({ path: join(OUT, '3-nhap-tay.png') });
     await admin.getByRole('dialog').getByRole('button', { name: 'Đăng ký', exact: true }).click();
     await waitFor('cabinet from the form', async () => (await sql`SELECT 1 FROM cabinets WHERE code = ${second.code} AND ltid = ${second.ltid}`).length === 1);
-    check('Duyệt từ form trống thành công', true);
+    check('Nhập tay duyệt thành công', true);
     check('Form chạy dưới CSP thật, không vi phạm', csp3.length === 0, csp3.join(' | ').slice(0, 200));
     await cam3.close();
 
@@ -208,8 +233,7 @@ async function main() {
     await row2.getByRole('button', { name: 'Thay thiết bị' }).waitFor();
     check('Danh sách hiện nút Thay thiết bị cho board mới', (await row2.getByRole('button', { name: 'Duyệt & đăng ký' }).count()) === 0);
     await swap.screenshot({ path: join(OUT, '4-thay-thiet-bi.png') });
-    await swap.getByRole('button', { name: 'Đăng ký tủ mới' }).click();
-    await swap.getByRole('button', { name: 'Quét mã QR trên tủ' }).click();
+    await swap.getByRole('button', { name: 'Quét mã QR', exact: true }).click();
     await swap.getByRole('alertdialog').or(swap.getByRole('dialog')).getByRole('button', { name: 'Thay thiết bị' }).click();
     const box = swap.getByRole('dialog').locator('input');
     await box.waitFor();
