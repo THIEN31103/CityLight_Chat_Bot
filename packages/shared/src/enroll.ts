@@ -11,14 +11,16 @@ export type EnrollStatus =
   | 'ready'
   /** no device reports this code yet: not powered, or not on the network yet */
   | 'waiting'
-  /** a cabinet already has this code */
+  /** a cabinet already has this code and no new board reports it */
   | 'registered'
+  /** a cabinet has this code and one new board reports it: the board was replaced */
+  | 'replace'
   /** several devices report this code, or one LTID was seen with two IMEIs: a person must check */
   | 'conflict';
 
 export function judgeEnrollment(input: { registered: boolean; devices: number; imeiConflict: boolean }): EnrollStatus {
-  if (input.registered) return 'registered';
   if (input.devices > 1 || input.imeiConflict) return 'conflict';
+  if (input.registered) return input.devices === 1 ? 'replace' : 'registered';
   return input.devices === 1 ? 'ready' : 'waiting';
 }
 

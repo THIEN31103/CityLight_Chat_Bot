@@ -8,7 +8,7 @@ function arg(name: string, fallback: string): string {
   return i > 0 && process.argv[i + 1] ? process.argv[i + 1]! : fallback;
 }
 
-const count = Number(arg('count', '100'));
+const count = process.argv.includes('--ltid') ? 1 : Number(arg('count', '100'));
 const broker = arg('broker', process.env.MQTT_URL ?? 'mqtt://localhost:1883');
 const prefix = arg('prefix', 'SIM');
 const faultRate = Number(arg('fault-rate', '0.08'));
@@ -17,6 +17,10 @@ const telemetryMs = Number(arg('interval', '10000'));
 const cmdTopic = process.argv.includes('--cmd-topic');
 /** --code-prefix TM: boards carry a factory cabinet code TM0001, TM0002... (telemetry LCOD), for the QR flow */
 const codePrefix = arg('code-prefix', '');
+/** --ltid QR00001 --code TM0001: one board set up by hand, as the factory would */
+const oneLtid = arg('ltid', '');
+const oneCode = arg('code', '');
+if (oneLtid && !/^[A-Za-z0-9]{1,7}$/.test(oneLtid)) throw new Error('--ltid: 1-7 letters or digits, the firmware limit');
 /** --sign: signing firmware (S59) with DEVICE_MASTER_KEY of this environment (use a test master, never a customer's) */
 const master = process.argv.includes('--sign') ? parseMasterKey(process.env.DEVICE_MASTER_KEY) : null;
 if (process.argv.includes('--sign') && !master) throw new Error('--sign needs DEVICE_MASTER_KEY (64 hex)');
@@ -33,14 +37,14 @@ export function pickFault(i: number, rate: number): Fault {
 const cabinets: SimCabinet[] = [];
 for (let i = 0; i < count; i++) {
   const c = new SimCabinet({
-    ltid: `${prefix}${String(i + 1).padStart(4, '0')}`,
+    ltid: oneLtid || `${prefix}${String(i + 1).padStart(4, '0')}`,
     brokerUrl: broker,
     fault: pickFault(i, faultRate),
     location: fleetLocation(i),
     telemetryMs,
     cmdTopic,
     sign: master ? { master } : undefined,
-    cabinetCode: codePrefix ? `${codePrefix}${String(i + 1).padStart(4, '0')}` : undefined,
+    cabinetCode: oneCode || (codePrefix ? `${codePrefix}${String(i + 1).padStart(4, '0')}` : undefined),
     log: (m) => console.error(m),
   });
   cabinets.push(c);

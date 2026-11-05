@@ -40,18 +40,15 @@ const CabinetBody = z.object({
 });
 const REGISTERED_BY_FORM = 'Đăng ký tủ';
 const REGISTERED_BY_QR = 'Đăng ký tủ bằng QR';
+const BOARD_REPLACED = 'Thay thiết bị tủ';
 const REGISTRATION_HISTORY_LIMIT = 100;
 
 /** Only the LTID and the code are required: the name falls back to the code, the position to the device GPS. */
-const RegisterBody = CabinetBody.extend({ name: Name.nullish(), location: Point.nullish() });
-
-/** Registration from a QR label: the device supplies everything except what the installer chooses to add. */
-const EnrollBody = z.object({
-  code: CabinetCode,
+const RegisterBody = CabinetBody.extend({
   name: Name.nullish(),
-  address: z.string().trim().max(300).nullish(),
-  /** the phone's position, used only while the device has no GPS fix */
   location: Point.nullish(),
+  /** the code came from the QR label, not typed: kept in the history */
+  scanned: z.boolean().optional(),
 });
 
 const CabinetPatch = CabinetBody.partial()
@@ -224,7 +221,7 @@ export class AdminService {
   }
 
   /** Register a cabinet (from an unknown device or by hand); the ingest worker picks it up at once. */
-  async registerCabinet(u: SessionUser, body: unknown, ip?: string, via: 'form' | 'qr' = 'form') {
+  async registerCabinet(u: SessionUser, body: unknown, ip?: string) {
     const b = RegisterBody.parse(body);
     // a ward implies its district
     const districtId = b.districtId ?? (b.wardId ? (await this.sql<{ p: string }[]>`SELECT parent_id AS p FROM areas WHERE id = ${b.wardId}`)[0]?.p ?? null : null);
@@ -259,7 +256,7 @@ export class AdminService {
       await tx`DELETE FROM unknown_devices WHERE upper(ltid) = ${b.ltid}`;
       return r.id;
     });
-    await this.log(u, via === 'qr' ? REGISTERED_BY_QR : REGISTERED_BY_FORM, 'cabinet', id, `${b.code} - ${name}`, `LTID ${b.ltid}${imei ? `, IMEI ${imei}` : ''}`, ip);
+    await this.log(u, b.scanned ? REGISTERED_BY_QR : REGISTERED_BY_FORM, 'cabinet', id, `${b.code} - ${name}`, `LTID ${b.ltid}${imei ? `, IMEI ${imei}` : ''}`, ip);
     await this.reload('registry');
     return { id };
   }
@@ -270,7 +267,7 @@ export class AdminService {
       SELECT a.ts, a.user_email, a.action, a.target_name, c.code, c.name, c.ltid, c.active
       FROM activity_logs a
       LEFT JOIN cabinets c ON c.id::text = a.target_id AND c.organization_id = ${u.organizationId}
-      WHERE a.target_type = 'cabinet' AND a.action IN (${REGISTERED_BY_FORM}, ${REGISTERED_BY_QR})
+      WHERE a.target_type = 'cabinet' AND a.action IN (${REGISTERED_BY_FORM}, ${REGISTERED_BY_QR}, ${BOARD_REPLACED})
       ORDER BY a.ts DESC LIMIT ${REGISTRATION_HISTORY_LIMIT}`;
     return rows.map((r) => {
       // the log keeps "code - name" for a cabinet that no longer exists
@@ -281,13 +278,13 @@ export class AdminService {
         name: r.name ?? loggedName.join(' - '),
         ltid: r.ltid,
         by: r.user_email,
-        via: r.action === REGISTERED_BY_QR ? ('qr' as const) : ('form' as const),
+        via: r.action === BOARD_REPLACED ? ('replace' as const) : r.action === REGISTERED_BY_QR ? ('qr' as const) : ('form' as const),
         active: r.active ?? false,
       };
     });
   }
 
-  /** What a scanned cabinet code means now. The LTID stays on the server: the installer never sees it. */
+  /** What a cabinet code means now: free, registered, or a registered cabinet with a new board reporting it. */
   private async lookupCode(u: SessionUser, code: string) {
     const cabinet = (await this.sql<{ id: string; code: string; name: string }[]>`SELECT id, code, name FROM cabinets WHERE code = ${code} AND organization_id = ${u.organizationId}`)[0] ?? null;
     const devices = await this.sql<{ ltid: string; imei: string | null; other_imei: string | null; last_seen_at: Date; lat: number | null; lng: number | null }[]>`
@@ -298,29 +295,28 @@ export class AdminService {
     return { status, cabinet, device: devices[0] ?? null };
   }
 
-  async findByCode(u: SessionUser, rawCode: string) {
-    const code = CabinetCode.parse(rawCode);
+  /**
+   * A new board reports the code of a registered cabinet: move the cabinet to that board in one step. The cabinet id
+   * stays, so its history, schedule and settings stay; ID, IMEI and signing identity all move, or the new board's
+   * frames would be refused. The signing identity is learned from its next valid frame.
+   */
+  async replaceDevice(u: SessionUser, body: unknown, ip?: string) {
+    const code = z.object({ code: CabinetCode }).parse(body).code;
     const { status, cabinet, device } = await this.lookupCode(u, code);
-    return {
-      code,
-      status,
-      cabinet: cabinet && { id: cabinet.id, name: cabinet.name },
-      device:
-        status === 'ready' && device
-          ? { lastSeenAt: device.last_seen_at.toISOString(), imeiTail: device.imei?.slice(-4) ?? null, gps: device.lat === null || device.lng === null ? null : { lat: device.lat, lng: device.lng } }
-          : null,
-    };
-  }
-
-  /** Register the one device that reports this cabinet code, after the installer scanned the label and confirmed. */
-  async enroll(u: SessionUser, body: unknown, ip?: string) {
-    const b = EnrollBody.parse(body);
-    const { status, device } = await this.lookupCode(u, b.code);
-    if (status === 'registered') throw new ApiError(409, 'cabinet_code_taken', `Mã tủ ${b.code} đã có`, { code: b.code });
-    if (status === 'conflict') throw new ApiError(409, 'enroll_conflict', `Có nhiều thiết bị cùng báo mã tủ ${b.code}`, { code: b.code });
-    if (status === 'waiting' || !device) throw new ApiError(409, 'enroll_not_seen', `Mã tủ ${b.code} chưa truyền về server`, { code: b.code });
-    const location = device.lat !== null && device.lng !== null ? { lat: device.lat, lng: device.lng } : b.location;
-    return this.registerCabinet(u, { ltid: device.ltid, code: b.code, name: b.name, location, address: b.address ?? null }, ip, 'qr');
+    if (status === 'conflict') throw new ApiError(409, 'enroll_conflict', `Có nhiều thiết bị cùng báo mã tủ ${code}`, { code });
+    if (status !== 'replace' || !cabinet || !device) throw new ApiError(409, 'replace_no_device', `Chưa có thiết bị mới báo mã tủ ${code}`, { code });
+    const cur = (await this.sql<{ ltid: string; imei: string | null }[]>`SELECT ltid, imei FROM cabinets WHERE id = ${cabinet.id}`)[0]!;
+    if (device.imei && (await this.sql`SELECT 1 FROM cabinets WHERE imei = ${device.imei} AND id <> ${cabinet.id}`).length)
+      throw new ApiError(409, 'imei_taken', `IMEI ${device.imei} đang thuộc một tủ khác`, { imei: device.imei });
+    const ltid = device.ltid.toUpperCase();
+    await this.sql.begin(async (tx) => {
+      await tx`UPDATE cabinets SET ltid = ${ltid}, imei = ${device.imei}, uid = NULL, uid_pending = NULL, sig_boot = NULL, signed = false, key_fp = NULL, updated_at = now() WHERE id = ${cabinet.id}`;
+      await tx`DELETE FROM unknown_devices WHERE upper(ltid) = ${ltid}`;
+    });
+    await this.sql`INSERT INTO activity_logs (user_id, user_email, action, target_type, target_id, target_name, old_value, new_value, ip)
+                   VALUES (${u.id}, ${u.email}, ${BOARD_REPLACED}, 'cabinet', ${cabinet.id}, ${`${code} - ${cabinet.name}`}, ${`LTID ${cur.ltid}, IMEI ${cur.imei ?? '-'}`}, ${`LTID ${ltid}, IMEI ${device.imei ?? '-'}`}, ${ip ?? null})`;
+    await this.reload('registry');
+    return { id: cabinet.id };
   }
 
   async updateCabinet(u: SessionUser, id: string, body: unknown, ip?: string) {
@@ -553,14 +549,12 @@ export class AdminController {
   @Post('zones/:id/assign') @HttpCode(200) @RequirePerm('admin.catalog')
   assignZone(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.assignZone(r.user!, id, b, r.ip); }
 
-  @Get('devices/registered') @RequirePerm('admin.devices')
+  @Get('devices/registered') @RequirePerm('device.enroll')
   registered(@Req() r: AuthedRequest) { return this.svc.registrationHistory(r.user!); }
-  @Get('devices/by-code/:code') @RequirePerm('device.enroll')
-  byCode(@Req() r: AuthedRequest, @Param('code') code: string) { return this.svc.findByCode(r.user!, code); }
-  @Post('devices/enroll') @RequirePerm('device.enroll')
-  enroll(@Req() r: AuthedRequest, @Body() b: unknown) { return this.svc.enroll(r.user!, b, r.ip); }
+  @Post('devices/replace') @HttpCode(200) @RequirePerm('admin.devices') @RequireReauth()
+  replace(@Req() r: AuthedRequest, @Body() b: unknown) { return this.svc.replaceDevice(r.user!, b, r.ip); }
 
-  @Post('cabinets') @RequirePerm('admin.devices')
+  @Post('cabinets') @RequirePerm('device.enroll')
   register(@Req() r: AuthedRequest, @Body() b: unknown) { return this.svc.registerCabinet(r.user!, b, r.ip); }
   @Patch('cabinets/:id') @RequirePerm('admin.devices')
   update(@Req() r: AuthedRequest, @Param('id') id: string, @Body() b: unknown) { return this.svc.updateCabinet(r.user!, id, b, r.ip); }

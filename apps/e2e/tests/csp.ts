@@ -10,8 +10,8 @@ export function productionCsp(host: string): string {
   const caddy = readFileSync(fileURLToPath(new URL('../../../infra/Caddyfile', import.meta.url)), 'utf8');
   const m = caddy.match(/Content-Security-Policy "([^"]+)"/);
   if (!m) throw new Error('no Content-Security-Policy line in infra/Caddyfile');
-  // wss://{$SITE_HOST} -> the test host (vite preview is http, so also allow its plain ws)
-  return m[1]!.replaceAll('{$SITE_HOST}', host).replace(`wss://${host}`, `wss://${host} ws://${host}`);
+  // wss://<host> (Caddy snippet argument, or {$SITE_HOST} before S60) -> the test host (vite preview is http, so also allow its plain ws)
+  return m[1]!.replaceAll('{args[1]}', host).replaceAll('{$SITE_HOST}', host).replace(`wss://${host}`, `wss://${host} ws://${host}`);
 }
 
 /** Adds the CSP to HTML responses of `page` and returns the list violations are pushed into. */

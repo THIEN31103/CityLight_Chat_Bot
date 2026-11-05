@@ -15,8 +15,15 @@ describe('QR registration verdict', () => {
   it('one device seen with two IMEIs needs a person', () => {
     expect(judgeEnrollment({ registered: false, devices: 1, imeiConflict: true })).toBe('conflict');
   });
-  it('a code already in use stays registered even when a new device reports it', () => {
-    expect(judgeEnrollment({ registered: true, devices: 1, imeiConflict: false })).toBe('registered');
+  it('a registered code with no new board stays registered', () => {
+    expect(judgeEnrollment({ registered: true, devices: 0, imeiConflict: false })).toBe('registered');
+  });
+  it('a registered code reported by one new board means the board was replaced', () => {
+    expect(judgeEnrollment({ registered: true, devices: 1, imeiConflict: false })).toBe('replace');
+  });
+  it('a board replacement is never offered when two boards report the code or one shows two IMEIs', () => {
+    expect(judgeEnrollment({ registered: true, devices: 2, imeiConflict: false })).toBe('conflict');
+    expect(judgeEnrollment({ registered: true, devices: 1, imeiConflict: true })).toBe('conflict');
   });
 });
 
