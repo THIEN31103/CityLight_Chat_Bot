@@ -3,6 +3,7 @@ import * as maplibregl from 'maplibre-gl';
 import type { ExpressionSpecification, GeoJSONSource, Map as MlMap, MapMouseEvent, PaddingOptions } from 'maplibre-gl';
 import type { CabinetSummary, GeoPoint, GpsDriftItem, RegionView } from '@citylight/shared';
 import { api, type MapAssets, type PoleAsset } from '@/lib/api';
+import { isMobileNow } from '@/lib/useIsMobile';
 import { useUi } from '@/stores/session';
 import { dictNow, fill, useLang } from '@/i18n';
 import { MAP } from '@/i18n/dict/map';
@@ -131,6 +132,8 @@ export const CabinetMap = forwardRef<CabinetMapHandle, Props>(function CabinetMa
     if (import.meta.env.DEV) (window as unknown as { __clMap: MlMap }).__clMap = m; // debug handle
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
     m.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
+    // a phone has no room for the credits until they are asked for (the i button stays)
+    if (isMobileNow()) m.once('load', () => el.current?.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'));
     // Fires after the first style and after every setStyle (theme / basemap change): re-add icons + overlay layers.
     m.on('style.load', () => void installOverlay(m));
     installHandlers(m);

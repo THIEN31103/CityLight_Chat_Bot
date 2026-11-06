@@ -13,6 +13,7 @@ import { MAP } from '@/i18n/dict/map';
 import { EditToolbar, GeneratePolesModal, ImportPolesModal, PolePanel } from './MapEditor';
 import { useSession } from '@/stores/session';
 import { cn } from '@/lib/utils';
+import { isMobileNow } from '@/lib/useIsMobile';
 import { Button, Checkbox, Input, Modal, STATUS_ICON, StatusBadge, confirm, toast, Field, Select } from '@/components/ui';
 import { CabinetMap, type CabinetMapHandle, type MapLayers, type EditTool, type MapDraft } from './CabinetMap';
 import { LeftPanel } from './LeftPanel';
@@ -61,7 +62,8 @@ export function MapPage() {
   const L = useLabels();
   const mapRef = useRef<CabinetMapHandle>(null);
 
-  const [panelOpen, setPanelOpen] = useState(true);
+  // the list covers a phone screen, so a phone starts on the map
+  const [panelOpen, setPanelOpen] = useState(() => !isMobileNow());
   // KPI card clicked -> left panel lists every cabinet in that status (null = normal tabs)
   const [statusView, setStatusView] = useState<CabinetStatus | null>(null);
   const [layers, setLayers] = useState<MapLayers>({ cabinets: true, routes: true, poles: true, labels: true, codes: false });
@@ -76,7 +78,7 @@ export function MapPage() {
     writePref('cl.detailMode', m);
   };
   // Docked panel covers the right 760 px: keep the cabinet centred in the visible part of the map.
-  const flyPadding = detailMode === 'dock' ? { right: Math.min(760, window.innerWidth * 0.6) } : undefined;
+  const flyPadding = detailMode === 'dock' && !isMobileNow() ? { right: Math.min(760, window.innerWidth * 0.6) } : undefined;
   const [center, setCenter] = useState<GeoPoint>({ lat: 10.79, lng: 106.7 });
   const [editMode, setEditMode] = useState(false);
   // map editor draft (M8): saved in one transaction by "Lưu"
@@ -175,12 +177,41 @@ export function MapPage() {
     select(id);
   };
 
+  const pickFromList = (id: string) => {
+    if (isMobileNow()) setPanelOpen(false);
+    flyToCabinet(id);
+  };
+
   const measureTotal = measurePts.reduce((sum, p, i) => (i ? sum + haversine(measurePts[i - 1]!, p) : 0), 0);
 
   return (
-    <div className="absolute inset-0 flex">
+    <div className="absolute inset-0 flex max-md:flex-col">
+      {/* Phone: the panel holding the counters is closed, so they stay reachable above the map */}
+      <div className="grid shrink-0 grid-cols-6 gap-1 border-b bg-panel p-1.5 md:hidden">
+        {KPI_ORDER.map((s) => {
+          const Icon = STATUS_ICON[s];
+          return (
+            <button
+              key={s}
+              onClick={() => {
+                setStatusView(s);
+                setPanelOpen(true);
+              }}
+              title={fill(t.kpi.openList, { status: L.status[s] })}
+              className="flex min-w-0 flex-col items-center rounded-md border px-0.5 py-1"
+            >
+              <Icon className={cn('h-4 w-4', KPI_COLOR[s])} />
+              <span className="text-sm font-semibold leading-tight tabular-nums">{stats.data ? stats.data.cabinets[s].toLocaleString(locale()) : '…'}</span>
+              <span className="w-full truncate text-center text-[10px] leading-tight text-subtle">{L.status[s]}</span>
+            </button>
+          );
+        })}
+      </div>
       {/* Left panel */}
-      <aside className={cn('z-10 flex w-[340px] shrink-0 flex-col border-r bg-panel transition-all', !panelOpen && '-ml-[340px]')}>
+      <aside className={cn('z-10 flex w-[340px] shrink-0 flex-col border-r bg-panel transition-all max-md:absolute max-md:inset-0 max-md:z-20 max-md:w-full max-md:border-r-0', !panelOpen && '-ml-[340px] max-md:hidden')}>
+        <button onClick={() => setPanelOpen(false)} className="flex h-11 shrink-0 items-center justify-end gap-1 border-b px-3 text-sm text-subtle md:hidden">
+          {t.toolbar.hideList} <X className="h-4 w-4" />
+        </button>
         <div className="grid grid-cols-3 gap-1.5 border-b p-2">
           {KPI_ORDER.map((s) => {
             const Icon = STATUS_ICON[s];
@@ -222,12 +253,12 @@ export function MapPage() {
           statusView={statusView}
           onCloseStatus={() => setStatusView(null)}
           selectedId={selectedId}
-          onPick={flyToCabinet}
+          onPick={pickFromList}
         />
       </aside>
 
       {/* Map */}
-      <div className="relative min-w-0 flex-1">
+      <div className="relative min-h-0 min-w-0 flex-1">
         <CabinetMap
           ref={mapRef}
           cabinets={cabinets}
@@ -259,7 +290,7 @@ export function MapPage() {
         />
 
         {/* Toolbar */}
-        <div className="absolute left-3 top-3 z-10 flex flex-wrap items-center gap-2">
+        <div className="absolute left-3 top-3 z-10 flex flex-wrap items-center gap-2 max-md:right-3">
           <Button variant="outline" size="icon" onClick={() => setPanelOpen((v) => !v)} aria-label={panelOpen ? t.toolbar.hideList : t.toolbar.showList} className="shadow">
             {panelOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
           </Button>
@@ -303,7 +334,7 @@ export function MapPage() {
         </div>
 
         {measureMode && (
-          <div className="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-3 rounded-md border bg-panel px-3 py-1.5 text-sm shadow">
+          <div className="absolute left-1/2 top-3 z-10 flex -translate-x-1/2 items-center gap-3 rounded-md border bg-panel px-3 py-1.5 text-sm shadow max-md:left-3 max-md:right-3 max-md:top-32 max-md:translate-x-0">
             <Crosshair className="h-4 w-4 text-st-offline" />
             {t.toolbar.measureHint} <b>{Math.round(measureTotal).toLocaleString(locale())} m</b>
             <Button size="sm" variant="ghost" onClick={() => setMeasurePts([])}>
@@ -351,6 +382,12 @@ export function MapPage() {
           onToggleMode={() => setDetailMode(detailMode === 'center' ? 'dock' : 'center')}
           onClose={() => select(null)}
           onLocate={(p) => {
+            // on a phone the details cover the whole map: close them to show the spot
+            if (isMobileNow()) {
+              select(null);
+              mapRef.current?.flyTo(p, 17);
+              return;
+            }
             if (detailMode === 'center') setDetailMode('dock');
             mapRef.current?.flyTo(p, 17, { right: Math.min(760, window.innerWidth * 0.6) });
           }}
@@ -366,8 +403,8 @@ function SearchBox({ onPick }: { onPick: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const { data } = useQuery({ queryKey: ['search', q], queryFn: () => api.search(q), enabled: q.trim().length >= 2 });
   return (
-    <div className="relative">
-      <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-subtle" />
+    <div className="relative max-md:min-w-0 max-md:flex-1 max-md:basis-[calc(100%-3rem)]">
+      <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-subtle max-md:top-3.5" />
       <Input
         value={q}
         onChange={(e) => {
@@ -377,7 +414,7 @@ function SearchBox({ onPick }: { onPick: (id: string) => void }) {
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         placeholder={t.placeholder}
-        className="w-72 pl-8 shadow"
+        className="w-72 pl-8 shadow max-md:w-full"
         aria-label={t.label}
       />
       {open && q.trim().length >= 2 && (

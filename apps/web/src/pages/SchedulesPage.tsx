@@ -68,8 +68,8 @@ export function SchedulesPage() {
   const set = <K extends keyof Schedule>(k: K, v: Schedule[K]) => setS((p) => (p ? { ...p, [k]: v } : p));
 
   return (
-    <div className="flex h-full">
-      <aside className="w-64 shrink-0 overflow-auto border-r bg-panel p-2">
+    <div className="flex h-full max-md:flex-col">
+      <aside className="w-64 shrink-0 overflow-auto border-r bg-panel p-2 max-md:max-h-48 max-md:w-full max-md:border-b max-md:border-r-0">
         <div className="mb-1 px-2 text-xs font-semibold uppercase text-subtle">{t.zones}</div>
         {zones.data?.map((z) => (
           <button key={z.id} onClick={() => setZoneId(z.id)} className={cn('block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-muted', zone?.id === z.id && 'bg-primary/10 font-medium')}>
@@ -78,7 +78,7 @@ export function SchedulesPage() {
           </button>
         ))}
       </aside>
-      <div className="min-w-0 flex-1 overflow-auto p-4">
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto p-4 max-md:p-3">
         <PageHeader
           title={fill(t.title, { zone: zone?.name ?? '' })}
           subtitle={t.subtitle}

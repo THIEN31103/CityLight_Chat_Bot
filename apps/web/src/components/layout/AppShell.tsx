@@ -92,9 +92,9 @@ function AlarmBell() {
         </button>
       </DM.Trigger>
       <DM.Portal>
-        <DM.Content align="end" sideOffset={6} className="z-50 w-96 rounded-lg border bg-panel shadow-xl">
+        <DM.Content align="end" sideOffset={6} className="z-50 w-[min(24rem,calc(100vw-16px))] rounded-lg border bg-panel shadow-xl">
           <div className="border-b px-3 py-2 text-sm font-semibold">{t.latestAlarms}</div>
-          <div className="max-h-96 overflow-auto">
+          <div className="max-h-[min(24rem,60vh)] overflow-auto">
             {data?.items.length ? (
               data.items.map((a) => (
                 <DM.Item key={a.id} onSelect={() => nav(`/?cabinet=${a.cabinetId}`)} className="cursor-pointer border-b px-3 py-2 outline-none last:border-0 hover:bg-muted data-[highlighted]:bg-muted">
@@ -145,7 +145,7 @@ function NavMenu({ label, icon: Icon, items }: { label: string; icon: React.Comp
       <DM.Portal>
         <DM.Content align="start" sideOffset={6} className="z-50 min-w-[220px] rounded-lg border bg-panel p-1 shadow-xl">
           {visible.map((i) => (
-            <DM.Item key={i.to} onSelect={() => nav(i.to)} className="cursor-pointer rounded px-2.5 py-1.5 text-sm outline-none hover:bg-muted data-[highlighted]:bg-muted">
+            <DM.Item key={i.to} onSelect={() => nav(i.to)} className="cursor-pointer rounded px-2.5 py-1.5 text-sm outline-none hover:bg-muted data-[highlighted]:bg-muted max-md:py-2.5">
               {i.label}
             </DM.Item>
           ))}
@@ -196,13 +196,13 @@ export function AppShell() {
   return (
     <div className="flex h-full flex-col">
       <header className="z-30 flex h-14 shrink-0 items-center gap-2 border-b bg-panel px-3">
-        <Link to="/" className="mr-2 flex items-center gap-2">
+        <Link to="/" className="mr-2 flex items-center gap-2 max-sm:mr-0" aria-label={t.home}>
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-white">
             <Lightbulb className="h-4 w-4" />
           </div>
           <span className="hidden font-semibold sm:inline">CityLight</span>
         </Link>
-        <NavLink to="/" end className={({ isActive }) => cn('rounded-md p-2 hover:bg-muted', isActive && 'bg-muted')} aria-label={t.home}>
+        <NavLink to="/" end className={({ isActive }) => cn('rounded-md p-2 hover:bg-muted max-sm:hidden', isActive && 'bg-muted')} aria-label={t.home}>
           <Home className="h-4 w-4" />
         </NavLink>
         <NavMenu label={t.incidents} icon={Wrench} items={incidentMenu(t).map((i) => ({ ...i, perm: 'incident.view' as Permission }))} />
@@ -211,12 +211,12 @@ export function AppShell() {
         <ServerClock />
         <AlarmBell />
         <LangSwitch className="hidden sm:flex" />
-        <button className="rounded-md p-2 hover:bg-muted" onClick={toggleTheme} aria-label={t.themeToggle}>
+        <button className="rounded-md p-2 hover:bg-muted max-sm:hidden" onClick={toggleTheme} aria-label={t.themeToggle}>
           <ThemeIcon dark={theme === 'dark'} />
         </button>
         <DM.Root>
           <DM.Trigger asChild>
-            <button className="rounded-md p-2 hover:bg-muted" aria-label={t.help}>
+            <button className="rounded-md p-2 hover:bg-muted max-sm:hidden" aria-label={t.help}>
               <CircleHelp className="h-5 w-5" />
             </button>
           </DM.Trigger>
@@ -244,11 +244,22 @@ export function AppShell() {
             </button>
           </DM.Trigger>
           <DM.Portal>
-            <DM.Content align="end" sideOffset={6} className="z-50 min-w-[200px] rounded-lg border bg-panel p-1 shadow-xl">
-              <DM.Item onSelect={() => nav('/account')} className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-muted">
+            <DM.Content align="end" sideOffset={6} className="z-50 min-w-[220px] rounded-lg border bg-panel p-1 shadow-xl">
+              <div className="border-b px-2.5 py-2 leading-tight md:hidden">
+                <div className="text-sm font-medium">{user?.fullName}</div>
+                <div className="text-[11px] text-subtle">{user ? L.role[user.role] : ''}</div>
+              </div>
+              <DM.Item onSelect={() => nav('/account')} className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-muted max-md:py-2.5">
                 <Settings2 className="h-4 w-4" /> {t.account}
               </DM.Item>
-              <DM.Item onSelect={logout} className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-sm text-st-offline outline-none data-[highlighted]:bg-muted">
+              <DM.Item onSelect={toggleTheme} className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-2.5 text-sm outline-none data-[highlighted]:bg-muted sm:hidden">
+                <ThemeIcon dark={theme === 'dark'} /> {t.themeToggle}
+              </DM.Item>
+              <DM.Item onSelect={() => nav('/help')} className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-2.5 text-sm outline-none data-[highlighted]:bg-muted sm:hidden">
+                <CircleHelp className="h-4 w-4" /> {t.userGuide}
+              </DM.Item>
+              <div className="px-2.5 py-1.5 sm:hidden"><LangSwitch className="w-fit" /></div>
+              <DM.Item onSelect={logout} className="flex cursor-pointer items-center gap-2 rounded px-2.5 py-1.5 text-sm text-st-offline outline-none data-[highlighted]:bg-muted max-md:py-2.5">
                 <LogOut className="h-4 w-4" /> {t.logout}
               </DM.Item>
             </DM.Content>
