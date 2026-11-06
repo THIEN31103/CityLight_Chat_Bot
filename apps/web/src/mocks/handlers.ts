@@ -1,7 +1,7 @@
 // MSW handlers implementing the /api/v1 contract of docs/spec.md section 11 against the in-browser mock DB.
 import { http, HttpResponse, delay, type PathParams } from 'msw';
 import type { Alarm, CommandBatch, CommandType, DimmingProfile, GpsDriftItem, GpsSuggestion, Incident, LampGroup, Schedule, Thresholds, User } from '@citylight/shared';
-import { GPS_RELOCATE_WINDOW_MIN, canManageRole, categoryForAlarm, defaultFieldMap, errorCatalog, distanceM, estimateDimming, judgeGpsSuggestion, roleRequires2fa, validateDimming } from '@citylight/shared';
+import { GPS_RELOCATE_WINDOW_MIN, canManageRole, canSeeLtid, stripLtid, categoryForAlarm, defaultFieldMap, errorCatalog, distanceM, estimateDimming, judgeGpsSuggestion, roleRequires2fa, validateDimming } from '@citylight/shared';
 import { getLang } from '@/i18n';
 import {
   MockApiError,
@@ -151,7 +151,10 @@ function wrap(fn: (info: Info) => Response | Promise<Response>) {
   return async (info: { request: Request; params: PathParams }) => {
     await delay(120 + Math.random() * 180);
     try {
-      return await fn({ request: info.request, params: info.params as Record<string, string> });
+      const res = await fn({ request: info.request, params: info.params as Record<string, string> });
+      // same rule as the real API (apps/api/src/ltid.ts), so the demo shows what each role really gets
+      if (canSeeLtid(session?.role) || !res.headers.get('content-type')?.includes('application/json')) return res;
+      return HttpResponse.json(stripLtid(await res.clone().json()), { status: res.status });
     } catch (e) {
       if (e instanceof MockApiError) return problem(e.status, e.code, e.message);
       throw e;
@@ -276,7 +279,7 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
     const q = (new URL(request.url).searchParams.get('q') ?? '').toLowerCase();
     if (!q) return HttpResponse.json([]);
     const res = cabinets
-      .filter((c) => c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q) || c.ltid.toLowerCase().includes(q) || c.address.toLowerCase().includes(q))
+      .filter((c) => c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q) || (canSeeLtid(session?.role) && c.ltid?.toLowerCase().includes(q)) || c.address.toLowerCase().includes(q))
       .slice(0, 10)
       .map(summary);
     return HttpResponse.json(res);
@@ -351,7 +354,7 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
     const q = (url.searchParams.get('q') ?? '').toLowerCase();
     let list = cabinets.map((c) => ({ ...summary(c), districtName: districtName(c), fwProfile: c.fwProfile, lastSeenAt: states.get(c.id)!.lastSeenAt }));
     if (status) list = list.filter((c) => c.status === status);
-    if (q) list = list.filter((c) => c.name.toLowerCase().includes(q) || c.ltid.toLowerCase().includes(q) || c.code.toLowerCase().includes(q));
+    if (q) list = list.filter((c) => c.name.toLowerCase().includes(q) || (canSeeLtid(session?.role) && c.ltid?.toLowerCase().includes(q)) || c.code.toLowerCase().includes(q));
     return HttpResponse.json(paginate(list, url));
   })),
   http.get(`${API}/cabinets/:id`, wrap(({ params }: { params: Record<string, string> }) => {
@@ -776,9 +779,10 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
     return HttpResponse.json({ id: b.code });
   })),
   http.post(`${API}/cabinets`, wrap(async ({ request }) => {
-    const b = (await request.json()) as { ltid: string; code: string; name: string | null; scanned?: boolean };
-    const ltid = b.ltid.toUpperCase();
-    if (registeredLtids.has(ltid) || cabinets.some((c) => c.ltid.toUpperCase() === ltid)) throw new MockApiError(409, 'ltid_taken', `LTID ${ltid} đã được đăng ký`);
+    const b = (await request.json()) as { ltid?: string; deviceId?: string; code: string; name: string | null; scanned?: boolean };
+    if (b.ltid && !canSeeLtid(session?.role)) throw new MockApiError(403, 'ltid_forbidden', 'Chỉ nhà cung cấp mới nhập được LTID');
+    const ltid = (b.ltid ?? b.deviceId!.replace(/^dev-/, '')).toUpperCase();
+    if (registeredLtids.has(ltid) || cabinets.some((c) => c.ltid?.toUpperCase() === ltid)) throw new MockApiError(409, 'ltid_taken', `LTID ${ltid} đã được đăng ký`);
     if (enrolled.has(b.code) || cabinets.some((c) => c.code === b.code)) throw new MockApiError(409, 'cabinet_code_taken', `Mã tủ ${b.code} đã có`);
     registeredLtids.add(ltid);
     enrolled.set(b.code, b.name || b.code);
@@ -787,10 +791,10 @@ http.patch(`${API}/me/preferences`, wrap(async ({ request }: { request: Request 
   })),
   http.get(`${API}/devices/unknown`, wrap(({ request }) =>
     HttpResponse.json([
-      { ltid: 'CTY9001', code: 'TM0001', ident: 'valid', replaces: null, firstSeenAt: new Date(Date.now() - 3600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 352, imei: '861234567890123', otherImei: null, gps: { lat: 10.7769401, lng: 106.7008765 } },
-      { ltid: 'CTY9004', code: 'TM0004', ident: 'invalid', replaces: null, firstSeenAt: new Date(Date.now() - 600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 12, imei: '861234567892222', otherImei: null, gps: null },
-      { ltid: 'CTY9003', code: 'TM0900', ident: 'valid', replaces: { id: 'TM0900', name: 'Tủ Lê Lợi 1' }, firstSeenAt: new Date(Date.now() - 900000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 40, imei: '861234567891111', otherImei: null, gps: { lat: 10.7701, lng: 106.7002 } },
-      { ltid: 'CTY9002', code: null, ident: null, replaces: null, firstSeenAt: new Date(Date.now() - 86400000).toISOString(), lastSeenAt: new Date(Date.now() - 600000).toISOString(), frames: 8120, imei: '861234567890456', otherImei: '861999000111222', gps: null },
+      { id: 'dev-CTY9001', ltid: 'CTY9001', code: 'TM0001', ident: 'valid', replaces: null, firstSeenAt: new Date(Date.now() - 3600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 352, imei: '861234567890123', otherImei: null, gps: { lat: 10.7769401, lng: 106.7008765 } },
+      { id: 'dev-CTY9004', ltid: 'CTY9004', code: 'TM0004', ident: 'invalid', replaces: null, firstSeenAt: new Date(Date.now() - 600000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 12, imei: '861234567892222', otherImei: null, gps: null },
+      { id: 'dev-CTY9003', ltid: 'CTY9003', code: 'TM0900', ident: 'valid', replaces: { id: 'TM0900', name: 'Tủ Lê Lợi 1' }, firstSeenAt: new Date(Date.now() - 900000).toISOString(), lastSeenAt: new Date().toISOString(), frames: 40, imei: '861234567891111', otherImei: null, gps: { lat: 10.7701, lng: 106.7002 } },
+      { id: 'dev-CTY9002', ltid: 'CTY9002', code: null, ident: null, replaces: null, firstSeenAt: new Date(Date.now() - 86400000).toISOString(), lastSeenAt: new Date(Date.now() - 600000).toISOString(), frames: 8120, imei: '861234567890456', otherImei: '861999000111222', gps: null },
     ].filter((d) => !registeredLtids.has(d.ltid) && [null, d.code?.toUpperCase()].includes(new URL(request.url).searchParams.get('code')?.toUpperCase() ?? null))),
   )),
   http.get(`${API}/field-map`, wrap(() => HttpResponse.json({ entries: defaultFieldMap(getLang()), unknownKeys: [] }))),

@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react';
 import { Navigate, NavLink, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, QrCode } from 'lucide-react';
+import { Eye, EyeOff, Plus, QrCode } from 'lucide-react';
 import type { AlarmType, Permission, RoleKey } from '@citylight/shared';
 import { LAMP_GROUP_LABELS, ROLE_PERMISSIONS, alarmTypeLabels, assignableRoles, hasPermission, parseCabinetCode, roleRequires2fa, roleSeesAll } from '@citylight/shared';
 import { api, ApiError, type AdminUser, type UnknownDevice } from '@/lib/api';
@@ -14,6 +14,7 @@ import { ADMIN, PERMISSION_LABELS } from '@/i18n/dict/admin';
 import { Badge, Button, Card, CardHeader, Checkbox, Field, Input, Modal, PageHeader, Select, Spinner, Toggle, confirm, toast } from '@/components/ui';
 import { ErrorCatalogTable } from '@/components/ErrorHelp';
 import { ForbiddenPage } from '@/pages/ErrorPages';
+import { Ltid } from '@/components/Ltid';
 import { QrScanner } from '@/components/QrScanner';
 
 const TABS: { id: string; label: keyof (typeof ADMIN)['vi']['tabs']; perm: Permission }[] = [
@@ -447,7 +448,7 @@ function DevicesAdmin() {
   const tree = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
   const zones = useQuery({ queryKey: ['zones'], queryFn: api.zones });
   const districts = tree.data?.areas.filter((a) => a.kind === 'district') ?? [];
-  const blank = { ltid: '', code: '', name: '', lat: '', lng: '', districtId: '', wardId: '', zone1Id: '', address: '', imei: '' };
+  const blank = { deviceId: '', ltid: '', code: '', name: '', lat: '', lng: '', districtId: '', wardId: '', zone1Id: '', address: '', imei: '' };
   const [form, setForm] = useState<typeof blank | null>(null);
   const [tempSensor, setTempSensor] = useState(false);
   // the device's own GPS fix pre-fills the position (wrong hand-typed coordinates are the usual E802 cause)
@@ -459,9 +460,12 @@ function DevicesAdmin() {
   // the code in the form came from the QR label (typing over it clears this)
   const [scanned, setScanned] = useState(false);
   const canReplace = useSession((s) => s.can('admin.devices'));
+  const canSeeLtid = useSession((s) => s.can('device.identity'));
+  const [ltidOpen, setLtidOpen] = useState(false);
   const closeForm = () => {
     setForm(null);
     setScanned(false);
+    setLtidOpen(false);
   };
   const replace = useMutation({
     mutationFn: (code: string) => api.replaceDevice(code),
@@ -485,7 +489,7 @@ function DevicesAdmin() {
     setTempSensor(false);
     setFromGps(!!d.gps);
     setImeiChoices(d.otherImei && d.imei ? [d.imei, d.otherImei] : []);
-    setForm({ ...blank, ltid: d.ltid, code: d.code ?? '', lat: d.gps ? d.gps.lat.toFixed(7) : '', lng: d.gps ? d.gps.lng.toFixed(7) : '', imei: d.otherImei ? '' : (d.imei ?? '') });
+    setForm({ ...blank, deviceId: d.id, ltid: d.ltid ?? '', code: d.code ?? '', lat: d.gps ? d.gps.lat.toFixed(7) : '', lng: d.gps ? d.gps.lng.toFixed(7) : '', imei: d.otherImei ? '' : (d.imei ?? '') });
   };
   // a scanned label or a typed code: go straight to that cabinet, however long the list is
   const openByCode = async (raw: string, fromLabel: boolean) => {
@@ -508,14 +512,14 @@ function DevicesAdmin() {
     }
   };
   // what this board itself reports (LCOD): a different code here means the wrong label or the wrong board
-  const boardCode = data?.find((d) => d.ltid === form?.ltid)?.code;
+  const boardCode = data?.find((d) => d.id === form?.deviceId)?.code;
   const codeMismatch = !!boardCode && !!form?.code && form.code !== boardCode;
-  const unsigned = !!data?.some((d) => d.ltid === form?.ltid && !d.ident);
+  const unsigned = !!data?.some((d) => d.id === form?.deviceId && !d.ident);
   const wards = tree.data?.areas.filter((a) => a.kind === 'ward' && a.parentId === form?.districtId) ?? [];
   const reg = useMutation({
     mutationFn: () =>
       api.registerCabinet({
-        ltid: form!.ltid, code: form!.code, name: form!.name.trim() || null, location: form!.lat && form!.lng ? { lat: Number(form!.lat), lng: Number(form!.lng) } : null,
+        ...(canSeeLtid ? { ltid: form!.ltid } : { deviceId: form!.deviceId }), code: form!.code, name: form!.name.trim() || null, location: form!.lat && form!.lng ? { lat: Number(form!.lat), lng: Number(form!.lng) } : null,
         districtId: form!.districtId || null, wardId: form!.wardId || null, zone1Id: form!.zone1Id || null, address: form!.address || null,
         imei: form!.imei || null, hasTempSensor: tempSensor, scanned,
       }),
@@ -533,7 +537,7 @@ function DevicesAdmin() {
     <>
       <PageHeader title={t.title} subtitle={t.subtitle} actions={<>
         <Button onClick={() => setPageScan(true)}><QrCode className="h-4 w-4" /> {t.scanPage}</Button>
-        <Button variant="outline" onClick={() => { setFromGps(false); setTempSensor(false); setForm(blank); }}><Plus className="h-4 w-4" /> {t.registerNew}</Button>
+        {canSeeLtid && <Button variant="outline" onClick={() => { setFromGps(false); setTempSensor(false); setLtidOpen(true); setForm(blank); }}><Plus className="h-4 w-4" /> {t.registerNew}</Button>}
       </>} />
       <Modal open={pageScan} onOpenChange={setPageScan} title={t.scanPage}>
         {pageScan && (
@@ -565,14 +569,14 @@ function DevicesAdmin() {
           }
         />
         <table className="w-full text-sm">
-          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">LTID</th><th className="px-3 py-2">IMEI</th><th className="px-3 py-2">GPS</th><th className="px-3 py-2">{t.col.firstSeen}</th><th className="px-3 py-2">{t.col.lastSeen}</th><th className="px-3 py-2">{t.col.frames}</th><th /></tr></thead>
+          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">{canSeeLtid ? 'LTID' : t.code}</th><th className="px-3 py-2">IMEI</th><th className="px-3 py-2">GPS</th><th className="px-3 py-2">{t.col.firstSeen}</th><th className="px-3 py-2">{t.col.lastSeen}</th><th className="px-3 py-2">{t.col.frames}</th><th /></tr></thead>
           <tbody>
             {!data?.length && <tr><td colSpan={7} className="px-3 py-4 text-center text-subtle">{t.none}</td></tr>}
             {data?.map((d) => (
-              <tr key={d.ltid} className="border-t">
+              <tr key={d.id} className="border-t">
                 <td className="px-3 py-2 font-medium">
-                  {d.ltid}
-                  {d.code && <div className="text-xs font-normal text-subtle">{d.code}</div>}
+                  {canSeeLtid ? <Ltid value={d.ltid} /> : (d.code ?? '-')}
+                  {canSeeLtid && d.code && <div className="text-xs font-normal text-subtle">{d.code}</div>}
                   <Badge className="mt-1" tone={d.ident === 'valid' ? 'green' : d.ident === 'invalid' ? 'red' : 'orange'}>{d.ident === 'valid' ? t.sigOk : d.ident === 'invalid' ? t.sigBadShort : t.sigNone}</Badge>
                 </td>
                 <td className="px-3 py-2 font-mono text-xs">
@@ -608,13 +612,13 @@ function DevicesAdmin() {
                 <th className="px-3 py-2">{t.history.col.at}</th>
                 <th className="px-3 py-2">{t.code}</th>
                 <th className="px-3 py-2">{t.name}</th>
-                <th className="px-3 py-2">LTID</th>
+                {canSeeLtid && <th className="px-3 py-2">LTID</th>}
                 <th className="px-3 py-2">{t.history.col.by}</th>
                 <th className="px-3 py-2">{t.history.col.via}</th>
               </tr>
             </thead>
             <tbody>
-              {!history.data?.length && <tr><td colSpan={6} className="px-3 py-4 text-center text-subtle">{t.history.none}</td></tr>}
+              {!history.data?.length && <tr><td colSpan={canSeeLtid ? 6 : 5} className="px-3 py-4 text-center text-subtle">{t.history.none}</td></tr>}
               {history.data?.map((r) => (
                 <tr key={`${r.at}-${r.code}`} className="border-t">
                   <td className="whitespace-nowrap px-3 py-2 text-xs">{fmtTime(r.at)}</td>
@@ -623,7 +627,7 @@ function DevicesAdmin() {
                     {!r.active && <Badge className="ml-2">{t.history.inactive}</Badge>}
                   </td>
                   <td className="px-3 py-2">{r.name}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{r.ltid ?? '-'}</td>
+                  {canSeeLtid && <td className="px-3 py-2 text-xs"><Ltid value={r.ltid} /></td>}
                   <td className="px-3 py-2 text-xs">{r.by}</td>
                   <td className="px-3 py-2"><Badge tone={r.via === 'qr' ? 'green' : r.via === 'replace' ? 'orange' : 'blue'}>{r.via === 'qr' ? t.history.viaQr : r.via === 'replace' ? t.history.viaReplace : t.history.viaForm}</Badge></td>
                 </tr>
@@ -636,11 +640,21 @@ function DevicesAdmin() {
         open={!!form}
         onOpenChange={(v) => !v && closeForm()}
         title={t.title}
-        footer={<><Button variant="outline" onClick={closeForm}>{c.cancel}</Button><Button loading={reg.isPending} disabled={!form?.ltid || !form.code || !form.lat !== !form.lng || (imeiChoices.length > 0 && !form.imei)} onClick={() => reg.mutate()}>{t.register}</Button></>}
+        footer={<><Button variant="outline" onClick={closeForm}>{c.cancel}</Button><Button loading={reg.isPending} disabled={!(canSeeLtid ? form?.ltid : form?.deviceId) || !form?.code || !form.lat !== !form.lng || (imeiChoices.length > 0 && !form.imei)} onClick={() => reg.mutate()}>{t.register}</Button></>}
       >
         {form && (
           <div className="grid grid-cols-2 gap-3">
-            <Field label={t.ltid}><Input value={form.ltid} onChange={set('ltid')} /></Field>
+            {canSeeLtid && (
+              <Field label={t.ltid}>
+                <div className="relative">
+                  {/* not type=password: that would offer to save it */}
+                  <Input value={form.ltid} onChange={set('ltid')} autoComplete="off" spellCheck={false} className="pr-9 font-mono" style={ltidOpen ? undefined : ({ WebkitTextSecurity: 'disc' } as React.CSSProperties)} />
+                  <button type="button" className="absolute right-2 top-2.5 text-subtle hover:text-foreground" title={ltidOpen ? t.hideLtid : t.showLtid} aria-label={ltidOpen ? t.hideLtid : t.showLtid} onClick={() => setLtidOpen(!ltidOpen)}>
+                    {ltidOpen ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </Field>
+            )}
             <Field label={t.code}><Input value={form.code} onChange={(e) => { setScanned(false); set('code')(e); }} placeholder="TL01.0123" /></Field>
             {codeMismatch && <div className="col-span-2 text-sm text-st-offline">{fill(t.codeMismatch, { code: boardCode })}</div>}
             {unsigned && <div className="col-span-2 text-sm text-st-fault">{t.sigNoneHint}</div>}

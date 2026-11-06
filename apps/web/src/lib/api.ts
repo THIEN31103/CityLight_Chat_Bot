@@ -216,7 +216,9 @@ export interface SystemSettings {
 }
 
 export interface CabinetInput {
-  ltid: string;
+  /** provider only; everyone else registers a device of the unregistered list */
+  ltid?: string;
+  deviceId?: string;
   code: string;
   /** empty = the cabinet code */
   name?: string | null;
@@ -354,7 +356,9 @@ export interface SystemStorage {
 }
 
 export interface UnknownDevice {
-  ltid: string;
+  id: string;
+  /** provider only */
+  ltid?: string;
   imei: string;
   firstSeenAt: string;
   lastSeenAt: string;
@@ -376,8 +380,8 @@ export interface RegistrationRecord {
   at: string;
   code: string;
   name: string;
-  /** null when the cabinet no longer exists */
-  ltid: string | null;
+  /** provider only; null when the cabinet no longer exists */
+  ltid?: string | null;
   by: string;
   via: 'form' | 'qr' | 'replace';
   /** false = stopped or removed since */

@@ -9,6 +9,7 @@ import { useSession } from '@/stores/session';
 import { fmtDuration, fmtNum, fmtTime } from '@/lib/utils';
 import { Badge, Button, Card, CardHeader, Checkbox, Empty, Input, KV, Select, Spinner, Unsupported, toast } from '@/components/ui';
 import { DimmingEditor } from '@/components/DimmingEditor';
+import { Ltid } from '@/components/Ltid';
 import { ErrorCodeBadge } from '@/components/ErrorHelp';
 import { RelocateGpsButton } from './RelocateGps';
 import { ImeiButton } from './ImeiDecision';
@@ -264,7 +265,7 @@ export function InfoTab({ detail, onLocate }: { detail: Detail; onLocate: (p: Ge
       <Card>
         <CardHeader title={t.device} />
         <div className="px-4 py-2">
-          <KV label={t.ltid} value={c.ltid} />
+          {c.ltid && <KV label={t.ltid} value={<Ltid value={c.ltid} />} />}
           <KV label="IMEI" value={<span className="inline-flex items-center gap-2"><span className="font-mono">{c.imei || t.noImei}</span><ImeiButton cabinetId={c.id} label={`${c.code} - ${c.name}`} text="IMEI…" /></span>} />
           <KV label="Firmware" value={<Badge tone={c.fwProfile === 'v2-1307ebc' ? 'orange' : 'blue'}>{c.fwProfile}</Badge>} />
           <KV label={t.battery} value={fmtNum(s.batteryMv, 0, 'mV')} />

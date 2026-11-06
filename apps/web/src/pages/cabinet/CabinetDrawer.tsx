@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { useDict } from '@/i18n';
 import { CABINET } from '@/i18n/dict/cabinet';
 import { DirectionsLink } from '@/components/Directions';
+import { Ltid } from '@/components/Ltid';
 import { CabinetExportButton } from '@/components/ExportRange';
 import { ControlTab } from './ControlTab';
 import { DiagnosticsTab } from './DiagnosticsTab';
@@ -92,7 +93,7 @@ export function CabinetDrawer({
               {data.cabinet.fwProfile === 'v2-1307ebc' && <Badge tone="orange">{t.oldFw}</Badge>}
             </div>
             <div className="text-xs text-subtle">
-              {data.cabinet.ltid} · {data.cabinet.address}, {data.cabinet.wardName}, {data.cabinet.districtName} · {t.updated} {fmtTime(data.state.lastSeenAt)}
+              {data.cabinet.ltid && <><Ltid value={data.cabinet.ltid} /> · </>}{data.cabinet.address}, {data.cabinet.wardName}, {data.cabinet.districtName} · {t.updated} {fmtTime(data.state.lastSeenAt)}
             </div>
           </div>
         )}
