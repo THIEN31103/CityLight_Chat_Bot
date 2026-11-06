@@ -3,7 +3,7 @@ import { Controller, Get, Inject, Injectable, Module, Param, Query, Req } from '
 import type { PendingQuery, Row } from 'postgres';
 import { z } from 'zod';
 import type { CabinetState, CabinetStatus, CabinetSummary, FwProfile, GpsDriftItem, GpsSuggestion, MapStats, Schedule, TelemetryPoint } from '@citylight/shared';
-import { GPS_RELOCATE_WINDOW_MIN, buildDiagnostics, regionView, capabilitiesFor, decodeRs485SelfTest, defaultSchedule, defaultThresholds, judgeGpsSuggestion, type HealthInput, type Lang } from '@citylight/shared';
+import { GPS_RELOCATE_WINDOW_MIN, buildDiagnostics, canSeeLtid, regionView, capabilitiesFor, decodeRs485SelfTest, defaultSchedule, defaultThresholds, judgeGpsSuggestion, type HealthInput, type Lang } from '@citylight/shared';
 import type { AuthedRequest } from './auth';
 import { ApiError } from './errors';
 import { REGION } from './region';
@@ -74,13 +74,13 @@ export class CabinetsService {
     return { cabinets: counts, onlinePct: counts.total ? (online / counts.total) * 100 : 0, energyTodayKwh: null, energyYesterdayKwh: null, overdueIncidents: overdue[0]?.n ?? 0 };
   }
 
-  async search(scope: Scope, q: string) {
+  async search(scope: Scope, q: string, byLtid: boolean) {
     const like = `%${q.replace(/[%_]/g, '')}%`;
     const rows = await this.sql<StateRow[]>`
       SELECT c.id, c.ltid, c.code, c.name, c.district_id, c.ward_id, ST_Y(c.location) AS lat, ST_X(c.location) AS lng,
              s.status, s.online, s.branch1_on, s.branch2_on
       FROM cabinets c LEFT JOIN cabinet_state s ON s.cabinet_id = c.id
-      WHERE (c.name ILIKE ${like} OR c.code ILIKE ${like} OR c.ltid ILIKE ${like} OR c.address ILIKE ${like}) AND ${scopeWhere(this.sql, scope)}
+      WHERE (c.name ILIKE ${like} OR c.code ILIKE ${like} OR (${byLtid} AND c.ltid ILIKE ${like}) OR c.address ILIKE ${like}) AND ${scopeWhere(this.sql, scope)}
       ORDER BY c.code LIMIT 10`;
     return rows.map(summary);
   }
@@ -133,10 +133,10 @@ export class CabinetsService {
     return rows.map(summary);
   }
 
-  async list(scope: Scope, page: number, size: number, status?: string, q?: string) {
+  async list(scope: Scope, page: number, size: number, byLtid: boolean, status?: string, q?: string) {
     const like = q ? `%${q.replace(/[%_]/g, '')}%` : null;
     const where = this.sql`WHERE (${status ?? null}::text IS NULL OR coalesce(s.status::text, 'offline') = ${status ?? null})
-      AND (${like}::text IS NULL OR c.name ILIKE ${like} OR c.ltid ILIKE ${like} OR c.code ILIKE ${like})
+      AND (${like}::text IS NULL OR c.name ILIKE ${like} OR (${byLtid} AND c.ltid ILIKE ${like}) OR c.code ILIKE ${like})
       AND ${scopeWhere(this.sql, scope)}`;
     const rows = await this.sql<(StateRow & { district_name: string | null; fw_profile: string; last_seen_at: Date | null })[]>`
       SELECT c.id, c.ltid, c.code, c.name, c.district_id, c.ward_id, ST_Y(c.location) AS lat, ST_X(c.location) AS lng,
@@ -361,7 +361,7 @@ export class CabinetsController {
   // S62 service region for the map (null = no limit)
   @Get('map/region') region() { return { region: REGION ? regionView(REGION) : null }; }
   @Get('map/gps-drift') gpsDrift(@Req() r: AuthedRequest) { return this.svc.gpsDrift(r.user!.scope); }
-  @Get('search') search(@Req() r: AuthedRequest, @Query('q') q = '') { return q.trim().length >= 2 ? this.svc.search(r.user!.scope, q.trim()) : []; }
+  @Get('search') search(@Req() r: AuthedRequest, @Query('q') q = '') { return q.trim().length >= 2 ? this.svc.search(r.user!.scope, q.trim(), canSeeLtid(r.user!.role)) : []; }
   @Get('areas/tree') tree(@Req() r: AuthedRequest) { return this.svc.areaTree(r.user!.scope); }
   @Get('areas/:id/cabinets') areaCabinets(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.areaCabinets(r.user!.scope, id); }
 
@@ -374,7 +374,7 @@ export class CabinetsController {
   @Get('cabinets')
   list(@Req() r: AuthedRequest, @Query() q: unknown) {
     const p = PageQuery.extend({ status: z.string().optional(), q: z.string().max(100).optional() }).parse(q);
-    return this.svc.list(r.user!.scope, p.page, p.size, p.status || undefined, p.q || undefined);
+    return this.svc.list(r.user!.scope, p.page, p.size, canSeeLtid(r.user!.role), p.status || undefined, p.q || undefined);
   }
 
   @Get('cabinets/:id') detail(@Req() r: AuthedRequest, @Param('id') id: string) { return this.svc.detail(r.user!.scope, id); }

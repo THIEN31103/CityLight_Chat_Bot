@@ -1,7 +1,9 @@
 // Maps every thrown error to an RFC 9457 problem response.
 import { ArgumentsHost, Catch, HttpException, type ExceptionFilter } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
+import { canSeeLtid, stripLtid } from '@citylight/shared';
 import { ZodError } from 'zod';
+import type { AuthedRequest } from './auth';
 import { problem } from './infra';
 
 export class ApiError extends HttpException {
@@ -14,6 +16,7 @@ export class ApiError extends HttpException {
 export class ProblemFilter implements ExceptionFilter {
   catch(err: unknown, host: ArgumentsHost) {
     const reply = host.switchToHttp().getResponse<FastifyReply>();
+    const seesLtid = canSeeLtid(host.switchToHttp().getRequest<AuthedRequest>().user?.role);
     if (err instanceof ZodError) {
       const detail = err.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ');
       return reply.status(422).type('application/problem+json').send(problem(422, 'invalid_request', detail));
@@ -27,7 +30,7 @@ export class ProblemFilter implements ExceptionFilter {
         typeof body === 'object' && body && 'code' in body
           ? body
           : problem(status, unknownRoute ? 'route_not_found' : status === 404 ? 'not_found' : 'error', err.message);
-      return reply.status(status).type('application/problem+json').send(p);
+      return reply.status(status).type('application/problem+json').send(seesLtid ? p : stripLtid(p));
     }
     console.error('[api] unhandled', err);
     return reply.status(500).type('application/problem+json').send(problem(500, 'internal_error', 'Lỗi máy chủ'));

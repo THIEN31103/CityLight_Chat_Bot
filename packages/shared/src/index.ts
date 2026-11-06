@@ -13,6 +13,7 @@ export * from './dimming';
 export * from './relocate';
 export * from './enroll';
 export * from './identity';
+export * from './ltid';
 export * from './security';
 export * from './i18n';
 export * from './storage';

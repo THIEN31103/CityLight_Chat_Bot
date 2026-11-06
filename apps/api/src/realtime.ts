@@ -6,6 +6,7 @@ import { Inject, Injectable, Module, type OnModuleDestroy, type OnModuleInit } f
 import { WebSocketGateway, WebSocketServer, type OnGatewayConnection } from '@nestjs/websockets';
 import { Redis } from 'ioredis';
 import type { Server, Socket } from 'socket.io';
+import { stripLtid } from '@citylight/shared';
 import { AUTH_CHANNEL, AuthModule, AuthService, SESSION_COOKIE, publicUser } from './auth';
 import { REDIS, SQL, type Sql } from './infra';
 
@@ -71,7 +72,8 @@ export class RealtimeGateway implements OnGatewayConnection, OnModuleInit, OnMod
     this.sub.on('message', (ch, msg) => {
       try {
         if (ch === AUTH_CHANNEL) return void this.onAuthEvent(JSON.parse(msg));
-        const ev = JSON.parse(msg) as {
+        // rooms are by area, not by role: nobody gets the LTID here, the screens read it from the API
+        const ev = stripLtid(JSON.parse(msg)) as {
           type: string; items?: { cabinetId: string }[]; alarm?: { cabinetId: string }; command?: { cabinetId: string };
           batch?: { requestedById: string };
         };
