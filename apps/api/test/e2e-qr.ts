@@ -70,7 +70,7 @@ async function main() {
 
   const boards = [board(LTIDS[0]!, CODE), board(LTIDS[1]!, CODE_TWICE), board(LTIDS[2]!, CODE_TWICE)];
   const started: SimCabinet[] = [...boards];
-  type Row = { ltid: string; code: string | null; ident: string | null; replaces: { id: string; name: string } | null };
+  type Row = { id: string; ltid: string; code: string | null; ident: string | null; replaces: { id: string; name: string } | null };
   const listed = async () => (await manager.get('/devices/unknown')).data as Row[];
   const row = async (ltid: string) => (await listed()).find((r) => r.ltid === ltid);
   try {
@@ -104,7 +104,7 @@ async function main() {
     check('Quyền Duyệt tủ không mở được phần quản trị khác', (await installer.get('/users')).status === 403);
 
     // ---------- approve ----------
-    const done = await installer.post('/cabinets', { ltid: LTIDS[0]!, code: CODE, scanned: true });
+    const done = await installer.post('/cabinets', { deviceId: (await row(LTIDS[0]!))!.id, code: CODE, scanned: true });
     check('Chỉ cần LTID và mã tủ, đăng ký bằng QR', done.status === 201, `HTTP ${done.status}`);
     const cab = (await sql<{ ltid: string; name: string }[]>`SELECT ltid, name FROM cabinets WHERE code = ${CODE}`)[0];
     check('Tủ gắn đúng ID, tên lấy theo mã tủ', cab?.ltid === LTIDS[0] && cab?.name === CODE);
@@ -130,11 +130,11 @@ async function main() {
     await sleep(2500);
     check('Board ký sai bị ghi nhận chữ ký sai', (await row(LTIDS[12]!))?.ident === 'invalid');
     check('Firmware cũ: chưa có chữ ký', (await row(LTIDS[13]!))?.ident === null);
-    const fakeByInstaller = await installer.post('/cabinets', { ltid: LTIDS[12]!, code: 'E2E.QR13' });
+    const fakeByInstaller = await installer.post('/cabinets', { deviceId: (await row(LTIDS[12]!))!.id, code: 'E2E.QR13' });
     check('Người có quyền duyệt không duyệt được board ký sai', fakeByInstaller.status === 409 && fakeByInstaller.data.code === 'device_bad_signature', `HTTP ${fakeByInstaller.status}`);
     const fakeByAdmin = await manager.post('/cabinets', { ltid: LTIDS[12]!, code: 'E2E.QR13' });
     check('Admin cũng không duyệt được board ký sai', fakeByAdmin.status === 409 && fakeByAdmin.data.code === 'device_bad_signature', `HTTP ${fakeByAdmin.status}`);
-    const oldByInstaller = await installer.post('/cabinets', { ltid: LTIDS[13]!, code: 'E2E.QR14' });
+    const oldByInstaller = await installer.post('/cabinets', { deviceId: (await row(LTIDS[13]!))!.id, code: 'E2E.QR14' });
     check('Board chưa có chữ ký: quyền Duyệt tủ không đủ', oldByInstaller.status === 403 && oldByInstaller.data.code === 'device_unsigned', `HTTP ${oldByInstaller.status}`);
     check('Board chưa có chữ ký: quản lý vẫn duyệt được', (await manager.post('/cabinets', { ltid: LTIDS[13]!, code: 'E2E.QR14' })).status === 201);
     await Promise.all([fake.stop(), old.stop()]);

@@ -412,6 +412,8 @@ export const deviceEvents = pgTable(
 
 export const unknownDevices = pgTable('unknown_devices', {
   ltid: text('ltid').primaryKey(),
+  /** what the API hands out instead of the LTID, which only the provider role may see */
+  id: uuid('id').notNull().defaultRandom(),
   imei: text('imei'),
   /** cabinet code the board reports (LCOD): a scanned QR label finds the device by this */
   code: text('code'),

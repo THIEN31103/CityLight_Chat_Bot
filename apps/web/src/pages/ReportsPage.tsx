@@ -33,7 +33,7 @@ export function ReportsPage() {
   return (
     <div className="mx-auto max-w-4xl space-y-4 p-4">
       <PageHeader title={P.title} subtitle={P.subtitle} />
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card>
           <CardHeader title={P.cabinets} />
           <div className="space-y-3 px-4 pb-4">

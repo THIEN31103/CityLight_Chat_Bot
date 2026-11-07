@@ -391,7 +391,7 @@ async function openGuard(rt: Runtime, type: GuardType, message: string, now = Da
 /** A frame under this cabinet's LTID with another IMEI: not applied; E805 opened (closed by sweep after the hold). */
 async function onSpoof(rt: Runtime, imei: string | null, now = Date.now()) {
   stats.spoofed++;
-  await openGuard(rt, 'spoof_suspect', `Frame mang LTID ${rt.ltid} với IMEI ${imei ?? '(không có)'} khác IMEI đã ghi nhận ${rt.imei}: frame bị bỏ qua`, now);
+  await openGuard(rt, 'spoof_suspect', `Frame mang LTID của tủ với IMEI ${imei ?? '(không có)'} khác IMEI đã ghi nhận ${rt.imei}: frame bị bỏ qua`, now);
 }
 
 /** Guard alarms close SPOOF_HOLD_MS after the last bad frame, or at once when the admin changed the IMEI / UID. */
@@ -424,7 +424,7 @@ async function onIdent(rt: Runtime, id: IdentCheck, now: number): Promise<boolea
   if (!id) return false;
   if (!id.ok) {
     stats.badSig++;
-    await openGuard(rt, 'sig_invalid', `Bộ định danh (LUID/LSEQ/LSIG) mang LTID ${rt.ltid} ký sai: phần định danh bị bỏ qua`, now);
+    await openGuard(rt, 'sig_invalid', `Bộ định danh (LUID/LSEQ/LSIG) mang LTID của tủ ký sai: phần định danh bị bỏ qua`, now);
     return false;
   }
   const j = judgeIdent({ uid: rt.uid, boot: rt.sigBoot }, { uid: id.uid, boot: id.boot }, rt.lowerBoot);
@@ -436,7 +436,7 @@ async function onIdent(rt: Runtime, id: IdentCheck, now: number): Promise<boolea
     case 'foreign':
       stats.spoofed++;
       await setUidPending(rt, id.uid);
-      await openGuard(rt, 'spoof_suspect', `Frame mang LTID ${rt.ltid} từ board UID ${id.uid} khác UID đã ghi nhận ${rt.uid}: frame bị bỏ qua`, now);
+      await openGuard(rt, 'spoof_suspect', `Frame mang LTID của tủ từ board UID ${id.uid} khác UID đã ghi nhận ${rt.uid}: frame bị bỏ qua`, now);
       return true;
     case 'learn': {
       const owner = await sql<{ code: string }[]>`SELECT code FROM cabinets WHERE uid = ${id.uid} AND id <> ${rt.id}`;
@@ -444,7 +444,7 @@ async function onIdent(rt: Runtime, id: IdentCheck, now: number): Promise<boolea
         // the board moved from another registered cabinet: the provider decides (accepting frees it there)
         stats.spoofed++;
         await setUidPending(rt, id.uid);
-        await openGuard(rt, 'spoof_suspect', `Board UID ${id.uid} đang ghi nhận cho tủ ${owner[0].code}: frame mang LTID ${rt.ltid} bị bỏ qua`, now);
+        await openGuard(rt, 'spoof_suspect', `Board UID ${id.uid} đang ghi nhận cho tủ ${owner[0].code}: frame mang LTID của tủ bị bỏ qua`, now);
         return true;
       }
       await sql`UPDATE cabinets SET uid = ${id.uid}, uid_pending = NULL, signed = true, sig_boot = ${id.boot}, key_fp = ${id.fingerprint}

@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { Module } from '@nestjs/common';
-import { APP_FILTER, NestFactory } from '@nestjs/core';
+import { APP_FILTER, APP_INTERCEPTOR, NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import compress from '@fastify/compress';
@@ -20,6 +20,7 @@ import { ReportsModule } from './reports';
 import { IncidentsModule, MAX_PHOTO_BYTES } from './incidents';
 import { InfraModule } from './infra';
 import { LogsModule } from './logs';
+import { LtidInterceptor } from './ltid';
 import { RealtimeModule } from './realtime';
 import { SchedulesModule } from './schedules';
 import { SystemModule } from './system';
@@ -27,7 +28,7 @@ import { UsersModule } from './users';
 
 @Module({
   imports: [InfraModule, AuthModule, CabinetsModule, CommandsModule, FavoritesModule, AlarmsModule, AlarmConfigModule, SchedulesModule, DimmingModule, IncidentsModule, GisModule, ReportsModule, AdminModule, UsersModule, LogsModule, SystemModule, RealtimeModule],
-  providers: [{ provide: APP_FILTER, useClass: ProblemFilter }],
+  providers: [{ provide: APP_FILTER, useClass: ProblemFilter }, { provide: APP_INTERCEPTOR, useClass: LtidInterceptor }],
 })
 class AppModule {}
 

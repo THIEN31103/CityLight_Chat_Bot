@@ -7,7 +7,7 @@
 // Temperature only for cabinets with a DS18B20 (S54). Times in Asia/Ho_Chi_Minh, texts in the user's language.
 import { Controller, Get, Inject, Module, Param, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
-import { LABELS, RAW_TELEMETRY_DAYS, alarmTypeLabels, defineDict, describeCommand, fill, type CommandType, type Lang } from '@citylight/shared';
+import { LABELS, RAW_TELEMETRY_DAYS, alarmTypeLabels, defineDict, describeCommand, fill, scrubLtid, type CommandType, type Lang } from '@citylight/shared';
 import { z } from 'zod';
 import { AuthModule, RequirePerm, type AuthedRequest, type SessionUser } from './auth';
 import { CabinetsModule, CabinetsService } from './cabinets';
@@ -303,7 +303,7 @@ export class ReportsController {
       { header: C.code, value: (a) => a.code, width: 8 },
       { header: C.type, value: (a) => types[a.type as keyof typeof types] ?? a.type, width: 26 },
       { header: C.severity, value: (a) => LABELS[lang].severity[a.severity as 'critical' | 'major' | 'minor'] ?? a.severity, width: 12 },
-      { header: C.message, value: (a) => a.message, width: 50 },
+      { header: C.message, value: (a) => scrubLtid(a.message), width: 50 },
       { header: C.start, value: (a) => vnTime(a.started_at), numFmt: DATE_TIME, width: 18 },
       { header: C.end, value: (a) => vnTime(a.ended_at), numFmt: DATE_TIME, width: 18 },
     ], alarms);

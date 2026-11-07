@@ -51,7 +51,8 @@ export interface ManagementUnit {
 
 export interface Cabinet {
   id: string;
-  ltid: string;
+  /** provider only (shared/ltid.ts): absent for every other role */
+  ltid?: string;
   code: string;
   name: string;
   address: string;
@@ -116,7 +117,8 @@ export interface CabinetState {
 
 export interface CabinetSummary {
   id: string;
-  ltid: string;
+  /** provider only (shared/ltid.ts): absent for every other role */
+  ltid?: string;
   code: string;
   name: string;
   location: GeoPoint;

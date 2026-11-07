@@ -13,6 +13,7 @@ import { api, ApiError } from '@/lib/api';
 import { useSession } from '@/stores/session';
 import { downloadCsv } from '@/lib/exportFile';
 import { fmtTime } from '@/lib/utils';
+import { isMobileNow } from '@/lib/useIsMobile';
 import { DataTable } from '@/components/DataTable';
 import { Badge, Button, Checkbox, Field, Input, Modal, PageHeader, Select, Textarea, toast } from '@/components/ui';
 
@@ -46,7 +47,7 @@ export function IncidentsPage() {
   const [params, setParams] = useSearchParams();
   const q = params.get('q') ?? 'all';
   const district = params.get('district') ?? '';
-  const [showTree, setShowTree] = useState(true);
+  const [showTree, setShowTree] = useState(() => !isMobileNow());
   const [from, setFrom] = useState(dayjs().startOf('month').format('YYYY-MM-DD'));
   const [to, setTo] = useState(dayjs().format('YYYY-MM-DD'));
   const [page, setPage] = useState(1);
@@ -89,9 +90,9 @@ export function IncidentsPage() {
   );
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full max-md:flex-col">
       {showTree && (
-        <aside className="w-60 shrink-0 overflow-auto border-r bg-panel p-2">
+        <aside className="w-60 shrink-0 overflow-auto border-r bg-panel p-2 max-md:max-h-48 max-md:w-full max-md:border-b max-md:border-r-0">
           <div className="mb-1 px-2 text-xs font-semibold uppercase text-subtle">{t.areas}</div>
           <button className={`block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted ${!district ? 'bg-primary/10 font-medium' : ''}`} onClick={() => setParam('district', '')}>
             {t.allAreas}
@@ -103,7 +104,7 @@ export function IncidentsPage() {
           ))}
         </aside>
       )}
-      <div className="min-w-0 flex-1 overflow-auto p-4">
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto p-4 max-md:p-3">
         <PageHeader
           title={t.title}
           actions={
@@ -147,10 +148,11 @@ export function IncidentsPage() {
           loading={isLoading}
           onRowClick={(i) => nav(`/incidents/${i.id}`)}
           initialHidden={{ resolvedAt: false, resolution: false, source: false }}
+          mobileHidden={['ward', 'reporter', 'category']}
           toolbar={
             <>
               <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" aria-label={t.from} />
-              <span className="text-subtle">→</span>
+              <span className="text-subtle max-md:hidden">→</span>
               <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" aria-label={t.to} />
             </>
           }

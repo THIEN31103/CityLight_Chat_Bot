@@ -13,6 +13,7 @@ import type { AlarmType, Incident, IncidentPhoto, IncidentStatus, Page, RoleKey 
 import {
   INCIDENT_CATEGORIES, INCIDENT_STATUS_LABELS, LABELS, OPEN_INCIDENT_STATUSES, ROLE_PERMISSIONS, categoryForAlarm, findTransition, hasPermission,
   incidentCategoryLabel, incidentOverdue,
+  scrubLtid,
 } from '@citylight/shared';
 import { EVENTS_CHANNEL } from '@citylight/db/commands';
 import { RequirePerm, type AuthedRequest, type SessionUser } from './auth';
@@ -170,7 +171,7 @@ export class IncidentsService {
       if (cabinetId && cabinetId !== a.cabinet_id) throw new ApiError(422, 'alarm_other_cabinet', 'Cảnh báo thuộc tủ khác');
       cabinetId = a.cabinet_id;
       category ??= categoryForAlarm(a.type);
-      content ??= `${a.code}: ${a.message}`;
+      content ??= `${a.code}: ${scrubLtid(a.message)}`;
       const open = (await this.sql<{ id: string; code: string }[]>`
         SELECT id, code FROM incidents WHERE alarm_id = ${b.alarmId} AND status::text = ANY(${[...OPEN_INCIDENT_STATUSES]}::text[])`)[0];
       if (open) throw new ApiError(409, 'incident_exists', `Cảnh báo này đã có sự cố ${open.code} đang mở`, { code: open.code });
@@ -364,7 +365,7 @@ export class IncidentsController {
       { header: T.reportedBy, value: (i) => i.reportedBy, width: 20 },
       { header: T.source, value: (i) => (i.source === 'alarm' ? T.fromAlarm : T.manual), width: 10 },
       { header: T.category, value: (i) => incidentCategoryLabel(i.category, lang), width: 18 },
-      { header: T.content, value: (i) => i.content, width: 50 },
+      { header: T.content, value: (i) => scrubLtid(i.content), width: 50 },
       { header: T.status, value: (i) => LABELS[lang].incidentStatus[i.status] },
       { header: T.assignee, value: (i) => i.assignee, width: 20 },
       { header: T.deadline, value: (i) => vnTime(i.deadline), numFmt: DATE_TIME, width: 18 },

@@ -4,7 +4,7 @@
 import { Body, Controller, Delete, Get, HttpCode, Inject, Injectable, Module, Param, Patch, Post, Put, Req } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { z } from 'zod';
-import { DEFAULT_CABINET_LOCATION, GPS_RELOCATE_STALE_M, LAMP_GROUP_LABELS, OFFLINE_AFTER_MS, defaultFieldMap, distanceM, hasPermission, judgeEnrollment, judgeGpsSuggestion, type Lang } from '@citylight/shared';
+import { DEFAULT_CABINET_LOCATION, GPS_RELOCATE_STALE_M, LAMP_GROUP_LABELS, OFFLINE_AFTER_MS, canSeeLtid, defaultFieldMap, distanceM, hasPermission, judgeEnrollment, judgeGpsSuggestion, type Lang } from '@citylight/shared';
 import { SCHEDULES_CHANNEL } from '@citylight/db/batches';
 import { CONFIG_CHANNEL } from '@citylight/db/notify';
 import { RequirePerm, RequireReauth, type AuthedRequest, type SessionUser } from './auth';
@@ -43,13 +43,18 @@ const REGISTERED_BY_QR = 'Đăng ký tủ bằng QR';
 const BOARD_REPLACED = 'Thay thiết bị tủ';
 const REGISTRATION_HISTORY_LIMIT = 100;
 
-/** Only the LTID and the code are required: the name falls back to the code, the position to the device GPS. */
+/**
+ * The code and the device are required: the name falls back to the code, the position to the device GPS.
+ * deviceId = a row of the unregistered list. Only the provider role knows LTIDs, so only it can type one.
+ */
 const RegisterBody = CabinetBody.extend({
+  ltid: Ltid.optional(),
+  deviceId: uuid.optional(),
   name: Name.nullish(),
   location: Point.nullish(),
   /** the code came from the QR label, not typed: kept in the history */
   scanned: z.boolean().optional(),
-});
+}).refine((b) => b.ltid || b.deviceId, { message: 'Cần ltid hoặc deviceId' });
 
 const CabinetPatch = CabinetBody.partial()
   .omit({ imei: true, fwProfile: true, hasTempSensor: true })
@@ -230,25 +235,28 @@ export class AdminService {
   /** Register a cabinet (from an unknown device or by hand); the ingest worker picks it up at once. */
   async registerCabinet(u: SessionUser, body: unknown, ip?: string) {
     const b = RegisterBody.parse(body);
+    if (b.ltid && !canSeeLtid(u.role)) throw new ApiError(403, 'ltid_forbidden', 'Chỉ nhà cung cấp mới nhập được LTID');
+    const ltid = b.ltid ?? (await this.sql<{ ltid: string }[]>`SELECT ltid FROM unknown_devices WHERE id = ${b.deviceId!}`)[0]?.ltid.toUpperCase();
+    if (!ltid) throw new ApiError(409, 'device_gone', 'Thiết bị không còn trong danh sách chờ', { code: b.code });
     // a ward implies its district
     const districtId = b.districtId ?? (b.wardId ? (await this.sql<{ p: string }[]>`SELECT parent_id AS p FROM areas WHERE id = ${b.wardId}`)[0]?.p ?? null : null);
     await this.checkPlaces(u, { ...b, districtId });
-    const dup = (await this.sql<{ ltid: string; code: string }[]>`SELECT ltid, code FROM cabinets WHERE upper(ltid) = ${b.ltid} OR upper(code) = upper(${b.code})`)[0];
+    const dup = (await this.sql<{ ltid: string; code: string }[]>`SELECT ltid, code FROM cabinets WHERE upper(ltid) = ${ltid} OR upper(code) = upper(${b.code})`)[0];
     if (dup)
-      throw dup.ltid.toUpperCase() === b.ltid
-        ? new ApiError(409, 'ltid_taken', `LTID ${b.ltid} đã được đăng ký`, { ltid: b.ltid })
+      throw dup.ltid.toUpperCase() === ltid
+        ? new ApiError(409, 'ltid_taken', `LTID ${ltid} đã được đăng ký`, { ltid })
         : new ApiError(409, 'cabinet_code_taken', `Mã tủ ${b.code} đã có`, { code: b.code });
     // S42: the IMEI becomes the cabinet's identity on the anonymous broker. Two IMEIs under one unknown LTID
     // means someone else uses it too: the admin must say which one is the real cabinet.
     const unk = (await this.sql<{ imei: string | null; other_imei: string | null; ident: string | null; uid: string | null; lat: number | null; lng: number | null }[]>`
-      SELECT imei, other_imei, ident, uid, ST_Y(gps) AS lat, ST_X(gps) AS lng FROM unknown_devices WHERE upper(ltid) = ${b.ltid}`)[0];
+      SELECT imei, other_imei, ident, uid, ST_Y(gps) AS lat, ST_X(gps) AS lng FROM unknown_devices WHERE upper(ltid) = ${ltid}`)[0];
     // LTID + LCOD can be forged by anyone with the broker password: only a signed identity proves it is our board
-    if (unk?.ident === 'invalid') throw new ApiError(409, 'device_bad_signature', `Thiết bị ${b.ltid} ký sai, không đăng ký được`, { ltid: b.ltid });
+    if (unk?.ident === 'invalid') throw new ApiError(409, 'device_bad_signature', `Thiết bị của tủ ${b.code} ký sai, không đăng ký được`, { code: b.code });
     if (unk?.ident !== 'valid' && !hasPermission(u.role, 'admin.devices'))
-      throw new ApiError(403, 'device_unsigned', `Thiết bị ${b.ltid} chưa có chữ ký, cần quản lý duyệt`, { ltid: b.ltid });
+      throw new ApiError(403, 'device_unsigned', `Thiết bị của tủ ${b.code} chưa có chữ ký, cần quản lý duyệt`, { code: b.code });
     if (unk?.other_imei && !b.imei)
-      throw new ApiError(409, 'imei_conflict', `LTID ${b.ltid} đã gửi frame với 2 IMEI khác nhau (${unk.imei} và ${unk.other_imei}): chọn IMEI của tủ thật`, {
-        ltid: b.ltid,
+      throw new ApiError(409, 'imei_conflict', `Thiết bị của tủ ${b.code} đã gửi frame với 2 IMEI khác nhau (${unk.imei} và ${unk.other_imei}): chọn IMEI của tủ thật`, {
+        code: b.code,
         imei: unk.imei ?? '',
         other: unk.other_imei,
       });
@@ -260,15 +268,15 @@ export class AdminService {
     const id = await this.sql.begin(async (tx) => {
       const r = (await tx<{ id: string }[]>`
         INSERT INTO cabinets (organization_id, ltid, code, name, address, street, ward_id, district_id, management_unit_id, zone1_id, location, fw_profile, has_temp_sensor, notes, imei, uid)
-        VALUES (${u.organizationId}, ${b.ltid}, ${b.code}, ${name}, ${b.address ?? null}, ${b.street ?? null}, ${b.wardId ?? null}, ${districtId},
+        VALUES (${u.organizationId}, ${ltid}, ${b.code}, ${name}, ${b.address ?? null}, ${b.street ?? null}, ${b.wardId ?? null}, ${districtId},
                 ${b.managementUnitId ?? null}, ${b.zone1Id ?? null}, ST_SetSRID(ST_MakePoint(${location.lng}, ${location.lat}), 4326), ${b.fwProfile},
                 ${b.hasTempSensor}, ${b.notes ?? null}, ${imei}, ${uid})
         RETURNING id`)[0]!;
       await tx`INSERT INTO cabinet_state (cabinet_id, status, online) VALUES (${r.id}, 'offline', false) ON CONFLICT DO NOTHING`;
-      await tx`DELETE FROM unknown_devices WHERE upper(ltid) = ${b.ltid}`;
+      await tx`DELETE FROM unknown_devices WHERE upper(ltid) = ${ltid}`;
       return r.id;
     });
-    await this.log(u, b.scanned ? REGISTERED_BY_QR : REGISTERED_BY_FORM, 'cabinet', id, `${b.code} - ${name}`, `LTID ${b.ltid}${imei ? `, IMEI ${imei}` : ''}`, ip);
+    await this.log(u, b.scanned ? REGISTERED_BY_QR : REGISTERED_BY_FORM, 'cabinet', id, `${b.code} - ${name}`, `LTID ${ltid}${imei ? `, IMEI ${imei}` : ''}`, ip);
     await this.reload('registry');
     return { id };
   }
@@ -317,7 +325,7 @@ export class AdminService {
     const { status, cabinet, device } = await this.lookupCode(u, code);
     if (status === 'conflict') throw new ApiError(409, 'enroll_conflict', `Có nhiều thiết bị cùng báo mã tủ ${code}`, { code });
     if (status !== 'replace' || !cabinet || !device) throw new ApiError(409, 'replace_no_device', `Chưa có thiết bị mới báo mã tủ ${code}`, { code });
-    if (device.ident === 'invalid') throw new ApiError(409, 'device_bad_signature', `Thiết bị ${device.ltid} ký sai, không thay được`, { ltid: device.ltid });
+    if (device.ident === 'invalid') throw new ApiError(409, 'device_bad_signature', `Thiết bị của tủ ${code} ký sai, không thay được`, { code });
     const cur = (await this.sql<{ ltid: string; imei: string | null }[]>`SELECT ltid, imei FROM cabinets WHERE id = ${cabinet.id}`)[0]!;
     if (device.imei && (await this.sql`SELECT 1 FROM cabinets WHERE imei = ${device.imei} AND id <> ${cabinet.id}`).length)
       throw new ApiError(409, 'imei_taken', `IMEI ${device.imei} đang thuộc một tủ khác`, { imei: device.imei });
@@ -336,6 +344,7 @@ export class AdminService {
   async updateCabinet(u: SessionUser, id: string, body: unknown, ip?: string) {
     const cid = uuid.parse(id);
     const b = CabinetPatch.parse(body);
+    if (b.ltid !== undefined && !canSeeLtid(u.role)) throw new ApiError(403, 'ltid_forbidden', 'Chỉ nhà cung cấp mới sửa được LTID');
     if (b.location) assertInRegion(b.location);
     const cur = (await this.sql<{ ltid: string; code: string; district_id: string | null }[]>`SELECT ltid, code, district_id FROM cabinets WHERE id = ${cid} AND organization_id = ${u.organizationId}`)[0];
     if (!cur) throw new ApiError(404, 'not_found', 'Không tìm thấy tủ');

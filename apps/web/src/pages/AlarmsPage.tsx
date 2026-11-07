@@ -88,7 +88,7 @@ export function AlarmsPage() {
   );
 
   return (
-    <div className="p-4">
+    <div className="p-4 max-md:p-3">
       <PageHeader
         title={t.title}
         subtitle={t.subtitle}
@@ -112,6 +112,7 @@ export function AlarmsPage() {
         </TabsList>
       </Tabs>
       <DataTable
+        mobileHidden={[t.col.area, t.col.type, t.col.duration]}
         columns={columns}
         data={data?.items ?? []}
         total={data?.total}

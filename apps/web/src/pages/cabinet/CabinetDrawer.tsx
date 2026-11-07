@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { useDict } from '@/i18n';
 import { CABINET } from '@/i18n/dict/cabinet';
 import { DirectionsLink } from '@/components/Directions';
+import { Ltid } from '@/components/Ltid';
 import { CabinetExportButton } from '@/components/ExportRange';
 import { ControlTab } from './ControlTab';
 import { DiagnosticsTab } from './DiagnosticsTab';
@@ -73,15 +74,15 @@ export function CabinetDrawer({
       className={cn(
         'flex flex-col bg-panel shadow-2xl',
         mode === 'dock'
-          ? 'absolute inset-y-0 right-0 z-20 w-[min(760px,100vw)] border-l'
-          : 'relative z-30 h-[min(88vh,900px)] w-[min(1100px,calc(100vw-32px))] overflow-hidden rounded-xl border',
+          ? 'absolute inset-y-0 right-0 z-20 w-[min(760px,100vw)] border-l max-md:border-l-0'
+          : 'relative z-30 h-[min(88vh,900px)] w-[min(1100px,calc(100vw-32px))] overflow-hidden rounded-xl border max-md:h-full max-md:w-full max-md:rounded-none max-md:border-0',
       )}
       onClick={(e) => e.stopPropagation()}
     >
       <div className={`h-1 ${data ? STATUS_BAR[data.state.status] : 'bg-border'}`} />
       <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
         {isLoading || !data ? (
-          <Skeleton className="h-10 w-72" />
+          <Skeleton className="h-10 w-72 max-w-full" />
         ) : (
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -92,7 +93,7 @@ export function CabinetDrawer({
               {data.cabinet.fwProfile === 'v2-1307ebc' && <Badge tone="orange">{t.oldFw}</Badge>}
             </div>
             <div className="text-xs text-subtle">
-              {data.cabinet.ltid} · {data.cabinet.address}, {data.cabinet.wardName}, {data.cabinet.districtName} · {t.updated} {fmtTime(data.state.lastSeenAt)}
+              {data.cabinet.ltid && <><Ltid value={data.cabinet.ltid} /> · </>}{data.cabinet.address}, {data.cabinet.wardName}, {data.cabinet.districtName} · {t.updated} {fmtTime(data.state.lastSeenAt)}
             </div>
           </div>
         )}
@@ -101,7 +102,7 @@ export function CabinetDrawer({
           {data && <CabinetExportButton cabinetId={cabinetId} />}
           <button
             onClick={onToggleMode}
-            className="rounded-md p-1.5 hover:bg-muted"
+            className="rounded-md p-1.5 hover:bg-muted max-md:hidden"
             aria-label={mode === 'center' ? t.dock : t.center}
             title={mode === 'center' ? t.dock : t.center}
           >
@@ -129,7 +130,7 @@ export function CabinetDrawer({
             <TabsTrigger value="alarms">{t.tabs.alarms}</TabsTrigger>
             <TabsTrigger value="commands">{t.tabs.commands}</TabsTrigger>
           </TabsList>
-          <div className="min-h-0 flex-1 overflow-auto p-4">
+          <div className="min-h-0 flex-1 overflow-auto p-4 max-md:p-3">
             <TabsContent value="control">
               <ControlTab detail={data} />
             </TabsContent>
@@ -177,7 +178,7 @@ export function CabinetDrawer({
 
   if (mode === 'dock') return panel;
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/35 p-4 backdrop-blur-[1px]" onClick={onClose}>
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/35 p-4 backdrop-blur-[1px] max-md:p-0" onClick={onClose}>
       {panel}
     </div>
   );

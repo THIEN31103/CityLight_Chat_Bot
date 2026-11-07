@@ -241,7 +241,7 @@ export class MockApiError extends Error {
 
 function buildFrame(c: Cabinet, type: CommandType, p: Record<string, unknown>): string {
   // Same builder the real command-worker uses (PULSE_ON = 2 frames).
-  return buildCommandFrames(c.ltid, type, p).join('\n');
+  return buildCommandFrames(c.ltid!, type, p).join('\n');
 }
 
 export function createCommand(

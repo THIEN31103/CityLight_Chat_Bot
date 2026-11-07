@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react';
 import { Navigate, NavLink, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, QrCode } from 'lucide-react';
+import { Eye, EyeOff, Plus, QrCode } from 'lucide-react';
 import type { AlarmType, Permission, RoleKey } from '@citylight/shared';
 import { LAMP_GROUP_LABELS, ROLE_PERMISSIONS, alarmTypeLabels, assignableRoles, hasPermission, parseCabinetCode, roleRequires2fa, roleSeesAll } from '@citylight/shared';
 import { api, ApiError, type AdminUser, type UnknownDevice } from '@/lib/api';
@@ -14,6 +14,8 @@ import { ADMIN, PERMISSION_LABELS } from '@/i18n/dict/admin';
 import { Badge, Button, Card, CardHeader, Checkbox, Field, Input, Modal, PageHeader, Select, Spinner, Toggle, confirm, toast } from '@/components/ui';
 import { ErrorCatalogTable } from '@/components/ErrorHelp';
 import { ForbiddenPage } from '@/pages/ErrorPages';
+import { Ltid } from '@/components/Ltid';
+import { useIsMobile } from '@/lib/useIsMobile';
 import { QrScanner } from '@/components/QrScanner';
 
 const TABS: { id: string; label: keyof (typeof ADMIN)['vi']['tabs']; perm: Permission }[] = [
@@ -36,16 +38,16 @@ export function AdminPage() {
   if (!tabs.length) return <ForbiddenPage />;
   if (!tabs.some((t) => t.id === tab)) return <Navigate to={`/admin/${tabs[0]!.id}`} replace />;
   return (
-    <div className="flex h-full">
-      <aside className="w-56 shrink-0 border-r bg-panel p-2">
-        <div className="mb-1 px-2 text-xs font-semibold uppercase text-subtle">{a.title}</div>
+    <div className="flex h-full max-md:flex-col">
+      <aside className={cn('w-56 shrink-0 border-r bg-panel p-2 max-md:flex max-md:w-full max-md:gap-1 max-md:overflow-x-auto max-md:border-b max-md:border-r-0', tabs.length < 2 && 'max-md:hidden')}>
+        <div className="mb-1 px-2 text-xs font-semibold uppercase text-subtle max-md:hidden">{a.title}</div>
         {tabs.map((t) => (
-          <NavLink key={t.id} to={`/admin/${t.id}`} className={({ isActive }) => cn('block rounded px-2 py-1.5 text-sm hover:bg-muted', isActive && 'bg-primary/10 font-medium')}>
+          <NavLink key={t.id} to={`/admin/${t.id}`} className={({ isActive }) => cn('block rounded px-2 py-1.5 text-sm hover:bg-muted max-md:shrink-0 max-md:whitespace-nowrap', isActive && 'bg-primary/10 font-medium')}>
             {a.tabs[t.label]}
           </NavLink>
         ))}
       </aside>
-      <div className="min-w-0 flex-1 overflow-auto p-4">
+      <div className="min-h-0 min-w-0 flex-1 overflow-auto p-4 max-md:p-3">
         {tab === 'users' && <UsersAdmin />}
         {tab === 'roles' && <RolesAdmin />}
         {tab === 'areas' && <AreasAdmin />}
@@ -441,13 +443,14 @@ function DevicesAdmin() {
   const qc = useQueryClient();
   const t = useDict(ADMIN).devices;
   const c = useDict(COMMON);
+  const mobile = useIsMobile();
   // a board that was just powered shows up on its own
   const { data } = useQuery({ queryKey: ['unknown-devices'], queryFn: () => api.unknownDevices(), refetchInterval: 5000 });
   const history = useQuery({ queryKey: ['registration-history'], queryFn: api.registrationHistory });
   const tree = useQuery({ queryKey: ['area-tree'], queryFn: api.areaTree });
   const zones = useQuery({ queryKey: ['zones'], queryFn: api.zones });
   const districts = tree.data?.areas.filter((a) => a.kind === 'district') ?? [];
-  const blank = { ltid: '', code: '', name: '', lat: '', lng: '', districtId: '', wardId: '', zone1Id: '', address: '', imei: '' };
+  const blank = { deviceId: '', ltid: '', code: '', name: '', lat: '', lng: '', districtId: '', wardId: '', zone1Id: '', address: '', imei: '' };
   const [form, setForm] = useState<typeof blank | null>(null);
   const [tempSensor, setTempSensor] = useState(false);
   // the device's own GPS fix pre-fills the position (wrong hand-typed coordinates are the usual E802 cause)
@@ -459,9 +462,12 @@ function DevicesAdmin() {
   // the code in the form came from the QR label (typing over it clears this)
   const [scanned, setScanned] = useState(false);
   const canReplace = useSession((s) => s.can('admin.devices'));
+  const canSeeLtid = useSession((s) => s.can('device.identity'));
+  const [ltidOpen, setLtidOpen] = useState(false);
   const closeForm = () => {
     setForm(null);
     setScanned(false);
+    setLtidOpen(false);
   };
   const replace = useMutation({
     mutationFn: (code: string) => api.replaceDevice(code),
@@ -485,7 +491,7 @@ function DevicesAdmin() {
     setTempSensor(false);
     setFromGps(!!d.gps);
     setImeiChoices(d.otherImei && d.imei ? [d.imei, d.otherImei] : []);
-    setForm({ ...blank, ltid: d.ltid, code: d.code ?? '', lat: d.gps ? d.gps.lat.toFixed(7) : '', lng: d.gps ? d.gps.lng.toFixed(7) : '', imei: d.otherImei ? '' : (d.imei ?? '') });
+    setForm({ ...blank, deviceId: d.id, ltid: d.ltid ?? '', code: d.code ?? '', lat: d.gps ? d.gps.lat.toFixed(7) : '', lng: d.gps ? d.gps.lng.toFixed(7) : '', imei: d.otherImei ? '' : (d.imei ?? '') });
   };
   // a scanned label or a typed code: go straight to that cabinet, however long the list is
   const openByCode = async (raw: string, fromLabel: boolean) => {
@@ -508,14 +514,14 @@ function DevicesAdmin() {
     }
   };
   // what this board itself reports (LCOD): a different code here means the wrong label or the wrong board
-  const boardCode = data?.find((d) => d.ltid === form?.ltid)?.code;
+  const boardCode = data?.find((d) => d.id === form?.deviceId)?.code;
   const codeMismatch = !!boardCode && !!form?.code && form.code !== boardCode;
-  const unsigned = !!data?.some((d) => d.ltid === form?.ltid && !d.ident);
+  const unsigned = !!data?.some((d) => d.id === form?.deviceId && !d.ident);
   const wards = tree.data?.areas.filter((a) => a.kind === 'ward' && a.parentId === form?.districtId) ?? [];
   const reg = useMutation({
     mutationFn: () =>
       api.registerCabinet({
-        ltid: form!.ltid, code: form!.code, name: form!.name.trim() || null, location: form!.lat && form!.lng ? { lat: Number(form!.lat), lng: Number(form!.lng) } : null,
+        ...(canSeeLtid ? { ltid: form!.ltid } : { deviceId: form!.deviceId }), code: form!.code, name: form!.name.trim() || null, location: form!.lat && form!.lng ? { lat: Number(form!.lat), lng: Number(form!.lng) } : null,
         districtId: form!.districtId || null, wardId: form!.wardId || null, zone1Id: form!.zone1Id || null, address: form!.address || null,
         imei: form!.imei || null, hasTempSensor: tempSensor, scanned,
       }),
@@ -529,11 +535,24 @@ function DevicesAdmin() {
     onError: errToast,
   });
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) => setForm((f) => ({ ...f!, [k]: e.target.value }));
+  const sigBadge = (d: UnknownDevice) => <Badge tone={d.ident === 'valid' ? 'green' : d.ident === 'invalid' ? 'red' : 'orange'}>{d.ident === 'valid' ? t.sigOk : d.ident === 'invalid' ? t.sigBadShort : t.sigNone}</Badge>;
+  const deviceAction = (d: UnknownDevice) =>
+    blocked(d) ? (
+      <div className="max-w-[14rem] text-xs text-st-offline max-md:max-w-none">{blocked(d)}</div>
+    ) : d.replaces ? (
+      <>
+        <div className="mb-1 text-xs text-st-fault">{fill(t.newBoardFor, { name: d.replaces.name })}</div>
+        <Button size="sm" className="max-md:w-full" loading={replace.isPending} onClick={() => void askReplace(d)}>{t.replace}</Button>
+      </>
+    ) : (
+      <Button size="sm" className="max-md:w-full" onClick={() => review(d)}>{t.review}</Button>
+    );
+  const viaBadge = (via: string) => <Badge tone={via === 'qr' ? 'green' : via === 'replace' ? 'orange' : 'blue'}>{via === 'qr' ? t.history.viaQr : via === 'replace' ? t.history.viaReplace : t.history.viaForm}</Badge>;
   return (
     <>
       <PageHeader title={t.title} subtitle={t.subtitle} actions={<>
-        <Button onClick={() => setPageScan(true)}><QrCode className="h-4 w-4" /> {t.scanPage}</Button>
-        <Button variant="outline" onClick={() => { setFromGps(false); setTempSensor(false); setForm(blank); }}><Plus className="h-4 w-4" /> {t.registerNew}</Button>
+        <Button className="max-md:h-12 max-md:w-full max-md:text-base" onClick={() => setPageScan(true)}><QrCode className="h-4 w-4" /> {t.scanPage}</Button>
+        {canSeeLtid && <Button variant="outline" onClick={() => { setFromGps(false); setTempSensor(false); setLtidOpen(true); setForm(blank); }}><Plus className="h-4 w-4" /> {t.registerNew}</Button>}
       </>} />
       <Modal open={pageScan} onOpenChange={setPageScan} title={t.scanPage}>
         {pageScan && (
@@ -551,29 +570,58 @@ function DevicesAdmin() {
       <Card>
         <CardHeader
           title={t.unknown}
+          actionsClassName="max-md:w-full"
           actions={
             <form
-              className="flex gap-2"
+              className="flex gap-2 max-md:w-full"
               onSubmit={(e) => {
                 e.preventDefault();
                 void openByCode(search, false);
               }}
             >
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t.searchCode} aria-label={t.searchCode} className="w-44" spellCheck={false} />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t.searchCode} aria-label={t.searchCode} className="w-44 max-md:w-auto max-md:min-w-0 max-md:flex-1" spellCheck={false} />
               <Button type="submit" variant="outline" disabled={!search.trim()}>{t.searchButton}</Button>
             </form>
           }
         />
+        {mobile ? (
+          <div className="divide-y">
+            {!data?.length && <div className="px-4 py-6 text-center text-subtle">{t.none}</div>}
+            {data?.map((d) => (
+              <div key={d.id} className="space-y-2 px-4 py-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 font-medium">
+                    {canSeeLtid ? <Ltid value={d.ltid} /> : (d.code ?? '-')}
+                    {canSeeLtid && d.code && <div className="text-xs font-normal text-subtle">{d.code}</div>}
+                  </div>
+                  {sigBadge(d)}
+                </div>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                  <dt className="text-subtle">IMEI</dt>
+                  <dd className="min-w-0 break-all font-mono">
+                    {d.imei}
+                    {d.otherImei && <div className="font-sans text-st-offline">{fill(t.alsoImei, { imei: d.otherImei })}</div>}
+                  </dd>
+                  <dt className="text-subtle">GPS</dt>
+                  <dd className="font-mono">{d.gps ? `${d.gps.lat.toFixed(5)}, ${d.gps.lng.toFixed(5)}` : <span className="font-sans text-subtle">{t.noFix}</span>}</dd>
+                  <dt className="text-subtle">{t.col.lastSeen}</dt>
+                  <dd>{fmtTime(d.lastSeenAt)}</dd>
+                </dl>
+                {deviceAction(d)}
+              </div>
+            ))}
+          </div>
+        ) : (
         <table className="w-full text-sm">
-          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">LTID</th><th className="px-3 py-2">IMEI</th><th className="px-3 py-2">GPS</th><th className="px-3 py-2">{t.col.firstSeen}</th><th className="px-3 py-2">{t.col.lastSeen}</th><th className="px-3 py-2">{t.col.frames}</th><th /></tr></thead>
+          <thead className="bg-muted/60 text-left text-xs text-subtle"><tr><th className="px-3 py-2">{canSeeLtid ? 'LTID' : t.code}</th><th className="px-3 py-2">IMEI</th><th className="px-3 py-2">GPS</th><th className="px-3 py-2">{t.col.firstSeen}</th><th className="px-3 py-2">{t.col.lastSeen}</th><th className="px-3 py-2">{t.col.frames}</th><th /></tr></thead>
           <tbody>
             {!data?.length && <tr><td colSpan={7} className="px-3 py-4 text-center text-subtle">{t.none}</td></tr>}
             {data?.map((d) => (
-              <tr key={d.ltid} className="border-t">
+              <tr key={d.id} className="border-t">
                 <td className="px-3 py-2 font-medium">
-                  {d.ltid}
-                  {d.code && <div className="text-xs font-normal text-subtle">{d.code}</div>}
-                  <Badge className="mt-1" tone={d.ident === 'valid' ? 'green' : d.ident === 'invalid' ? 'red' : 'orange'}>{d.ident === 'valid' ? t.sigOk : d.ident === 'invalid' ? t.sigBadShort : t.sigNone}</Badge>
+                  {canSeeLtid ? <Ltid value={d.ltid} /> : (d.code ?? '-')}
+                  {canSeeLtid && d.code && <div className="text-xs font-normal text-subtle">{d.code}</div>}
+                  <div className="mt-1">{sigBadge(d)}</div>
                 </td>
                 <td className="px-3 py-2 font-mono text-xs">
                   {d.imei}
@@ -581,26 +629,35 @@ function DevicesAdmin() {
                 </td>
                 <td className="px-3 py-2 font-mono text-xs">{d.gps ? `${d.gps.lat.toFixed(5)}, ${d.gps.lng.toFixed(5)}` : <span className="text-subtle">{t.noFix}</span>}</td>
                 <td className="px-3 py-2 text-xs">{fmtTime(d.firstSeenAt)}</td><td className="px-3 py-2 text-xs">{fmtTime(d.lastSeenAt)}</td><td className="px-3 py-2">{d.frames}</td>
-                <td className="px-3 py-2">
-                  {blocked(d) ? (
-                    <div className="max-w-[14rem] text-xs text-st-offline">{blocked(d)}</div>
-                  ) : d.replaces ? (
-                    <>
-                      <div className="mb-1 text-xs text-st-fault">{fill(t.newBoardFor, { name: d.replaces.name })}</div>
-                      <Button size="sm" loading={replace.isPending} onClick={() => void askReplace(d)}>{t.replace}</Button>
-                    </>
-                  ) : (
-                    <Button size="sm" onClick={() => review(d)}>{t.review}</Button>
-                  )}
-                </td>
+                <td className="px-3 py-2">{deviceAction(d)}</td>
               </tr>
             ))}
           </tbody>
         </table>
+        )}
       </Card>
       <p className="mt-2 text-xs text-subtle">{t.replaceHint}</p>
       <Card className="mt-4">
         <CardHeader title={t.history.title} subtitle={fill(t.history.subtitle, { n: 100 })} />
+        {mobile ? (
+          <div className="divide-y">
+            {!history.data?.length && <div className="px-4 py-6 text-center text-subtle">{t.history.none}</div>}
+            {history.data?.map((r) => (
+              <div key={`${r.at}-${r.code}`} className="space-y-1 px-4 py-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 font-medium">
+                    {r.code}
+                    {!r.active && <Badge className="ml-2">{t.history.inactive}</Badge>}
+                  </div>
+                  {viaBadge(r.via)}
+                </div>
+                {r.name && <div className="text-sm">{r.name}</div>}
+                {canSeeLtid && <div className="text-xs"><Ltid value={r.ltid} /></div>}
+                <div className="text-xs text-subtle">{fmtTime(r.at)} · {r.by}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/60 text-left text-xs text-subtle">
@@ -608,13 +665,13 @@ function DevicesAdmin() {
                 <th className="px-3 py-2">{t.history.col.at}</th>
                 <th className="px-3 py-2">{t.code}</th>
                 <th className="px-3 py-2">{t.name}</th>
-                <th className="px-3 py-2">LTID</th>
+                {canSeeLtid && <th className="px-3 py-2">LTID</th>}
                 <th className="px-3 py-2">{t.history.col.by}</th>
                 <th className="px-3 py-2">{t.history.col.via}</th>
               </tr>
             </thead>
             <tbody>
-              {!history.data?.length && <tr><td colSpan={6} className="px-3 py-4 text-center text-subtle">{t.history.none}</td></tr>}
+              {!history.data?.length && <tr><td colSpan={canSeeLtid ? 6 : 5} className="px-3 py-4 text-center text-subtle">{t.history.none}</td></tr>}
               {history.data?.map((r) => (
                 <tr key={`${r.at}-${r.code}`} className="border-t">
                   <td className="whitespace-nowrap px-3 py-2 text-xs">{fmtTime(r.at)}</td>
@@ -623,69 +680,80 @@ function DevicesAdmin() {
                     {!r.active && <Badge className="ml-2">{t.history.inactive}</Badge>}
                   </td>
                   <td className="px-3 py-2">{r.name}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{r.ltid ?? '-'}</td>
+                  {canSeeLtid && <td className="px-3 py-2 text-xs"><Ltid value={r.ltid} /></td>}
                   <td className="px-3 py-2 text-xs">{r.by}</td>
-                  <td className="px-3 py-2"><Badge tone={r.via === 'qr' ? 'green' : r.via === 'replace' ? 'orange' : 'blue'}>{r.via === 'qr' ? t.history.viaQr : r.via === 'replace' ? t.history.viaReplace : t.history.viaForm}</Badge></td>
+                  <td className="px-3 py-2">{viaBadge(r.via)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        )}
       </Card>
       <Modal
         open={!!form}
         onOpenChange={(v) => !v && closeForm()}
         title={t.title}
-        footer={<><Button variant="outline" onClick={closeForm}>{c.cancel}</Button><Button loading={reg.isPending} disabled={!form?.ltid || !form.code || !form.lat !== !form.lng || (imeiChoices.length > 0 && !form.imei)} onClick={() => reg.mutate()}>{t.register}</Button></>}
+        footer={<><Button variant="outline" onClick={closeForm}>{c.cancel}</Button><Button loading={reg.isPending} disabled={!(canSeeLtid ? form?.ltid : form?.deviceId) || !form?.code || !form.lat !== !form.lng || (imeiChoices.length > 0 && !form.imei)} onClick={() => reg.mutate()}>{t.register}</Button></>}
       >
         {form && (
-          <div className="grid grid-cols-2 gap-3">
-            <Field label={t.ltid}><Input value={form.ltid} onChange={set('ltid')} /></Field>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {canSeeLtid && (
+              <Field label={t.ltid}>
+                <div className="relative">
+                  {/* not type=password: that would offer to save it */}
+                  <Input value={form.ltid} onChange={set('ltid')} autoComplete="off" spellCheck={false} className="pr-9 font-mono" style={ltidOpen ? undefined : ({ WebkitTextSecurity: 'disc' } as React.CSSProperties)} />
+                  <button type="button" className="absolute right-2 top-2.5 text-subtle hover:text-foreground" title={ltidOpen ? t.hideLtid : t.showLtid} aria-label={ltidOpen ? t.hideLtid : t.showLtid} onClick={() => setLtidOpen(!ltidOpen)}>
+                    {ltidOpen ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </Field>
+            )}
             <Field label={t.code}><Input value={form.code} onChange={(e) => { setScanned(false); set('code')(e); }} placeholder="TL01.0123" /></Field>
-            {codeMismatch && <div className="col-span-2 text-sm text-st-offline">{fill(t.codeMismatch, { code: boardCode })}</div>}
-            {unsigned && <div className="col-span-2 text-sm text-st-fault">{t.sigNoneHint}</div>}
+            {codeMismatch && <div className="text-sm text-st-offline sm:col-span-2">{fill(t.codeMismatch, { code: boardCode })}</div>}
+            {unsigned && <div className="text-sm text-st-fault sm:col-span-2">{t.sigNoneHint}</div>}
             <Field label={t.name}><Input value={form.name} onChange={set('name')} /></Field>
             <Field label={t.address}><Input value={form.address} onChange={set('address')} /></Field>
             <Field label={t.lat}><Input value={form.lat} onChange={set('lat')} placeholder={t.optional} /></Field>
             <Field label={t.lng}><Input value={form.lng} onChange={set('lng')} placeholder={t.optional} /></Field>
-            {!fromGps && <p className="col-span-2 text-xs text-subtle">{t.optionalHint}</p>}
+            {!fromGps && <p className="text-xs text-subtle sm:col-span-2">{t.optionalHint}</p>}
             {fromGps && (
-              <div className="col-span-2 -mt-1 text-xs text-subtle">
+              <div className="-mt-1 text-xs text-subtle sm:col-span-2">
                 {t.fromGps}
               </div>
             )}
             {imeiChoices.length > 0 ? (
-              <div className="col-span-2 space-y-1 rounded-md border border-st-offline/40 bg-st-offline/10 p-3 text-sm">
+              <div className="space-y-1 rounded-md border border-st-offline/40 bg-st-offline/10 p-3 text-sm sm:col-span-2">
                 <div><b>{t.twoImeiTitle}</b>{t.twoImeiBody}</div>
-                <Select value={form.imei} onChange={set('imei')} aria-label={t.realImei}>
+                <Select value={form.imei} onChange={set('imei')} aria-label={t.realImei} className="w-full">
                   <option value="">{t.pickImei}</option>
                   {imeiChoices.map((i) => <option key={i} value={i}>{i}</option>)}
                 </Select>
               </div>
             ) : (
-              <Field label={t.imeiField} className="col-span-2">
+              <Field label={t.imeiField} className="sm:col-span-2">
                 <Input value={form.imei} onChange={set('imei')} placeholder={t.imeiPlaceholder} className="font-mono" />
               </Field>
             )}
             <Field label={t.district}>
-              <Select value={form.districtId} onChange={(e) => setForm({ ...form, districtId: e.target.value, wardId: '' })}>
+              <Select value={form.districtId} onChange={(e) => setForm({ ...form, districtId: e.target.value, wardId: '' })} className="w-full">
                 <option value="">{t.notAssigned}</option>
                 {districts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </Select>
             </Field>
             <Field label={t.ward}>
-              <Select value={form.wardId} onChange={set('wardId')} disabled={!form.districtId}>
+              <Select value={form.wardId} onChange={set('wardId')} disabled={!form.districtId} className="w-full">
                 <option value="">—</option>
                 {wards.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </Select>
             </Field>
             <Field label={t.zone}>
-              <Select value={form.zone1Id} onChange={set('zone1Id')}>
+              <Select value={form.zone1Id} onChange={set('zone1Id')} className="w-full">
                 <option value="">—</option>
                 {zones.data?.map((z) => <option key={z.id} value={z.id}>{z.name}</option>)}
               </Select>
             </Field>
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <Checkbox label={t.tempSensor} checked={tempSensor} onChange={setTempSensor} />
             </div>
           </div>

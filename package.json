@@ -29,6 +29,7 @@
     "e2e:gis": "node --env-file=.env --import tsx apps/api/test/e2e-gis.ts",
     "e2e:admin": "node --env-file=.env --import tsx apps/api/test/e2e-admin.ts",
     "e2e:qr": "node --env-file=.env --import tsx apps/api/test/e2e-qr.ts",
+    "e2e:ltid": "node --env-file=.env --import tsx apps/api/test/e2e-ltid.ts",
     "e2e:qr-flow": "node --env-file=.env --import tsx apps/e2e/qr-flow.ts",
     "e2e:region": "node --env-file=.env --import tsx apps/api/test/e2e-region.ts",
     "e2e:dimming": "node --env-file=.env --import tsx apps/api/test/e2e-dimming.ts",

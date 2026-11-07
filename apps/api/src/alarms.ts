@@ -1,7 +1,7 @@
 import { Controller, Get, HttpCode, Inject, Module, Param, Post, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import type { Alarm } from '@citylight/shared';
-import { LABELS, alarmTypeLabels } from '@citylight/shared';
+import { LABELS, alarmTypeLabels, scrubLtid } from '@citylight/shared';
 import { z } from 'zod';
 import { AuthModule, AuthService, RequirePerm, type AuthedRequest } from './auth';
 import { CabinetsModule, CabinetsService } from './cabinets';
@@ -57,7 +57,7 @@ export class AlarmsController {
       { header: T.severity, value: (a) => LABELS[lang].severity[a.severity], width: 12 },
       { header: T.cabinet, value: (a) => `${a.cabinetCode} - ${a.cabinetName}`, width: 30 },
       { header: T.district, value: (a) => a.districtName },
-      { header: T.message, value: (a) => a.message, width: 50 },
+      { header: T.message, value: (a) => scrubLtid(a.message), width: 50 },
       { header: T.start, value: (a) => vnTime(a.startedAt), numFmt: DATE_TIME, width: 18 },
       { header: T.end, value: (a) => vnTime(a.endedAt), numFmt: DATE_TIME, width: 18 },
       { header: T.active, value: (a) => (a.active ? X.yes : ''), width: 9 },
@@ -103,7 +103,7 @@ export class AlarmsController {
     // otherImei = a second IMEI under the same LTID (S42): registering then requires choosing one
     // replaces = the registered cabinet in use that already has this code: a new board for it, not a new cabinet
     // ident = last identity block: valid, invalid, null when the board sends none
-    return this.sql`SELECT ltid, imei, other_imei AS "otherImei", code, ident, first_seen_at AS "firstSeenAt", last_seen_at AS "lastSeenAt", frames,
+    return this.sql`SELECT id, ltid, imei, other_imei AS "otherImei", code, ident, first_seen_at AS "firstSeenAt", last_seen_at AS "lastSeenAt", frames,
                            CASE WHEN gps IS NULL THEN NULL ELSE json_build_object('lat', ST_Y(gps), 'lng', ST_X(gps)) END AS gps,
                            (SELECT json_build_object('id', c.id, 'name', c.name) FROM cabinets c WHERE c.active AND upper(c.code) = upper(u.code) AND c.organization_id = ${req.user!.organizationId} LIMIT 1) AS replaces
                     FROM unknown_devices u

@@ -1,0 +1,1 @@
+ALTER TABLE "unknown_devices" ADD COLUMN "id" uuid DEFAULT gen_random_uuid() NOT NULL;
