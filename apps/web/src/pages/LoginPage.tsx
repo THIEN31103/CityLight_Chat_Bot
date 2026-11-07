@@ -3,24 +3,20 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Lightbulb, ShieldCheck } from 'lucide-react';
 import { LANGS, LANG_NAMES, type Lang } from '@citylight/shared';
 import { api, ApiError } from '@/lib/api';
-import { useSession, useUi } from '@/stores/session';
+import { useSession } from '@/stores/session';
 import { useDict, useLang } from '@/i18n';
 import { COMMON } from '@/i18n/dict/common';
 import { LOGIN } from '@/i18n/dict/login';
-import { SHELL } from '@/i18n/dict/shell';
-import { Button, Checkbox, Field, Input, Select, ThemeIcon } from '@/components/ui';
-
-const USE_MOCK = (import.meta.env.VITE_API_MODE ?? 'mock') === 'mock' && import.meta.env.VITE_USE_MOCK !== 'false';
+import { Button, Checkbox, Field, Input, Select } from '@/components/ui';
+import { LoginParticles } from '@/components/LoginParticles';
 
 export function LoginPage() {
   const nav = useNavigate();
   const [params] = useSearchParams();
   const setUser = useSession((s) => s.setUser);
-  const { theme, toggleTheme } = useUi();
   const { lang, setLang } = useLang();
   const t = useDict(LOGIN);
   const c = useDict(COMMON);
-  const shell = useDict(SHELL);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(true);
@@ -66,20 +62,27 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center bg-bg p-4">
-      <button className="absolute right-4 top-4 rounded-md p-2 hover:bg-muted" onClick={toggleTheme} aria-label={shell.themeToggle}>
-        <ThemeIcon dark={theme === 'dark'} />
-      </button>
-      <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-xl border bg-panel p-6 shadow-sm">
-        <div className="flex items-center gap-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-white">
-            <Lightbulb className="h-5 w-5" />
+    <div className="dark login-void">
+      <LoginParticles />
+      <div className="relative mx-auto grid min-h-screen w-full max-w-6xl content-center items-center gap-8 px-4 py-8 lg:grid-cols-[minmax(0,1fr)_23rem] lg:gap-10 lg:px-8">
+        <header>
+          <div className="mb-5 flex items-center gap-2 text-sm font-semibold">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-[#241a00]">
+              <Lightbulb className="h-4 w-4" />
+            </span>
+            CityLight
           </div>
+          <h1 className="login-headline">
+            <span className="login-headline-line">{t.heroLine}</span>
+            <span className="login-headline-fill">{t.heroFill}</span>
+          </h1>
+          <p className="mt-4 max-w-sm text-sm text-subtle">{t.heroText}</p>
+        </header>
+        <form onSubmit={submit} className="login-glass mx-auto w-full max-w-sm space-y-4 rounded-2xl border p-6 lg:max-w-none lg:p-7">
           <div>
-            <div className="text-lg font-semibold">CityLight</div>
-            <div className="text-xs text-subtle">{t.tagline}</div>
+            <h2 className="text-xl font-bold">{step === 'creds' ? t.signIn : t.verify}</h2>
+            <p className="mt-0.5 text-xs text-subtle">{t.tagline}</p>
           </div>
-        </div>
 
         {step === 'creds' ? (
           <>
@@ -125,15 +128,11 @@ export function LoginPage() {
         )}
 
         {error && <div className="rounded-md bg-st-offline/10 px-3 py-2 text-sm text-st-offline">{error}</div>}
-        <Button type="submit" className="w-full" loading={loading}>
+        <Button type="submit" className="login-cta w-full text-[#241a00]" loading={loading}>
           {step === 'creds' ? t.signIn : t.verify}
         </Button>
-        {USE_MOCK && (
-          <div className="rounded-md bg-muted px-3 py-2 text-xs text-subtle">
-            {t.mockNote} <code>server/README.md</code>.
-          </div>
-        )}
-      </form>
+        </form>
+      </div>
     </div>
   );
 }
