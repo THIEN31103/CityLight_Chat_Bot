@@ -1,0 +1,8 @@
+[Unit]
+Description=CityLight trial: refresh the Vietnamese IPv4 list (APNIC)
+After=network-online.target cl-geoip.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cl-geoip.sh update

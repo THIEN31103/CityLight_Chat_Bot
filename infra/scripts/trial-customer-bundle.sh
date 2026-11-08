@@ -12,7 +12,9 @@ OUT=${OUT:-$ROOT/infra/customer/out}
 envv() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2-; }
 
 mkdir -p "$OUT/emqx"
-cp "$ROOT/infra/customer/docker-compose.yml" "$ROOT/infra/customer/README.md" "$ROOT/infra/wireguard/wg0-customer.conf.tmpl" "$OUT/"
+cp "$ROOT/infra/customer/docker-compose.yml" "$ROOT/infra/customer/README.md" "$ROOT/infra/wireguard/wg0-customer.conf.tmpl" \
+   "$ROOT/infra/customer/install.sh" "$ROOT/infra/customer/cl-geoip.sh" "$ROOT/infra/customer/cl-geoip.service" \
+   "$ROOT/infra/customer/cl-geoip-update.service" "$ROOT/infra/customer/cl-geoip-update.timer" "$OUT/"
 if command -v node >/dev/null 2>&1; then
   ENV_FILE="$ENV_FILE" OUT_DIR="$OUT/emqx" CSV_HASH=1 node "$ROOT/infra/scripts/gen-emqx-acl.mjs"
 else
