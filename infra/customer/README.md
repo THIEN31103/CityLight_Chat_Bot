@@ -7,6 +7,10 @@ Máy này chỉ chạy **EMQX** (broker MQTT mã nguồn mở, Apache-2.0). Tủ
 1. Router: chuyển cổng **TCP 1883** từ IP public về `192.168.1.40:1883`.
 2. Cho phép đi ra **UDP 51820** tới `13.55.91.187` (WireGuard do máy này gọi ra).
 
+## Cài nhanh
+
+`sudo sh install.sh < /dev/null 2>&1 | tee install.log` làm hết các bước dưới, kèm lớp chặn chỉ cho IP Việt Nam vào cổng 1883 (`cl-geoip`). Gỡ lớp chặn nhanh: `sudo systemctl stop cl-geoip`. Thêm dải IP được phép: `/etc/cl-geoip/allow-extra.txt` rồi `sudo systemctl restart cl-geoip`.
+
 ## Cài đặt (Ubuntu, quyền sudo)
 
 1. Cài Docker và WireGuard:

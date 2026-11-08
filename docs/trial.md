@@ -43,7 +43,9 @@ Các script `backup-db.sh`, `restore-drill.sh`, `watchdog.sh` nhận tham số q
 - Bản đồ trial vẽ viền vùng và không cho kéo ra xa.
 - Bộ trial đã chạy sẵn thì deploy S62 = build image như runbook 5, rồi `trial-ctl.sh seed-region` và `trial-ctl.sh up`. Kiểm: `npm run e2e:region` (`API_URL` + `DATABASE_URL` của trial; trên VPS chạy trong container `trial-api`).
 
-### Lớp 4 (kế hoạch, làm ở bước 4): broker khách chỉ nhận IP Việt Nam
+### Lớp 4: broker khách chỉ nhận IP Việt Nam (chạy từ 2026-11-08)
+
+Code: `infra/customer/cl-geoip.sh` + `cl-geoip.service` + `cl-geoip-update.{service,timer}` (`install.sh` cài). Lần đầu nạp 1 655 CIDR VN. Kiểm 8/11: laptop IP VN vào được 1883, VPS Sydney bị chặn (timeout). Xem: `sudo cl-geoip.sh status`, `journalctl -k | grep cl-geoip-drop`. Docker publish thêm `[::]:1883` nhưng máy khách không có IPv6 public nên chưa cần luật IPv6.
 
 Cổng 1883 trên máy khách chỉ mở cho dải IP Việt Nam, để bớt các lượt dò từ nước ngoài. Tủ đi 4G Viettel / VNPT / MobiFone nên luôn ra IP VN.
 
@@ -86,15 +88,18 @@ Cổng 1883 trên máy khách chỉ mở cho dải IP Việt Nam, để bớt c�
 7. Thêm 2 dòng cron (đầu file `trial-ctl.sh`) và tạo thư mục `backups-trial/`.
 8. **Kiểm lại production không đổi**: `e2e:vps`, trang hệ thống, watchdog production.
 
-## Máy khách (bước 4)
+## Máy khách (bước 4, làm xong 2026-11-08)
 
 1. Trên VPS chạy `sh infra/scripts/trial-ctl.sh bundle`.
-2. Chép thư mục `infra/customer/out/` sang máy khách:
+2. Chép `infra/customer/out/` + `install.sh` + `cl-geoip*` sang máy khách `~/citylight-broker`. Cách đã dùng (không để bản nào trên laptop):
    ```bash
-   scp -P 2246 -r infra/customer/out cstm@14.224.163.63:citylight-broker
+   ssh vps 'tar -C /opt/citylight/infra/customer/out -cf - .' | ssh -p 2246 cstm@14.224.163.63 'umask 077; mkdir -p ~/citylight-broker && tar -C ~/citylight-broker -xf -'
    ```
-3. Làm theo `README.md` trong thư mục đó. Các bước cần `sudo` do Bảo gõ mật khẩu.
-4. Từ VPS: `sh infra/scripts/trial-ctl.sh watchdog --test`. Kết quả không còn dòng `MQTT 10.88.0.2:1885`, và `cl:ingest:mqtt` báo connected.
+3. Trên máy khách, một lần `sudo` (Bảo gõ mật khẩu): `cd ~/citylight-broker && sudo sh install.sh < /dev/null 2>&1 | tee install.log`. Script: gói → khóa WireGuard + `wg0` → Docker sau `wg0` → EMQX → lớp 4, in khóa công khai khách. **Phải có `< /dev/null`**: chạy `sudo … | tee` mà không có nó thì `apt-get` bị dừng (SIGTTOU) và script treo.
+4. Trên VPS: thêm `[Peer]` khách vào `/etc/wireguard/wg0.conf` (backup `.bak-<ngày>`) và `sudo wg set wg0 peer <customer.pub> allowed-ips 10.88.0.2/32`. Kiểm: handshake, `ping 10.88.0.2`, cổng 1885.
+5. Từ VPS: `ALERT_ENV_FILE=/dev/null sh infra/scripts/trial-ctl.sh watchdog --test` → `checks: all ok`. Log `trial-ingest` có `subscribed 4 topics on mqtt://10.88.0.2:1885`. Thêm cron watchdog trial (đầu file `trial-ctl.sh`).
+
+Kết quả 2026-11-08: khóa công khai khách `+/lCjT8ME690r9VpzUPrpD8PkmLkQyWO1Vxd+Bdwrmk=`, RTT qua VPN 227 ms; tài khoản tủ trial được CONNACK, sai mật khẩu / ẩn danh bị từ chối.
 
 Đổi tài khoản trên broker khách: render lại bundle, chép đè `emqx/`, rồi `docker compose down -v && up -d` ở phía khách. EMQX chỉ nạp file CSV cho tài khoản chưa tồn tại, và broker không giữ dữ liệu nào cần lưu.
 
