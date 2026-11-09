@@ -3,6 +3,9 @@ import { defineDict } from '@citylight/shared';
 export const LOGIN = defineDict(
   {
     tagline: 'Giám sát & điều khiển chiếu sáng',
+    heroLine: 'THẮP SÁNG',
+    heroFill: 'THÀNH PHỐ',
+    heroText: 'Theo dõi và điều khiển từng tủ đèn của cả thành phố trên một màn hình.',
     email: 'Email',
     password: 'Mật khẩu',
     remember: 'Ghi nhớ đăng nhập',
@@ -14,10 +17,12 @@ export const LOGIN = defineDict(
     lostPhone: 'Mất điện thoại? Dùng mã khôi phục',
     signIn: 'Đăng nhập',
     verify: 'Xác thực',
-    mockNote: 'Chế độ mock: tài khoản mẫu xem trong',
   },
   {
     tagline: 'Street-lighting monitoring & control',
+    heroLine: 'LIGHT UP',
+    heroFill: 'THE CITY',
+    heroText: "Watch and control every lighting cabinet in the city from one screen.",
     email: 'Email',
     password: 'Password',
     remember: 'Keep me signed in',
@@ -29,6 +34,5 @@ export const LOGIN = defineDict(
     lostPhone: 'Lost your phone? Use a recovery code',
     signIn: 'Sign in',
     verify: 'Verify',
-    mockNote: 'Mock mode: sample accounts are listed in',
   },
 );

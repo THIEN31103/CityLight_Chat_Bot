@@ -86,3 +86,66 @@ body {
     animation: none;
   }
 }
+
+/* Sign-in: a lamp made of light points behind a big headline. Always dark. */
+.login-void {
+  --bg: 6 8 14;
+  --panel: 18 20 28;
+  --muted: 34 37 48;
+  --border: 66 66 76;
+  --fg: 244 241 233;
+  --subtle: 176 173 166;
+  --primary: 255 190 70;
+  position: relative;
+  min-height: 100%;
+  overflow: hidden;
+  background: rgb(var(--bg));
+  color: rgb(var(--fg));
+}
+.login-canvas {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  width: 100%;
+}
+
+.login-headline {
+  font-size: clamp(2.6rem, 13vw, 4.6rem);
+  font-weight: 900;
+  line-height: 1.14;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.login-headline span {
+  display: block;
+}
+.login-headline-line {
+  color: transparent;
+  -webkit-text-stroke: 1.5px rgb(255 226 170 / 0.85);
+}
+.login-headline-fill {
+  background: linear-gradient(100deg, #fff2cf 10%, #ffc85c 55%, #ff9f1c);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+@media (min-width: 1024px) {
+  .login-headline {
+    font-size: clamp(4.2rem, 7.4vw, 6.75rem);
+  }
+}
+
+.login-glass {
+  background: rgb(18 20 28 / 0.62);
+  border-color: rgb(255 226 170 / 0.16);
+  box-shadow: 0 30px 80px -30px rgb(0 0 0 / 0.8);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.login-glass input:not([type='checkbox']),
+.login-glass select {
+  background: rgb(0 0 0 / 0.32);
+}
+.login-glass .login-cta {
+  background: linear-gradient(95deg, #ffe3a1, #ffb02e);
+}
