@@ -1,0 +1,18 @@
+{
+  "name": "@citylight/jarvis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Jarvis: Vietnamese text + voice operations assistant for CityLight, talks to the server only through /api/v1",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning --import tsx src/main.ts",
+    "smoke": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning --import tsx scripts/smoke.ts",
+    "bench:llm": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning --import tsx scripts/bench-llm.ts",
+    "test": "vitest run --root ../.. apps/jarvis",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@citylight/shared": "*",
+    "zod": "^3.24.1"
+  }
+}
