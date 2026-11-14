@@ -2,6 +2,9 @@
 faster-whisper==1.1.1
 # local TTS (default); voice file: python -m piper.download_voices vi_VN-vais1000-medium
 piper-tts==1.8.0
+# GPU speech recognition (STT_DEVICE=cuda), ~1 GB; leave out on a machine without an NVIDIA GPU
+nvidia-cublas-cu12==12.4.5.8
+nvidia-cudnn-cu12==9.1.0.70
 # optional cloud TTS (TTS_ENGINE=edge). 7.0.2 is refused by the service (403, 2026-11-14)
 edge-tts==7.3.1
 # faster-whisper 1.1.1 imports requests without declaring it

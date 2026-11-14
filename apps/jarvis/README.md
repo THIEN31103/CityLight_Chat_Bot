@@ -10,7 +10,7 @@ Trợ lý tiếng Việt (chữ, sau này cả giọng nói) cho phòng điều 
 |---|---|---|
 | 1 | Khảo sát API, khung app, config, api-client, SQLite, fake + Ollama provider, sanitize | **xong code, unit test, chạy với stack local** (2026-11-12), **đo LLM** (2026-11-14); chưa đo STT / TTS (xem "Còn thiếu") |
 | 2 | Console chat chữ, tool đọc, system prompt, lịch sử, quyền dùng Jarvis, trần token | **xong, chờ duyệt** (2026-11-14): 130 unit test, chạy với stack local + `qwen3:4b-instruct` (xem "Milestone 2") |
-| 3 | Giọng nói | **xong phần chính, chờ duyệt** (2026-11-14): nút giọng nói, VAD, STT + TTS trên máy, đọc theo câu, barge-in, 164 unit test; còn đo STT trên GPU và ghi âm thật |
+| 3 | Giọng nói | **xong, chờ duyệt** (2026-11-14): nút giọng nói, VAD, STT trên GPU + TTS Piper trên máy, đọc theo câu, barge-in; tiếng đầu ~0,3 – 0,5 s sau khi nói xong; còn đo độ đúng trên ghi âm thật |
 | 4 | Guard + hành động | chưa |
 | 5 | Proactive, briefing, trial (hỏi Bảo trước) | chưa |
 
@@ -239,12 +239,12 @@ py -3.11 -m venv E:/jarvis-voice/venv
 E:/jarvis-voice/venv/Scripts/python.exe -m pip install -r apps/jarvis/voice/requirements.txt
 cd E:/jarvis-voice/piper && ../venv/Scripts/python.exe -m piper.download_voices vi_VN-vais1000-medium
 # chạy (model whisper tự tải lần đầu vào HF_HOME)
-HF_HOME=E:/jarvis-voice/hf STT_MODEL=small STT_DEVICE=cpu TTS_ENGINE=piper \
+HF_HOME=E:/jarvis-voice/hf STT_MODEL=small STT_DEVICE=cuda STT_COMPUTE=int8_float16 TTS_ENGINE=piper \
   PIPER_VOICE=E:/jarvis-voice/piper/vi_VN-vais1000-medium.onnx \
   E:/jarvis-voice/venv/Scripts/python.exe -u apps/jarvis/voice/sidecar.py
 ```
 
-GPU: thêm `nvidia-cublas-cu12` + `nvidia-cudnn-cu12` (~1 GB) và `STT_DEVICE=cuda STT_COMPUTE=int8_float16`; sidecar tự thêm DLL của chúng vào PATH. GPU 4 GB phải chia với LLM.
+GPU (khuyên dùng, lệnh trên): cần thêm `nvidia-cublas-cu12==12.4.5.8` và `nvidia-cudnn-cu12==9.1.0.70` (~1 GB; mạng chập chờn thì tải file .whl của cuDNN bằng `curl -C -` rồi `pip install` file đó). Sidecar tự thêm DLL của chúng vào PATH. Không có GPU: `STT_DEVICE=cpu STT_COMPUTE=int8` (2,2 s / câu).
 
 ### Quyết định
 
@@ -261,15 +261,26 @@ GPU: thêm `nvidia-cublas-cu12` + `nvidia-cudnn-cu12` (~1 GB) và `STT_DEVICE=cu
 |---|---|---|---|
 | `small` int8 CPU 8 luồng | 2,2 s / 2,5 s | 12 / 20 | 10 / 12 |
 | `base` int8 CPU | 0,7 s / 3,8 s | 10 / 20 | 8 / 12 |
-| `small` GPU | chưa đo (đang tải thư viện CUDA, mạng ~0,2 MB/s) | | |
+| **`small` int8_float16 GPU** (RTX 3050 4 GB) | **0,20 s / 0,40 s** | 10 – 11 / 20 | 9 – 10 / 12 |
 
-- TTS Piper: p50 0,06 s, p95 0,15 s mỗi câu.
-- Cả vòng qua console (Piper đọc câu hỏi → `/api/voice` → tool → đọc trả lời): tiếng đầu ~2 – 2,7 s **sau khi STT xong**, tức ~4,5 s sau khi người dùng nói xong (mục 9 muốn ≤ 2,5 s): STT CPU là chỗ chậm nhất. Câu đệm "Để tôi kiểm tra." có sẵn nên vang lên ngay khi tool bắt đầu.
+- **Mặc định nên dùng GPU** (`STT_DEVICE=cuda STT_COMPUTE=int8_float16`): nhanh gấp 10 CPU, chỉ ~430 MB VRAM. Đo cả khi LLM đang nằm trên GPU (tổng 2,7 GB / 4 GB): STT vẫn 0,2 s, LLM giữ nguyên 66 % GPU / 34 % CPU. Sidecar tự "làm nóng" CUDA lúc khởi động (lần đầu trước đó mất 1,5 s và nghe ra rỗng).
+- Độ đúng như nhau giữa CPU và GPU (cùng model); khác biệt 10 – 12 / 20 là do giọng máy Piper khó nghe. Cần 20 câu ghi âm thật (mục 11) để đo đúng.
+- TTS Piper: p50 0,05 – 0,06 s, p95 0,1 – 0,15 s mỗi câu.
+- Cả vòng qua console với STT GPU (Piper đọc câu hỏi → `/api/voice` → tool → đọc trả lời):
+
+| Câu nói | Nghe được | STT | Tiếng đầu sau khi STT xong | Cả câu trả lời |
+|---|---|---|---|---|
+| Hệ thống thế nào rồi? | "Hệ thống chiến nào rồi?" → get_system_overview | 0,17 s | 0,2 s (câu đệm) | 8,5 s |
+| Tủ TL01.0009 bị gì? | "Tủ thề 01.000 chính bị gì?" → get_cabinet (vẫn ra đúng tủ) | 0,31 s | 1,9 s | 7,8 s |
+| Quận nào đang có nhiều cảnh báo nhất? | đúng → list_alarms | 0,30 s | 0,1 s (câu đệm) | 6,7 s |
+| Mã E hai không một nghĩa là gì? | "Mà E201…" → explain_alarm_code E201 | 0,27 s | 0,0 s (câu đệm sẵn) | 6,3 s |
+
+  Người dùng nghe tiếng Jarvis (câu đệm) ~0,3 – 0,5 s sau khi nói xong: đạt mục 9 (≤ 2,5 s). Câu có nội dung đầu tiên ~2 – 3 s, toàn bộ câu trả lời 6 – 8 s: phần chậm còn lại là LLM (1 / 3 chạy CPU vì GPU 4 GB).
 - Giọng Piper là giọng máy, khó nghe hơn người thật cho STT; đánh giá thật cần 20 câu ghi âm của Bảo (mục 11). Mã lỗi đọc từng chữ số ("E hai không một") được router ghép lại (`spokenAlarmCode`).
 
 ## Còn thiếu (cần máy / quyết định)
 
-- STT trên GPU (đang tải thư viện CUDA) và 20 câu ghi âm thật để đo đúng mục 9.
+- 20 câu ghi âm thật (Bảo, mục 11) để đo đúng độ chính xác STT.
 - Câu trả lời chữ 2,5 – 7 s (2 lượt model, ~1,9 K token prompt, 1 / 3 model chạy CPU). GPU lớn hơn hoặc model nhỏ hơn sẽ nhanh hơn.
 
 ## Phần cứng máy hiện tại

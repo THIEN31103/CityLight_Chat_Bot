@@ -53,8 +53,11 @@ PROMPT = "Jarvis, CityLight, tủ điện chiếu sáng, tủ demo, nhánh, cả
 print(f"[voice] loading faster-whisper {STT_MODEL} on {STT_DEVICE}/{STT_COMPUTE}, {STT_THREADS} threads ...", flush=True)
 t0 = time.time()
 model = WhisperModel(STT_MODEL, device=STT_DEVICE, compute_type=STT_COMPUTE, cpu_threads=STT_THREADS)
-print(f"[voice] STT ready in {time.time() - t0:.1f} s", flush=True)
 stt_lock = threading.Lock()  # one transcription at a time: CPU / VRAM are shared with the LLM
+# first transcription on a GPU pays for CUDA start-up (~1.5 s, and it came back empty once): do it now, on a tone
+_tone = (0.1 * np.sin(2 * np.pi * 220 * np.arange(16000) / 16000)).astype(np.float32)
+list(model.transcribe(_tone, language="vi", beam_size=1, without_timestamps=True)[0])
+print(f"[voice] STT ready in {time.time() - t0:.1f} s", flush=True)
 
 piper_voice = None
 if TTS_ENGINE == "piper":
