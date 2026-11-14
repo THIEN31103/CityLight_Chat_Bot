@@ -1,1 +1,0 @@
-ALTER TABLE "users" ADD COLUMN "can_enroll" boolean DEFAULT false NOT NULL;

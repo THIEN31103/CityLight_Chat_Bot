@@ -1,4 +1,4 @@
-// Unit tests only: apps/e2e holds Playwright specs (`npm run e2e:browser`), which vitest cannot run.
+// Unit tests of apps/jarvis and packages/shared. `.tmp/` holds local scratch scripts, never tests.
 import { configDefaults, defineConfig } from 'vitest/config';
 
-export default defineConfig({ test: { exclude: [...configDefaults.exclude, 'apps/e2e/**'] } });
+export default defineConfig({ test: { exclude: [...configDefaults.exclude, '.tmp/**'] } });

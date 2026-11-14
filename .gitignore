@@ -1,29 +1,16 @@
 node_modules/
 dist/
-build/
 coverage/
 *.log
 .env
 .env.*
 !.env.example
-!apps/web/.env.hybrid
 .DS_Store
 .vscode/*
 !.vscode/extensions.json
-playwright-report/
-test-results/
-infra/emqx/acl.conf
-infra/emqx/device-users.csv
 .tmp/
-# incident photos when the API runs from source (UPLOAD_DIR default)
+# Jarvis data: jarvis.db, audit/*.jsonl
 data/
-
-# Playwright (apps/e2e)
-apps/e2e/test-results/
-apps/e2e/report/
-# age public keys for backup encryption: per deployment, set up on the VPS (runbook 4)
-infra/backup-recipients.txt
-# trial stack (docs/trial.md): secrets, rendered customer bundle, enabled Caddy sites
-!infra/.env.trial.example
-infra/customer/out/
-infra/caddy-sites/*.caddy
+# voice sidecar (Python) leftovers
+__pycache__/
+*.pyc

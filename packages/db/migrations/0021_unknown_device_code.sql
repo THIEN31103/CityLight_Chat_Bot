@@ -1,1 +1,0 @@
-ALTER TABLE "unknown_devices" ADD COLUMN "code" text;

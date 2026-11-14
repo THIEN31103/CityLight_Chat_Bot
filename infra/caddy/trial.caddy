@@ -1,5 +1,0 @@
-# Trial site (S60, docs/trial.md). Enable: cp infra/caddy/trial.caddy infra/caddy-sites/, set TRIAL_HOST in infra/.env,
-# then recreate Caddy (production pauses a few seconds). Disable: remove the copy, recreate Caddy.
-{$TRIAL_HOST} {
-	import citylight trial-api:3000 {$TRIAL_HOST}
-}
