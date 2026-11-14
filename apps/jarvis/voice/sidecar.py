@@ -47,8 +47,18 @@ TTS_ENGINE = os.environ.get("TTS_ENGINE", "piper")
 PIPER_VOICE = os.environ.get("PIPER_VOICE", "")
 TTS_VOICE = os.environ.get("TTS_VOICE", "vi-VN-NamMinhNeural")
 MAX_BODY = 4 * 1024 * 1024  # ~2 min of 16 kHz PCM
-# words the operators say: helps the model spell them right
-PROMPT = "Jarvis, CityLight, tủ điện chiếu sáng, tủ demo, nhánh, cảnh báo, sự cố, mất kết nối, PLC, LOGO, mã lỗi, phường, quận, bật, tắt, lịch."
+# beam search: 5 is clearly better than greedy for Vietnamese and still ~0.3 s on the GPU; set 1 on a slow CPU
+STT_BEAM = int(os.environ.get("STT_BEAM", "5" if STT_DEVICE == "cuda" else "1"))
+# what the operators say, written the way it should come out: helps the model pick these words and spellings
+PROMPT = (
+    "Jarvis ơi, tổng quan hệ thống hôm nay thế nào? Tình hình hệ thống, báo cáo tình hình đầu ca. "
+    "Tủ demo số mười bị gì vậy? Tủ TL01.0009 có đang sáng không? Lịch bật tắt của tủ đó. "
+    "Phường nào, quận nào đang có lỗi, nhiều cảnh báo nhất? Có sự cố nào quá hạn không? "
+    "Mã E201 nghĩa là gì? Mất kết nối PLC, LOGO, nhánh một, nhánh hai, dòng rò, điện áp, công suất. "
+    "Bật tay, tắt tay, trả về chạy theo lịch, xác nhận, hủy, đồng ý, cảm ơn Jarvis."
+)
+# a sentence whose words the model itself doubts is noise (a cough, a keyboard, a door), not a question
+MIN_AVG_LOGPROB = float(os.environ.get("STT_MIN_LOGPROB", "-1.0"))
 
 print(f"[voice] loading faster-whisper {STT_MODEL} on {STT_DEVICE}/{STT_COMPUTE}, {STT_THREADS} threads ...", flush=True)
 t0 = time.time()
@@ -88,16 +98,24 @@ def transcribe(body: bytes, content_type: str) -> dict:
         segments, info = model.transcribe(
             source,
             language="vi",
-            beam_size=1,
+            beam_size=STT_BEAM,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 400},
             initial_prompt=PROMPT,
             condition_on_previous_text=False,
             without_timestamps=True,
         )
-        kept = [s for s in segments if not looks_hallucinated(s)]
+        segs = list(segments)
+        kept = [s for s in segs if not looks_hallucinated(s)]
         text = " ".join(s.text.strip() for s in kept).strip()
-    return {"text": text, "ms": int((time.time() - start) * 1000), "audioMs": audio_ms if audio_ms is not None else int(info.duration * 1000)}
+        conf = round(sum(s.avg_logprob for s in kept) / len(kept), 2) if kept else None
+    return {
+        "text": text,
+        "ms": int((time.time() - start) * 1000),
+        "audioMs": audio_ms if audio_ms is not None else int(info.duration * 1000),
+        "confidence": conf,
+        "dropped": len(segs) - len(kept),
+    }
 
 
 # Whisper fills very short or silent audio with phrases from its training data (YouTube outros): drop those segments.
@@ -109,6 +127,12 @@ def looks_hallucinated(seg) -> bool:
     if not t:
         return True
     if seg.no_speech_prob > 0.6 and seg.avg_logprob < -0.8:
+        return True
+    # the model doubts every word: noise turned into words ("Chịp job." from a click, 2026-11-14)
+    if seg.avg_logprob < MIN_AVG_LOGPROB:
+        return True
+    # repeated loops ("ạ ạ ạ ạ…") come out with a very high compression ratio
+    if seg.compression_ratio > 2.4:
         return True
     return any(h in t for h in HALLUCINATIONS)
 
@@ -168,7 +192,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             tts = {"engine": "piper", "voice": os.path.basename(PIPER_VOICE)} if piper_voice is not None else {"engine": "edge-tts", "voice": TTS_VOICE}
-            return self._json(200, {"status": "ok", "stt": {"model": STT_MODEL, "device": STT_DEVICE, "compute": STT_COMPUTE, "threads": STT_THREADS}, "tts": tts})
+            return self._json(200, {"status": "ok", "stt": {"model": STT_MODEL, "device": STT_DEVICE, "compute": STT_COMPUTE, "threads": STT_THREADS, "beam": STT_BEAM}, "tts": tts})
         self._json(404, {"error": "not_found"})
 
     def do_POST(self):

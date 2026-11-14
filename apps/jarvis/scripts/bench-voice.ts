@@ -83,7 +83,28 @@ for (const [i, [text, want]] of SAMPLES.entries()) {
   }
   console.log(`${String(i + 1).padStart(2)} ${acc >= 0.8 ? 'ok  ' : 'DIFF'} ${(acc * 100).toFixed(0).padStart(3)}%  stt ${stt.ms.toString().padStart(5)} ms  ${ok ? '' : `route ${got ?? '-'} (want ${want ?? '-'}) `}| ${text} -> ${stt.text}`);
 }
+// noise must not become words (a click once came out as "Chịp job.")
+const noise = (ms: number, f: (i: number) => number) => {
+  const n = Math.round(16 * ms);
+  const out = new Int16Array(n);
+  for (let i = 0; i < n; i++) out[i] = Math.max(-32768, Math.min(32767, Math.round(f(i) * 32767)));
+  return new Uint8Array(out.buffer);
+};
+const NOISES: [string, Uint8Array][] = [
+  ['white noise 0.8 s', noise(800, () => (Math.random() * 2 - 1) * 0.08)],
+  ['keyboard clicks 1 s', noise(1000, (i) => (i % 2400 < 40 ? (Math.random() * 2 - 1) * 0.6 : (Math.random() * 2 - 1) * 0.01))],
+  ['room silence 1 s', noise(1000, () => (Math.random() * 2 - 1) * 0.004)],
+];
+let quiet = 0;
+console.log('');
+for (const [name, pcm] of NOISES) {
+  const stt = await voice.transcribe(pcm);
+  if (!stt.text) quiet++;
+  console.log(`   ${stt.text ? 'WORDS' : 'ok   '} ${name} -> "${stt.text}"`);
+}
+
 console.log(`\nTTS one sentence   p50 ${pct(ttsMs, 50).toFixed(0)} ms  p95 ${pct(ttsMs, 95).toFixed(0)} ms`);
 console.log(`STT one sentence   p50 ${pct(sttMs, 50).toFixed(0)} ms  p95 ${pct(sttMs, 95).toFixed(0)} ms  (engine time / audio length p50 ${pct(rtf, 50).toFixed(2)})`);
 console.log(`transcript close   ${close}/${SAMPLES.length} (word accuracy >= 80 %; spec 9 wants >= 18/20 on real recordings)`);
 console.log(`router from voice  ${routedRight}/${routedCases} data questions -> right tool`);
+console.log(`noise kept silent  ${quiet}/${NOISES.length}`);

@@ -174,7 +174,7 @@ $('#stop').addEventListener('click', () => {
   player.stop();
   api('POST', '/api/chat/stop').catch(() => undefined);
 });
-$('#new-chat').addEventListener('click', async () => {
+async function newChat() {
   if (busy) return;
   await api('POST', '/api/chat/new');
   session.conversationId = null;
@@ -182,7 +182,9 @@ $('#new-chat').addEventListener('click', async () => {
   clearMessages();
   loadConversations();
   input.focus();
-});
+}
+$('#new-chat').addEventListener('click', newChat);
+$('#new-chat-top').addEventListener('click', newChat);
 $('#back-live').addEventListener('click', () => {
   showLive();
   clearMessages();
@@ -203,8 +205,10 @@ function addBubble(role, text) {
 }
 
 function showLive() {
+  viewingId = null;
   $('#viewing').hidden = true;
   $('#composer').hidden = false;
+  updateChatTools();
 }
 
 function ask(raw) {
@@ -359,46 +363,81 @@ async function refreshLimits() {
   }
 }
 
+/** own conversations as last loaded (titles for the toolbar) */
+let conversations = [];
+/** an older conversation opened read-only; null = the live one */
+let viewingId = null;
+
+/** Title and delete button above the messages: the conversation on screen, live or opened from the list. */
+function updateChatTools() {
+  const id = viewingId ?? session?.conversationId ?? null;
+  const c = conversations.find((x) => x.id === id);
+  $('#chat-title').textContent = id ? (c?.title || 'Cuộc chat') + (viewingId ? ' (xem lại)' : '') : 'Cuộc chat mới';
+  $('#delete-chat').hidden = !id;
+}
+
 async function loadConversations() {
   try {
     const list = await api('GET', '/api/conversations');
+    conversations = list;
     const ul = $('#conversations');
     ul.replaceChildren(
       ...list.map((c) =>
-        el('li', { class: c.id === session.conversationId ? 'active' : '' },
+        el('li', { class: c.id === (viewingId ?? session.conversationId) ? 'active' : '' },
           el('button', { class: 'open', title: c.title || '', onclick: () => openOwn(c.id) },
             el('span', { class: 'title' }, c.title || '(chưa có tiêu đề)'),
             el('span', { class: 'meta' }, `${fmtTime(c.updatedAt)} · ${c.messages} tin`)),
-          el('button', { class: 'del', title: 'Xóa cuộc chat', 'aria-label': 'Xóa cuộc chat', onclick: () => removeOwn(c.id) }, '×'))),
+          el('button', { class: 'del', title: 'Xóa đoạn chat này', 'aria-label': `Xóa đoạn chat ${c.title || ''}`, onclick: () => removeOwn(c.id) }, '🗑'))),
     );
     if (!list.length) ul.append(el('li', { class: 'hint' }, 'Chưa có cuộc chat nào.'));
   } catch {
     /* signed out */
   }
+  updateChatTools();
 }
 
 async function openOwn(id) {
   if (busy) return;
   if (id === session.conversationId) {
     showLive();
+    loadConversations();
     return;
   }
   const { messages } = await api('GET', `/api/conversations/${id}`);
   clearMessages();
   for (const m of messages) if (m.role === 'user' || m.role === 'assistant') addBubble(m.role, m.content);
+  viewingId = id;
   $('#viewing').hidden = false;
   $('#composer').hidden = true;
-}
-
-async function removeOwn(id) {
-  if (!confirm('Xóa cuộc chat này? Không khôi phục được.')) return;
-  await api('DELETE', `/api/conversations/${id}`);
-  if (id === session.conversationId) {
-    session.conversationId = null;
-    clearMessages();
-  }
   loadConversations();
 }
+
+/** Deletes one of the user's own conversations (asks first); clears the screen when it was the one shown. */
+async function removeOwn(id) {
+  if (busy) return;
+  const c = conversations.find((x) => x.id === id);
+  if (!confirm(`Xóa hẳn đoạn chat "${c?.title || 'này'}"? Không khôi phục được.`)) return;
+  try {
+    await api('DELETE', `/api/conversations/${id}`);
+  } catch (err) {
+    setStatus(err.message, false);
+    return;
+  }
+  const shown = id === (viewingId ?? session.conversationId);
+  if (id === session.conversationId) session.conversationId = null;
+  if (shown) {
+    viewingId = null;
+    clearMessages();
+    showLive();
+  }
+  setStatus('Đã xóa đoạn chat', false);
+  loadConversations();
+}
+
+$('#delete-chat').addEventListener('click', () => {
+  const id = viewingId ?? session.conversationId;
+  if (id) removeOwn(id);
+});
 
 // ------------------------------------------------------------------ views
 

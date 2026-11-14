@@ -261,7 +261,10 @@ GPU (khuyên dùng, lệnh trên): cần thêm `nvidia-cublas-cu12==12.4.5.8` v�
 |---|---|---|---|
 | `small` int8 CPU 8 luồng | 2,2 s / 2,5 s | 12 / 20 | 10 / 12 |
 | `base` int8 CPU | 0,7 s / 3,8 s | 10 / 20 | 8 / 12 |
-| **`small` int8_float16 GPU** (RTX 3050 4 GB) | **0,20 s / 0,40 s** | 10 – 11 / 20 | 9 – 10 / 12 |
+| `small` int8_float16 GPU (RTX 3050 4 GB), beam 1 | 0,20 s / 0,40 s | 9 – 11 / 20 | 9 – 10 / 12 |
+| **`small` GPU, beam 5 + câu gợi ý + lọc ồn** (mặc định từ 2026-11-14) | **0,27 s / 0,48 s** | **16 / 20** | **11 / 12** |
+
+Bản mặc định: `STT_BEAM=5` trên GPU; câu gợi ý (`initial_prompt`) là những câu người điều hành hay nói, viết đúng chính tả; bỏ đoạn mà model tự nghi ngờ (`avg_logprob < -1.0`, chỉnh bằng `STT_MIN_LOGPROB`) hoặc lặp vòng (`compression_ratio > 2.4`). Ồn trắng, tiếng gõ phím, phòng im: 3 / 3 không thành chữ (trước đó một tiếng click từng ra "Chịp job."). Đánh đổi: từ rất ngắn "Hủy." bị bỏ — milestone 4 cần hủy bằng nút hoặc câu dài hơn ("hủy lệnh đó"). Console: tiếng < 550 ms không gửi đi, phải có tiếng ≥ 200 ms mới bắt đầu câu.
 
 - **Mặc định nên dùng GPU** (`STT_DEVICE=cuda STT_COMPUTE=int8_float16`): nhanh gấp 10 CPU, chỉ ~430 MB VRAM. Đo cả khi LLM đang nằm trên GPU (tổng 2,7 GB / 4 GB): STT vẫn 0,2 s, LLM giữ nguyên 66 % GPU / 34 % CPU. Sidecar tự "làm nóng" CUDA lúc khởi động (lần đầu trước đó mất 1,5 s và nghe ra rỗng).
 - Độ đúng như nhau giữa CPU và GPU (cùng model); khác biệt 10 – 12 / 20 là do giọng máy Piper khó nghe. Cần 20 câu ghi âm thật (mục 11) để đo đúng.

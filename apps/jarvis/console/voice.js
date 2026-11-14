@@ -5,7 +5,11 @@
 
 const FRAME_MS = 40;
 const END_SILENCE_MS = 650;
-const MIN_SPEECH_MS = 400;
+// shorter than this is a click, a cough or a door, not a question (and it used to come back as words)
+const MIN_SPEECH_MS = 550;
+// voice must last this long before a sentence starts (longer while Jarvis talks: barge-in, spec 4.2)
+const START_MS = 200;
+const START_MS_WHILE_PLAYING = 250;
 const MAX_UTTERANCE_MS = 15_000;
 const PREROLL_MS = 320;
 
@@ -70,8 +74,7 @@ export class VoiceInput {
       this.preroll.push(frame);
       if (this.preroll.length * FRAME_MS > PREROLL_MS) this.preroll.shift();
       this.voicedMs = loud ? this.voicedMs + FRAME_MS : 0;
-      // 120 ms of voice starts a sentence; 250 ms while Jarvis is speaking (barge-in, spec 4.2)
-      if (this.voicedMs >= (playing ? 250 : 120)) {
+      if (this.voicedMs >= (playing ? START_MS_WHILE_PLAYING : START_MS)) {
         this.speaking = true;
         this.frames = [...this.preroll];
         this.preroll = [];
