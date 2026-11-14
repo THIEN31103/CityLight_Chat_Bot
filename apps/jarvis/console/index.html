@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis · CityLight</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- sign-in -->
+  <main id="login" class="login" hidden>
+    <form id="login-form" class="card login-card" autocomplete="on">
+      <div class="brand"><span class="orb" aria-hidden="true"></span><div><h1>Jarvis</h1><p>Trợ lý điều hành CityLight</p></div></div>
+      <div id="step-password">
+        <label>Email<input id="email" type="email" autocomplete="username" required></label>
+        <label>Mật khẩu<input id="password" type="password" autocomplete="current-password" required></label>
+      </div>
+      <div id="step-2fa" hidden>
+        <p class="hint">Nhập mã 6 số trong ứng dụng xác thực (hoặc mã khôi phục).</p>
+        <label>Mã xác thực<input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="20"></label>
+      </div>
+      <p id="login-error" class="error" role="alert"></p>
+      <button id="login-btn" class="primary" type="submit">Đăng nhập</button>
+      <p class="notice small">Đăng nhập bằng tài khoản CityLight. <span class="notice-text"></span>.</p>
+    </form>
+  </main>
+
+  <!-- app -->
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <div class="brand small"><span class="orb" aria-hidden="true"></span><strong>Jarvis</strong></div>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-view="chat" role="tab">Trò chuyện</button>
+        <button class="tab" data-view="admin" role="tab" id="admin-tab" hidden>Quản trị</button>
+      </nav>
+      <div class="who">
+        <span id="brain" class="chip mono" title="Bộ não AI"></span>
+        <span id="who-name"></span>
+        <span id="who-role" class="chip"></span>
+        <button id="logout" class="ghost">Đăng xuất</button>
+      </div>
+    </header>
+    <div class="notice-bar"><span class="notice-text"></span>. <span id="limits"></span></div>
+
+    <section id="view-chat" class="view chat-view">
+      <aside class="sidebar">
+        <button id="new-chat" class="primary block">+ Cuộc chat mới</button>
+        <h3>Cuộc chat của bạn</h3>
+        <ul id="conversations" class="conv-list"></ul>
+      </aside>
+      <div class="chat">
+        <div id="messages" class="messages" aria-live="polite">
+          <div id="empty" class="empty">
+            <span class="orb big" aria-hidden="true"></span>
+            <h2>Chào bạn, tôi là Jarvis.</h2>
+            <p>Hỏi tôi về tình trạng tủ, cảnh báo, khu vực hay lịch bật tắt.</p>
+            <div class="suggestions">
+              <button class="suggest">Hệ thống thế nào rồi?</button>
+              <button class="suggest">Phường nào đang có lỗi?</button>
+              <button class="suggest">Mã E201 nghĩa là gì?</button>
+              <button class="suggest">Có sự cố nào quá hạn không?</button>
+            </div>
+          </div>
+        </div>
+        <div id="viewing" class="viewing" hidden>Đang xem lại cuộc chat cũ (chỉ đọc). <button id="back-live" class="link">Quay lại cuộc chat hiện tại</button></div>
+        <div class="status-line"><span id="status" class="status idle">Sẵn sàng</span></div>
+        <form id="composer" class="composer">
+          <textarea id="input" rows="1" maxlength="1000" placeholder="Hỏi Jarvis… (Enter để gửi, Shift+Enter xuống dòng)"></textarea>
+          <button id="stop" type="button" class="ghost" hidden>Dừng</button>
+          <button id="send" class="primary" type="submit">Gửi</button>
+        </form>
+      </div>
+    </section>
+
+    <section id="view-admin" class="view admin-view" hidden>
+      <nav class="subtabs">
+        <button class="subtab active" data-pane="access">Quyền dùng Jarvis</button>
+        <button class="subtab" data-pane="settings">Cấu hình</button>
+        <button class="subtab" data-pane="history">Lịch sử chat</button>
+        <button class="subtab" data-pane="tokens">Token theo người</button>
+      </nav>
+      <div class="pane" id="pane-access">
+        <p class="hint">Quản trị viên luôn dùng được Jarvis. Thu quyền một quản lý không thu quyền những người quản lý đó đã cấp.</p>
+        <div class="table-wrap"><table id="access-table"><thead><tr><th>Người dùng</th><th>Vai trò</th><th>Dùng Jarvis</th><th>Được cấp quyền</th><th>Xem chat</th></tr></thead><tbody></tbody></table></div>
+        <p id="access-msg" class="hint"></p>
+      </div>
+      <div class="pane" id="pane-settings" hidden>
+        <form id="settings-form" class="card settings">
+          <label>Số câu hỏi tối đa / người / phút<input name="perUserPerMin" type="number" min="1" max="60"></label>
+          <label>Trần token / ngày (toàn hệ thống, 0 = không giới hạn)<input name="dailyTokenCap" type="number" min="0"></label>
+          <label>Giữ lịch sử chat (ngày)<input name="historyDays" type="number" min="7" max="365"></label>
+          <label class="row"><input name="actionsEnabled" type="checkbox"> Cho phép điều khiển tủ (milestone 4; tắt = công tắc khẩn)</label>
+          <p id="settings-info" class="hint"></p>
+          <p id="settings-msg" class="hint"></p>
+          <button class="primary" type="submit">Lưu</button>
+        </form>
+      </div>
+      <div class="pane" id="pane-history" hidden>
+        <div class="split">
+          <ul id="history-list" class="conv-list wide"></ul>
+          <div id="history-view" class="transcript"><p class="hint">Chọn một cuộc chat. Mỗi lần xem chat của người khác đều được ghi nhật ký.</p></div>
+        </div>
+      </div>
+      <div class="pane" id="pane-tokens" hidden>
+        <div class="table-wrap"><table id="tokens-table"><thead><tr><th>Ngày</th><th>Người dùng</th><th>Vào</th><th>Ra</th><th>Tổng</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

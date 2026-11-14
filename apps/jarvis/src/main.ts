@@ -1,53 +1,37 @@
-// Jarvis process. Milestone 1: config, storage, retention job and a health endpoint on the console port.
-// The console (chat, voice, admin pages) comes in milestone 2 on this same server.
-import { timingSafeEqual } from 'node:crypto';
-import { createServer, type IncomingMessage } from 'node:http';
+// Jarvis process: config, storage, retention job, console server (chat + admin) on the console port.
 import path from 'node:path';
+import { AuditLog } from './audit/log';
 import { createLlm } from './brain/llm';
 import { loadConfig } from './config';
-import { openDb, purgeHistory, schemaVersion } from './store/db';
+import { createConsoleServer } from './console/server';
+import { openDb, purgeHistory } from './store/db';
+import { getSettings } from './store/settings';
 
 const cfg = loadConfig();
 const db = openDb(path.join(cfg.dataDir, 'jarvis.db'));
+const audit = new AuditLog(path.join(cfg.dataDir, 'audit'));
 const llm = createLlm(cfg.llm);
 
 const purge = () => {
-  const n = purgeHistory(db, cfg.historyDays);
-  if (n) console.log(`[jarvis] history: removed ${n} conversation(s) older than ${cfg.historyDays} days`);
+  const days = getSettings(db, cfg).historyDays;
+  const n = purgeHistory(db, days);
+  if (n) console.log(`[jarvis] history: removed ${n} conversation(s) older than ${days} days`);
 };
 purge();
-const purgeTimer = setInterval(purge, 6 * 3_600_000);
-purgeTimer.unref();
+setInterval(purge, 6 * 3_600_000).unref();
 
-function authorized(req: IncomingMessage) {
-  if (!cfg.console.token) return true;
-  const given = Buffer.from(String(req.headers['x-jarvis-token'] ?? ''));
-  const want = Buffer.from(cfg.console.token);
-  return given.length === want.length && timingSafeEqual(given, want);
-}
-
-const server = createServer((req, res) => {
-  if (!authorized(req)) {
-    res.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ code: 'unauthorized' }));
-    return;
-  }
-  if (req.method === 'GET' && req.url === '/health') {
-    res.writeHead(200, { 'content-type': 'application/json' }).end(
-      JSON.stringify({ status: 'ok', llm: { provider: llm.name, model: llm.model }, api: cfg.apiBase, schema: schemaVersion(db) }),
-    );
-    return;
-  }
-  res.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ code: 'not_found' }));
-});
-
+const { server, sessions } = createConsoleServer({ cfg, db, llm, audit });
 server.listen(cfg.console.port, cfg.console.host, () => {
-  console.log(`[jarvis] http://${cfg.console.host}:${cfg.console.port} · llm ${llm.name}/${llm.model} · api ${cfg.apiBase}`);
+  console.log(`[jarvis] console http://${cfg.console.host}:${cfg.console.port} · llm ${llm.name}/${llm.model} · api ${cfg.apiBase}`);
 });
 
 const stop = () => {
+  for (const s of sessions.all()) sessions.drop(s);
   server.close();
-  db.close();
-  process.exit(0);
+  setTimeout(() => {
+    db.close();
+    process.exit(0);
+  }, 500).unref();
 };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);

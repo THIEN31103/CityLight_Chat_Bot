@@ -50,6 +50,8 @@ const Env = z.object({
   LLM_MODEL: z.string().min(1).default('qwen3:4b-instruct'),
   // context window: 4096 leaves room for tool results; ~1/3 of a 4B model runs on CPU with a 4 GB GPU either way
   LLM_NUM_CTX: int(4096, 1024, 262_144),
+  // earlier chat messages sent to the model each turn (the context keeps 20); a 4B model copies old answers with more
+  JARVIS_CONTEXT_MESSAGES: int(6, 0, 20),
   OLLAMA_URL: z.string().url().default('http://127.0.0.1:11434').transform((s) => s.replace(/\/+$/, '')),
   LLM_MAX_TOKENS: int(1024, 64, 32_768),
   // thinking models (qwen3...): false answers at once; unset = leave the model's default
@@ -96,6 +98,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     apiBase: e.CITYLIGHT_API_BASE,
     apiTimeoutMs: e.JARVIS_API_TIMEOUT_MS,
     llm: { provider: e.LLM_PROVIDER, model: e.LLM_MODEL, ollamaUrl: e.OLLAMA_URL, maxTokens: e.LLM_MAX_TOKENS, numCtx: e.LLM_NUM_CTX, think: e.LLM_THINK },
+    contextMessages: e.JARVIS_CONTEXT_MESSAGES,
     stt: { provider: e.STT_PROVIDER, model: e.STT_MODEL },
     tts: { provider: e.TTS_PROVIDER, voice: e.TTS_VOICE },
     cabinetAllowlist: parseAllowlist(e.JARVIS_CABINET_ALLOWLIST),

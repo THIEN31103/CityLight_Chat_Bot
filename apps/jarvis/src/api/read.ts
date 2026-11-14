@@ -1,7 +1,7 @@
 // Read endpoints Jarvis uses, with the shapes verified in apps/api/src (README "API đã xác minh").
 // Raw API data: the tool layer (milestone 2) shortens it and runs sanitizeForLlm() before the model sees it.
 // Not here on purpose: /map/cabinets (10k cabinets ~3.4 MB) and every write endpoint.
-import type { Alarm, CabinetSummary, Command, MapStats, Page, TelemetryPoint, User } from '@citylight/shared';
+import type { Alarm, CabinetSummary, Command, DiagnosticItem, Incident, MapStats, Page, TelemetryPoint, User } from '@citylight/shared';
 import type { ApiClient, RequestOptions } from './client';
 
 /** Telemetry metrics the API accepts (apps/api/src/cabinets.ts METRIC); anything else is ignored there. */
@@ -27,7 +27,7 @@ export interface AreaNode {
 }
 
 export interface DiagnosticsResult {
-  items: { key: string; level: string; label: string; detail?: string; [k: string]: unknown }[];
+  items: DiagnosticItem[];
   lastBootAt: string | null;
   bootsLast24h: number;
   selfTest: unknown;
@@ -113,9 +113,14 @@ export class CityLightReads {
     return this.api.get<Record<string, unknown>>(`zones/${encodeURIComponent(zoneId)}/schedule`, undefined, o);
   }
 
-  /** Needs incident.view. */
-  incidents(query: Record<string, string | number | undefined> = {}, o?: RequestOptions) {
-    return this.api.get<Page<Record<string, unknown>>>('incidents', query, o);
+  /** Needs incident.view. q: all | mine | overdue | statuses joined by "_" (new_assigned). */
+  incidents(query: { q?: string; district?: string; page?: number; size?: number } = {}, o?: RequestOptions) {
+    return this.api.get<Page<Incident>>('incidents', query, o);
+  }
+
+  /** Accounts of the organisation (admin.users: admin and manager); used by the Jarvis admin page only, never by the model. */
+  users(o?: RequestOptions) {
+    return this.api.get<(User & { active: boolean })[]>('users', undefined, o);
   }
 
   command(id: string, o?: RequestOptions) {

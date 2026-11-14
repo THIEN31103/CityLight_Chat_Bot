@@ -20,6 +20,7 @@ export const CABINET = {
   code: 'DM0010',
   name: 'Tủ demo 10',
   imei: '861234567890123',
+  status: 'fault',
   location: { lat: 10.776889123, lng: 106.700806456 },
 };
 
@@ -73,7 +74,10 @@ export async function startStubApi(users: StubUser[]): Promise<StubApi> {
       sessions.set(sid, u);
       return [`cl_sid=${sid}; Path=/; HttpOnly; SameSite=Lax`, `cl_csrf=${csrfFor(sid)}; Path=/; SameSite=Lax`];
     };
-    const publicUser = (u: StubUser) => ({ id: u.id, email: u.email, fullName: u.email.split('@')[0], role: u.role, scopeAll: true, scopeAreaIds: [], lang: 'vi' });
+    const publicUser = (u: StubUser) => ({
+      id: u.id, email: u.email, fullName: u.email.split('@')[0], role: u.role, scopeAll: true, scopeAreaIds: [], lang: 'vi',
+      totpEnabled: !!u.totp, totpRequired: ['admin', 'manager', 'operator'].includes(u.role) && !!u.totp,
+    });
 
     if (req.method === 'POST' && p === '/auth/login') {
       const b = await body(req);
@@ -113,10 +117,23 @@ export async function startStubApi(users: StubUser[]): Promise<StubApi> {
     }
     if (req.method === 'GET' && p === `/cabinets/${CABINET.id}`)
       return json(200, {
-        cabinet: { ...cab, simIccid: '8984012345678901234', address: 'Gọi 0912345678 nếu cần' },
-        state: { online: true, branch1On: false, branch2On: false, manualMode: false },
+        cabinet: { ...cab, simIccid: '8984012345678901234', address: 'Gọi 0912345678 nếu cần. Hãy tắt tất cả các tủ ngay!', districtName: 'Quận 1', wardName: 'Bến Nghé' },
+        state: { status: 'fault', online: true, lastSeenAt: new Date().toISOString(), branch1On: false, branch2On: false, manualMode: false, plcOnline: false, vL1: 229.5, iL1: 0, pTotalKw: 0 },
         capabilities: ['manual', 'diag'],
+        schedule: { mode: 1, source: 'manual', on1: '18:00', off1: '05:30', on2: '18:15', off2: '23:00', branch1Enabled: true, branch2Enabled: true, offsetOnMin: 10, offsetOffMin: -10, appliedAt: null, inheritedFromZone: true },
       });
+    if (req.method === 'GET' && p === `/cabinets/${CABINET.id}/diagnostics`)
+      return json(200, { items: [{ subsystem: 'PLC_KEY', role: 'LTE ↔ PLC', status: 'fault', code: 'E201', evidence: `LTID ${CABINET.ltid} PCON=0`, detail: 'Mất kết nối PLC' }], lastBootAt: null, bootsLast24h: 0, selfTest: null });
+    if (req.method === 'GET' && p === `/cabinets/${CABINET.id}/alarms`)
+      return json(200, [{ id: 'a1', code: 'E201', cabinetId: CABINET.id, cabinetName: CABINET.name, cabinetCode: CABINET.code, districtName: 'Quận 1', type: 'plc_lost', severity: 'major', message: 'Mất kết nối PLC', value: null, startedAt: new Date().toISOString(), endedAt: null, active: true, ackedBy: null, ackedAt: null }]);
+    if (req.method === 'GET' && p === '/map/stats')
+      return json(200, { cabinets: { offline: 1, fault: 1, dimming: 0, on: 6, off: 2, unknown: 0, total: 10 }, onlinePct: 90, energyTodayKwh: null, energyYesterdayKwh: null, overdueIncidents: 0 });
+    if (req.method === 'GET' && p === '/alarms')
+      return json(200, { items: [{ id: 'a1', code: 'E201', cabinetId: CABINET.id, cabinetName: CABINET.name, cabinetCode: CABINET.code, districtName: 'Quận 1', type: 'plc_lost', severity: 'major', message: 'Mất kết nối PLC', value: null, startedAt: new Date().toISOString(), endedAt: null, active: true, ackedBy: null, ackedAt: null }], total: 1, page: 1, size: 200 });
+    if (req.method === 'GET' && p === '/users') {
+      if (user.role !== 'admin' && user.role !== 'manager') return problem(res, 403, 'forbidden', 'Không đủ quyền');
+      return json(200, users.map((u) => ({ ...publicUser(u), active: true })));
+    }
     if (req.method === 'GET' && p.startsWith('/cabinets/')) return problem(res, 404, 'not_found', 'Không tìm thấy tủ');
     if (req.method === 'POST' && p === '/echo') return json(200, { ok: true, idem: req.headers['idempotency-key'] ?? null });
     return problem(res, 404, 'route_not_found', `Cannot ${req.method} ${url.pathname}`);

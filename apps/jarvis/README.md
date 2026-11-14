@@ -9,7 +9,7 @@ Trợ lý tiếng Việt (chữ, sau này cả giọng nói) cho phòng điều 
 | Milestone | Nội dung | Trạng thái |
 |---|---|---|
 | 1 | Khảo sát API, khung app, config, api-client, SQLite, fake + Ollama provider, sanitize | **xong code, unit test, chạy với stack local** (2026-11-12), **đo LLM** (2026-11-14); chưa đo STT / TTS (xem "Còn thiếu") |
-| 2 | Console chat chữ, tool đọc, system prompt, lịch sử, quyền dùng Jarvis, trần token | chưa |
+| 2 | Console chat chữ, tool đọc, system prompt, lịch sử, quyền dùng Jarvis, trần token | **xong, chờ duyệt** (2026-11-14): 130 unit test, chạy với stack local + `qwen3:4b-instruct` (xem "Milestone 2") |
 | 3 | Giọng nói | chưa |
 | 4 | Guard + hành động | chưa |
 | 5 | Proactive, briefing, trial (hỏi Bảo trước) | chưa |
@@ -24,6 +24,9 @@ Trợ lý tiếng Việt (chữ, sau này cả giọng nói) cho phòng điều 
 | D4 | SQLite: `node:sqlite` hoặc `better-sqlite3` | **`node:sqlite`** (có sẵn trong Node 22, không cần build native trên Windows) | Node in `ExperimentalWarning`; script tắt bằng `--disable-warning=ExperimentalWarning`. Vitest 2 không nhận `node:sqlite` khi import tĩnh nên `store/db.ts` nạp bằng `createRequire` |
 | D5 | Trần token / ngày (G8) | Đếm **tổng mọi người dùng** trong ngày giờ VN | Đặc tả không nói theo người hay toàn hệ thống; tổng là cách giữ chi phí / tải máy chắc nhất. Đổi được ở milestone 2 |
 | D6 | Tài khoản demo | **manager** do Bảo cấp (milestone 5) | Đức Thiện chốt |
+| D7 | Console Vite + TS | **HTML + CSS + ES module thuần** trong `console/`, không bước build | Một trang nhỏ, ít phụ thuộc; server phục vụ thẳng. Đổi sang Vite khi console lớn hơn (giọng nói, milestone 3) |
+| D8 | System prompt tiếng Việt, LLM tự chọn tool, 20 lượt ngữ cảnh | Prompt **tiếng Anh** (trả lời vẫn tiếng Việt), **bộ định tuyến từ khóa** chạy tool đọc trước khi gọi model, **8 tool** thay vì 11, gửi model **6 tin gần nhất** (ngữ cảnh vẫn giữ 20) | Đo trên `qwen3:4b-instruct`: prompt Việt dài → đúng tool 3 / 8 và bịa số; prompt Anh ngắn → 7 / 8; có lịch sử dài model lại bịa. Router + nhắc lại một lần → 7 / 7 câu dữ liệu đúng tool (xem "Milestone 2") |
+| D9 | Lịch sử thời gian bật / tắt | Suy ra từ công suất (`get_cabinet_history`), nói "khả năng" | API không có lịch sử `LQ2` / `LQ3` (chỗ lệch 3) |
 
 ## API đã xác minh (đọc từ code)
 
@@ -116,7 +119,13 @@ apps/jarvis/
   src/brain/llm.ts     interface LlmProvider + factory
   src/brain/providers/ollama.ts  LLM miễn phí trên máy (/api/chat, stream NDJSON, tool calling)
   src/brain/providers/fake.ts    provider giả cho test (mục 5.6)
-  src/main.ts          tiến trình: config, DB, dọn lịch sử, GET /health (console ở milestone 2)
+  src/main.ts          tiến trình: config, DB, audit, dọn lịch sử, console server
+  src/console/         server.ts (trang + API + SSE chat), session.ts (phiên console, giới hạn câu / phút)
+  src/brain/           agent.ts (vòng tool), router.ts (từ khóa → tool), context.ts (ngữ cảnh ca), system-prompt.ts
+  src/tools/           registry.ts (bọc tool: kiểm input, timeout, sanitize, rút gọn), read.ts (8 tool đọc), names.ts (tên nói → mã tủ)
+  src/store/           access.ts (G4), history.ts (G7), settings.ts (G8)
+  src/audit/log.ts     audit JSONL
+  console/             index.html, style.css, app.js (không build)
   scripts/smoke.ts     chạy thử với API thật: đăng nhập, đọc, kiểm sanitize (JARVIS_SMOKE_QUERY = từ khóa tìm tủ)
   scripts/bench-llm.ts đo độ trễ + chọn đúng tool của model đang cấu hình
   test/                vitest; stub-api.ts giả lập phần API mà client dùng
@@ -170,6 +179,32 @@ npm run bench:llm -w @citylight/jarvis -- 3
 - `scripts/smoke.ts` chạy với stub: đăng nhập 2FA, đọc, sanitize không còn LTID / IMEI / ICCID.
 - **2026-11-12, API thật** (stack local trong WSL, 510 tủ trong DB, 20 tủ giả đang gửi): tài khoản manager test bật 2FA qua API, rồi smoke 14 / 14 bước ok — health, login → challenge, 2fa/verify, me, map/stats (510 tủ), alarms (37 đang mở), alarm-rules (37 mã), areas/tree (102), search `TL01`, chi tiết tủ (2084 B), diagnostics (12 mục), telemetry, sanitize (2014 B, không còn LTID / IMEI / ICCID), logout. Mỗi lần đọc 6–40 ms. Tài khoản test đã xóa.
 
+## Milestone 2 — console chữ
+
+Mở `http://127.0.0.1:8790`, đăng nhập bằng tài khoản CityLight (2FA nếu có).
+
+- **Chat**: trả lời chạy dần (SSE), trạng thái "đang nghĩ / đang tra cứu: …", nút Dừng, cuộc chat mới, danh sách cuộc chat của mình (xem lại, xóa). Dòng cố định "Quản trị viên có thể xem nội dung chat".
+- **Tool đọc** (`src/tools/read.ts`, 8 tool): tổng quan, tình trạng tủ, lịch sử tủ, cảnh báo gom theo mã + quận, giải thích mã, tủ theo khu vực, lịch, sự cố. Tên nói ra ("tủ demo số mười", "demo10", "DM10") → `src/tools/names.ts`. Nhiều tủ khớp → hỏi lại. "Tủ đó" → tủ đang nói tới.
+- **Bộ định tuyến** (`src/brain/router.ts`): câu rõ ý (mã E…, sự cố, cảnh báo theo quận, tình hình hệ thống, tủ X bị gì / lịch / tối qua) → code gọi tool trước. Câu dữ liệu mà model vẫn trả lời không qua tool → hủy bản nháp, nhắc lại một lần (`TOOL_NUDGE`).
+- **Quản trị** (tab Quản trị): cấp quyền dùng Jarvis theo luật G4 (`src/store/access.ts`), cấu hình (câu / phút, trần token, ngày giữ lịch sử, công tắc điều khiển), lịch sử chat người khác (mỗi lần xem ghi audit), token theo người.
+- **Audit** `data/audit/YYYY-MM-DD.jsonl`: đăng nhập, câu hỏi, câu trả lời, tool, đổi quyền / cấu hình, xem chat người khác. Không có mật khẩu, mã, cookie, LTID, IMEI, email.
+- **Bảo mật console**: cookie `jv_sid` HttpOnly + SameSite=Strict, CSRF riêng (`x-jarvis-csrf`), kiểm Origin, CSP chỉ cho `self` + Google Fonts, chỉ nghe 127.0.0.1 trừ khi có token.
+
+### Chạy thử với model thật (2026-11-14, stack local, 20 tủ giả, API chạy `AUTH_REQUIRE_2FA=false` để admin local chưa có 2FA đăng nhập được)
+
+| Câu hỏi | Tool | Thời gian | Câu trả lời (rút gọn) |
+|---|---|---|---|
+| Xin chào Jarvis | — | 3,9 s (nạp model) | Chào, giới thiệu |
+| Hệ thống thế nào rồi? | get_system_overview | 5,9 s | 510 tủ, 19 hoạt động, 491 mất kết nối, 486 cảnh báo, chủ yếu E101 |
+| Tủ TL01.0009 bị gì? | get_cabinet | 6,1 s | Đang tắt, rò 10 mA, không cảnh báo |
+| Lịch bật tắt của tủ đó thế nào? | get_schedule | 5,7 s | 18:00 – 05:45, lịch cố định |
+| Quận nào đang có nhiều cảnh báo nhất? | list_alarms | 4,3 s | Quận 3 (20 tủ E101), Quận 7, Phú Nhuận |
+| Mã E201 nghĩa là gì? | explain_alarm_code | 5,0 s | Mất kết nối PLC_KEY, điều kiện LCLI=1 PCON=0 |
+| Tối qua tủ TL01.0016 bật lúc mấy giờ? | get_cabinet_history | 6,9 s | Không xác định được, công suất luôn ~0,1 kW |
+| Có sự cố nào quá hạn không? | list_incidents | 2,5 s | Không có |
+
+Trước router + prompt Anh, cùng bộ câu: 0 – 3 / 7 gọi tool, có câu bịa số ("156 tủ"). `/alarms` trả tối đa 200 dòng một trang nên nhóm cảnh báo theo quận chỉ tính trên 200 cảnh báo mới nhất (tổng vẫn đúng).
+
 ## Số đo LLM (2026-11-14, `scripts/bench-llm.ts`, 4 câu × 3 lượt, chế độ chữ)
 
 Ollama 0.40.16 cài ở `E:\ollama\app`, model ở `E:\ollama\models` (biến người dùng `OLLAMA_MODELS`). Prompt hệ thống ngắn + 2 tool, ngữ cảnh 4096.
@@ -186,7 +221,7 @@ Ollama 0.40.16 cài ở `E:\ollama\app`, model ở `E:\ollama\models` (biến ng
 ## Còn thiếu (cần máy / quyết định)
 
 - **Đo STT / TTS** (mục 9): cần `faster-whisper` + thư viện CUDA (~1–1,5 GB) + model, `edge-tts`. Chưa cài. STT sẽ phải chia 4 GB VRAM với LLM.
-- Đo cả vòng có tool thật (câu hỏi → tool → API → câu trả lời): milestone 2.
+- Câu trả lời 2,5 – 7 s (2 lượt model, ~1,9 K token prompt, 1 / 3 model chạy CPU). Mục 9 đặt chữ đầu ≤ 1,5 s: lượt có router đạt ~0,5 – 2 s; GPU lớn hơn hoặc model nhỏ hơn sẽ nhanh hơn.
 
 ## Phần cứng máy hiện tại
 

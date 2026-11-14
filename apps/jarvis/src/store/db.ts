@@ -56,6 +56,14 @@ const MIGRATIONS: string[] = [
      tokens_out INTEGER NOT NULL DEFAULT 0,
      PRIMARY KEY (user_id, day)
    );`,
+  // 2: who has signed in to Jarvis (names for the admin pages; never sent to the model)
+  `CREATE TABLE users_seen (
+     user_id   TEXT PRIMARY KEY,
+     email     TEXT NOT NULL,
+     full_name TEXT NOT NULL,
+     role      TEXT NOT NULL,
+     last_seen TEXT NOT NULL
+   );`,
 ];
 
 export type Db = DatabaseSyncT;
