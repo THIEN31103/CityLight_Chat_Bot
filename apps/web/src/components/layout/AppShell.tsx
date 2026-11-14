@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import * as DM from '@radix-ui/react-dropdown-menu';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, ChevronDown, CircleHelp, Home, Lightbulb, LogOut, Menu, Settings2, User as UserIcon, Wrench } from 'lucide-react';
+import { Bell, ChevronDown, CircleHelp, Home, Lightbulb, LogOut, Menu, Settings2, Sparkles, User as UserIcon, Wrench } from 'lucide-react';
 import dayjs from 'dayjs';
 import type { CabinetSummary, Permission } from '@citylight/shared';
 import { fill, useDict, useLabels } from '@/i18n';
@@ -122,6 +122,30 @@ function AlarmBell() {
   );
 }
 
+/**
+ * Jarvis (apps/jarvis), the operations assistant, runs on the control-room machine with its own console and sign-in.
+ * The button shows only when this build was given its address (VITE_JARVIS_URL, http / https).
+ */
+const JARVIS_URL = /^https?:\/\/\S+$/.test(import.meta.env.VITE_JARVIS_URL?.trim() ?? '') ? import.meta.env.VITE_JARVIS_URL!.trim() : '';
+
+function JarvisButton() {
+  const t = useDict(SHELL);
+  if (!JARVIS_URL) return null;
+  return (
+    <a
+      href={JARVIS_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={t.jarvisHint}
+      aria-label={t.jarvisHint}
+      className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm hover:bg-muted"
+    >
+      <Sparkles className="h-4 w-4 text-primary" />
+      <span className="hidden lg:inline">{t.jarvis}</span>
+    </a>
+  );
+}
+
 interface MenuEntry {
   label: string;
   to: string;
@@ -209,6 +233,7 @@ export function AppShell() {
         <NavMenu label={t.functions} icon={Menu} items={functionMenu(t)} />
         <div className="flex-1" />
         <ServerClock />
+        <JarvisButton />
         <AlarmBell />
         <LangSwitch className="hidden sm:flex" />
         <button className="rounded-md p-2 hover:bg-muted max-sm:hidden" onClick={toggleTheme} aria-label={t.themeToggle}>

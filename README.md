@@ -107,6 +107,8 @@ npm run dev:web:hybrid                   # web :5173/5174, API thật + mock cho
 
 Chạy API + các worker (ingest, command, notify, scheduler) bằng Docker: `docker compose -f infra/docker-compose.yml --env-file infra/.env --profile app up -d --build`.
 
+Nút **Jarvis** trên thanh trên cùng của web (trợ lý điều hành, `apps/jarvis`, chạy trên máy phòng điều hành): chỉ hiện khi bản build có `VITE_JARVIS_URL`, ví dụ `VITE_JARVIS_URL=http://127.0.0.1:8790` trong `apps/web/.env.local` (dev) hoặc lúc `vite build`. Bấm mở console Jarvis ở tab mới; Jarvis có đăng nhập riêng bằng tài khoản CityLight.
+
 ### Thông báo Telegram (M5)
 
 1. Tạo bot với @BotFather trên Telegram (`/newbot`), lấy token.
