@@ -277,7 +277,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       const result = await runTurn({
         llm, tools, maxTokens: cfg.llm.maxTokens, signal: ac.signal,
         ctx: { reads: s.reads, user, focus: s.ctx.focus, userText: text },
-        system: systemPrompt(user, s.ctx.focus),
+        system: systemPrompt(user, s.ctx.focus, new Date(), { voice: !!speaker }),
         messages: s.ctx.messagesFor(text, cfg.contextMessages),
         onEvent: (ev) => {
           if (ev.type === 'reset') {

@@ -9,7 +9,7 @@ const ROLE_EN: Record<User['role'], string> = { admin: 'provider admin', manager
 const vnNow = (at: Date) =>
   new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', weekday: 'long', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric', hour12: false }).format(at);
 
-export function systemPrompt(user: User, focus: Focus, at: Date = new Date()): string {
+export function systemPrompt(user: User, focus: Focus, at: Date = new Date(), opts: { voice?: boolean } = {}): string {
   const lines = [
     'You are Jarvis, the operations assistant of the CityLight street-lighting system.',
     'You know NOTHING about the current state of the system. Every fact (counts, cabinets, alarms, alarm codes, schedules, incidents, times) must come from a tool result.',
@@ -20,6 +20,10 @@ export function systemPrompt(user: User, focus: Focus, at: Date = new Date()): s
     'You can only read data. If the user wants to switch lights, tell them to do it on the CityLight web for now.',
     'Never mention LTID or IMEI. Never ask for passwords or OTP codes.',
     'Answer in Vietnamese, 1-2 short sentences unless asked for a report. Call yourself "tôi" and the user "bạn". No markdown, no emoji.',
+    'Use plain Vietnamese words, not English ones: say "mất kết nối" (not offline), "trực tuyến" (not online), "dữ liệu đo" (not telemetry), "tiết giảm" (not dimming).',
+    ...(opts.voice
+      ? ['The user is TALKING to you and hears your answer read aloud: at most 2 short sentences, give the key number or fact first, no lists, no codes the user did not ask for.']
+      : []),
     '',
     `User: ${user.fullName} (${ROLE_EN[user.role]}, ${user.scopeAll ? 'all cabinets' : 'assigned areas only'}). Now: ${vnNow(at)}, Vietnam time.`,
     '',

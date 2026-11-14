@@ -13,19 +13,23 @@ describe('speech text (spec 4.2)', () => {
   ])('%i:%i -> %s', (h, m, said) => expect(sayTime(h, m)).toBe(said));
 
   it.each([
-    ['DM0010', 'D M 10'],
-    ['TL01.0009', 'T L 1, số 9'],
+    ['DM0010', 'dê mờ 10'],
+    ['TL01.0009', 'tê lờ 1, số 9'],
     ['XYZ', 'XYZ'],
   ])('cabinet %s -> %s', (code, said) => expect(sayCabinetCode(code)).toBe(said));
 
   it.each([
-    ['Tủ DM0010 mất kết nối từ 17:05.', 'Tủ D M 10 mất kết nối từ 5 giờ 5 phút chiều.'],
-    ['Mã E201 là mất PLC.', 'Mã E hai không một là mất PLC.'],
+    ['Tủ DM0010 mất kết nối từ 17:05.', 'Tủ dê mờ 10 mất kết nối từ 5 giờ 5 phút chiều.'],
+    ['Mã E201 là mất PLC.', 'Mã E hai không một là mất pê lờ xê.'],
     ['Điện áp 229.5 V, dòng 12,3 A, rò 30 mA.', 'Điện áp 229 phẩy 5 vôn, dòng 12 phẩy 3 am pe, rò 30 mi li am pe.'],
-    ['Công suất 1.2 kW, online 98%.', 'Công suất 1 phẩy 2 ki lô oát, online 98 phần trăm.'],
+    ['Công suất 1.2 kW, online 98%.', 'Công suất 1 phẩy 2 ki lô oát, trực tuyến 98 phần trăm.'],
     ['Lịch 18:00 – 05:45 từ 14/11/2026.', 'Lịch 6 giờ tối – 5 giờ 45 phút sáng từ ngày 14 tháng 11 năm 2026.'],
     ['Xem https://x.vn/a và id 6b3f8f3e-2a51-4c1e-9d7a-6a1f6f1b2c10 **ngay** 😊', 'Xem và id ngay'],
-    ['PLGO=3: cáp mạng.', 'P L G O bằng 3: cáp mạng.'],
+    ['PLGO=3: cáp mạng.', 'pê lờ giê o bằng 3: cáp mạng.'],
+    // the words the user heard read wrong (2026-11-14)
+    ['491 tủ đang offline, không nhận được dữ liệu telemetry.', '491 tủ đang mất kết nối, không nhận được dữ liệu đo.'],
+    ['Kiểm tra cáp ETH và module LOGO, firmware cũ.', 'Kiểm tra cáp e tê hát và mô đun lô gô, phần mềm thiết bị cũ.'],
+    ['Jarvis thấy GPS lệch, sóng 4G yếu.', 'gia vít thấy giê pê ét lệch, sóng bốn giê yếu.'],
   ])('%s', (text, said) => expect(toSpeech(text)).toBe(said));
 });
 
@@ -37,6 +41,14 @@ describe('sentence splitter', () => {
     expect(s.push(' cảnh báo! Lịch')).toEqual(['Không có cảnh báo!']);
     expect(s.flush()).toEqual(['Lịch']);
     expect(s.flush()).toEqual([]);
+  });
+
+  it('a long first sentence is spoken from its first clause; later clauses only when long; decimals never cut', () => {
+    const s = new SentenceSplitter();
+    expect(s.push('Hệ thống có 510 tủ, trong đó 19 tủ')).toEqual(['Hệ thống có 510 tủ,']);
+    expect(s.push(' đang hoạt động, 491 tủ')).toEqual([]);
+    expect(s.push(' mất kết nối. Có 12,5 kW')).toEqual(['trong đó 19 tủ đang hoạt động, 491 tủ mất kết nối.']);
+    expect(s.flush()).toEqual(['Có 12,5 kW']);
   });
 });
 
