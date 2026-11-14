@@ -1,0 +1,8 @@
+# Jarvis voice sidecar (apps/jarvis/voice/sidecar.py). Python 3.11, in its own venv (README "Giọng nói").
+faster-whisper==1.1.1
+# local TTS (default); voice file: python -m piper.download_voices vi_VN-vais1000-medium
+piper-tts==1.8.0
+# optional cloud TTS (TTS_ENGINE=edge). 7.0.2 is refused by the service (403, 2026-11-14)
+edge-tts==7.3.1
+# faster-whisper 1.1.1 imports requests without declaring it
+requests

@@ -10,7 +10,7 @@ import type { RoleKey, User } from '@citylight/shared';
 import { ROLE_LABELS } from '@citylight/shared';
 import { ApiProblem } from '../api/client';
 import type { AuditLog } from '../audit/log';
-import { runTurn } from '../brain/agent';
+import { looksLikeSmallTalk, runTurn } from '../brain/agent';
 import type { LlmProvider } from '../brain/llm';
 import { systemPrompt } from '../brain/system-prompt';
 import type { Config } from '../config';
@@ -21,14 +21,19 @@ import { addMessage, createConversation, deleteOwn, getConversation, getMessages
 import { SettingsError, effectiveTokenCap, getSettings, updateSettings } from '../store/settings';
 import { READ_TOOLS } from '../tools/read';
 import type { ToolDef } from '../tools/registry';
+import { SidecarVoice, type SttProvider, type TtsAudio, type TtsProvider } from '../voice/client';
+import { toSpeech } from '../voice/speech-text';
 import { ConsoleSession, RateLimiter, SessionStore } from './session';
+import { FILLER, Speaker } from './speaker';
 
 const STATIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../console');
 const STATIC: Record<string, string> = {
-  '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css',
+  '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/voice.js': 'voice.js', '/mic-worklet.js': 'mic-worklet.js',
 };
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 const MAX_BODY = 64 * 1024;
+/** 30 s of 16 kHz 16-bit mono */
+const MAX_AUDIO = 30 * 16_000 * 2;
 const MAX_TEXT = 1000;
 export const ADMIN_NOTICE = 'Quản trị viên có thể xem nội dung chat';
 
@@ -46,6 +51,19 @@ export interface ConsoleDeps {
   tools?: ToolDef[];
   /** tests: a fake CityLight fetch */
   fetch?: typeof fetch;
+  /** speech engines; default: the local sidecar (voice/sidecar.py) when voice is enabled, none otherwise */
+  voice?: (SttProvider & TtsProvider) | null;
+}
+
+async function readRaw(req: IncomingMessage, max: number): Promise<Buffer> {
+  let size = 0;
+  const chunks: Buffer[] = [];
+  for await (const c of req as AsyncIterable<Buffer>) {
+    size += c.length;
+    if (size > max) throw new HttpError(413, 'too_large', 'Câu nói quá dài (tối đa 30 giây)');
+    chunks.push(c);
+  }
+  return Buffer.concat(chunks);
 }
 
 class HttpError extends Error {
@@ -84,7 +102,9 @@ const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
   'x-frame-options': 'DENY',
-  'content-security-policy': "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
+  'content-security-policy': "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'",
+  // the console asks for the microphone itself; nothing else on this origin may
+  'permissions-policy': 'microphone=(self), camera=(), geolocation=()',
 };
 
 function sendJson(res: ServerResponse, status: number, body: unknown, extra: Record<string, string | string[]> = {}) {
@@ -101,6 +121,7 @@ const sameToken = (a: string, b: string) => {
 export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessions: SessionStore } {
   const { cfg, db, llm, audit } = deps;
   const tools = deps.tools ?? READ_TOOLS;
+  const voice = deps.voice !== undefined ? deps.voice : cfg.voice.enabled ? new SidecarVoice({ url: cfg.voice.url, voice: cfg.tts.voice }) : null;
   const sessions = new SessionStore(() => new ConsoleSession(cfg.apiBase, cfg.apiTimeoutMs, deps.fetch));
   const limiter = new RateLimiter();
   const settings = () => getSettings(db, cfg);
@@ -120,6 +141,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       rights: { ...r, canEditSettings: canEditSettings(a) },
       conversationId: s.conversationId,
       brain: `${llm.name}/${llm.model}`,
+      voice: !!voice,
       limits: { perUserPerMin: st.perUserPerMin, tokenCap: effectiveTokenCap(st, cfg), tokensToday: tokensToday(db) },
     };
   }
@@ -152,12 +174,8 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
 
   // ---------------------------------------------------------------- chat
 
-  async function chat(req: IncomingMessage, res: ServerResponse, s: ConsoleSession) {
-    const { user } = requireUser(s);
-    const body = await readJson(req);
-    const text = typeof body.text === 'string' ? body.text.trim() : '';
-    if (!text) throw new HttpError(422, 'empty', 'Câu hỏi trống');
-    if (text.length > MAX_TEXT) throw new HttpError(422, 'too_long', `Tối đa ${MAX_TEXT} ký tự`);
+  /** Checks that apply before any work (busy, per-minute limit, daily token cap). */
+  function admit(s: ConsoleSession, user: User) {
     if (s.busy) throw new HttpError(409, 'busy', 'Jarvis đang trả lời câu trước');
     const st = settings();
     if (!limiter.allow(user.id, st.perUserPerMin)) throw new HttpError(429, 'rate_limited', `Tối đa ${st.perUserPerMin} câu / phút, đợi một chút`);
@@ -166,12 +184,10 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       audit.write({ kind: 'token_cap_hit', userId: user.id, cap });
       throw new HttpError(429, 'token_cap', 'Đã hết hạn mức hôm nay');
     }
+  }
 
-    if (!s.conversationId) s.conversationId = createConversation(db, user, text);
-    const conversationId = s.conversationId;
-    addMessage(db, conversationId, { role: 'user', content: text });
-    audit.write({ kind: 'user_text', userId: user.id, role: user.role, conversationId, text });
-
+  /** Opens the event stream of one turn; the abort fires when the browser goes away. */
+  function openStream(res: ServerResponse, s: ConsoleSession) {
     const ac = new AbortController();
     s.busy = ac;
     res.on('close', () => {
@@ -181,44 +197,120 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     const send = (event: string, data: unknown) => {
       if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
+    return { ac, send };
+  }
+
+  async function chat(req: IncomingMessage, res: ServerResponse, s: ConsoleSession) {
+    const { user } = requireUser(s);
+    const body = await readJson(req);
+    const text = typeof body.text === 'string' ? body.text.trim() : '';
+    if (!text) throw new HttpError(422, 'empty', 'Câu hỏi trống');
+    if (text.length > MAX_TEXT) throw new HttpError(422, 'too_long', `Tối đa ${MAX_TEXT} ký tự`);
+    admit(s, user);
+    const { ac, send } = openStream(res, s);
+    try {
+      await answer(s, user, text, send, ac, null);
+    } catch (e) {
+      send('error', { code: 'failed', message: (e as Error).message });
+    } finally {
+      s.busy = null;
+      res.end();
+    }
+  }
+
+  /** Voice turn (milestone 3): PCM 16 kHz mono in -> transcript -> the same answer, spoken sentence by sentence. */
+  async function voiceTurn(req: IncomingMessage, res: ServerResponse, s: ConsoleSession) {
+    const { user } = requireUser(s);
+    if (!voice) throw new HttpError(503, 'voice_off', 'Chức năng giọng nói đang tắt (STT_PROVIDER / TTS_PROVIDER = none)');
+    const pcm = await readRaw(req, MAX_AUDIO);
+    if (pcm.length < 3200) throw new HttpError(422, 'too_short', 'Câu nói quá ngắn');
+    admit(s, user);
+    const { ac, send } = openStream(res, s);
+    try {
+      send('status', { state: 'transcribing' });
+      const stt = await voice.transcribe(pcm, ac.signal);
+      const text = sanitizeText(stt.text).trim();
+      send('transcript', { text, sttMs: stt.ms, audioMs: stt.audioMs });
+      if (!text || text.length < 2) {
+        send('done', { text: '', heard: false, sttMs: stt.ms });
+        return;
+      }
+      const speaker = new Speaker(voice, !looksLikeSmallTalk(text), (c) => send('audio', { seq: c.seq, text: c.text, mime: c.mime, data: Buffer.from(c.audio).toString('base64'), ms: c.ms }), ac.signal, fillerAudio);
+      await answer(s, user, text, send, ac, speaker, { sttMs: stt.ms, audioMs: stt.audioMs });
+    } catch (e) {
+      send('error', { code: 'failed', message: (e as Error).message });
+    } finally {
+      s.busy = null;
+      res.end();
+    }
+  }
+
+  let filler: Promise<TtsAudio | null> | null = null;
+  /** "Để tôi kiểm tra." synthesized once and reused */
+  const fillerAudio = () => {
+    filler ??= voice ? voice.synth(toSpeech(FILLER)).catch(() => {
+      filler = null;
+      return null;
+    }) : Promise.resolve(null);
+    return filler;
+  };
+
+  /** One turn of the agent, shared by text and voice; history, tokens and audit are written here. */
+  async function answer(
+    s: ConsoleSession, user: User, text: string, send: (e: string, d: unknown) => void, ac: AbortController, speaker: Speaker | null,
+    extra: Record<string, unknown> = {},
+  ) {
+    if (!s.conversationId) s.conversationId = createConversation(db, user, text);
+    const conversationId = s.conversationId;
+    addMessage(db, conversationId, { role: 'user', content: text });
+    audit.write({ kind: 'user_text', userId: user.id, role: user.role, conversationId, text, voice: !!speaker });
     send('status', { state: 'thinking', conversationId });
     const t0 = performance.now();
     let firstText: number | null = null;
-    try {
+    ac.signal.addEventListener('abort', () => speaker?.stop());
+    {
       const result = await runTurn({
         llm, tools, maxTokens: cfg.llm.maxTokens, signal: ac.signal,
         ctx: { reads: s.reads, user, focus: s.ctx.focus, userText: text },
         system: systemPrompt(user, s.ctx.focus),
         messages: s.ctx.messagesFor(text, cfg.contextMessages),
         onEvent: (ev) => {
-          if (ev.type === 'reset') send('reset', {});
-          else if (ev.type === 'text') {
+          if (ev.type === 'reset') {
+            speaker?.reset();
+            send('reset', {});
+          } else if (ev.type === 'text') {
             firstText ??= performance.now() - t0;
-            send('text', { text: sanitizeText(ev.text) });
-          } else if (ev.type === 'tool_start') send('status', { state: 'tool', tool: ev.name, label: TOOL_LABELS[ev.name] ?? ev.name });
-          else if (ev.type === 'tool_end') send('status', { state: 'thinking' });
+            const clean = sanitizeText(ev.text);
+            speaker?.text(clean);
+            send('text', { text: clean });
+          } else if (ev.type === 'tool_start') {
+            speaker?.tool();
+            send('status', { state: 'tool', tool: ev.name, label: TOOL_LABELS[ev.name] ?? ev.name });
+          } else if (ev.type === 'tool_end') send('status', { state: 'thinking' });
         },
       });
+      if (speaker && result.stopReason !== 'aborted' && result.stopReason !== 'error') {
+        // an answer that is only the fallback sentence has no streamed text: speak it too
+        if (!result.text.trim() && result.stopReason === 'too_many_tools') speaker.text('Tôi chưa tìm ra câu trả lời, bạn hỏi cụ thể hơn giúp tôi.');
+        send('status', { state: 'speaking' });
+        await speaker.end();
+      }
       addTokenUsage(db, user.id, result.usage.inputTokens, result.usage.outputTokens);
       for (const m of result.produced) {
         if (m.role === 'tool') addMessage(db, conversationId, { role: 'tool', content: m.content, toolCalls: { name: m.name } });
         else if (m.role === 'assistant' && m.toolCalls?.length) addMessage(db, conversationId, { role: 'assistant', content: m.content, toolCalls: m.toolCalls.map((c) => ({ name: c.name, input: c.input })) });
       }
-      const answer = result.text.trim() || (result.stopReason === 'too_many_tools' ? 'Tôi chưa tìm ra câu trả lời, bạn hỏi cụ thể hơn giúp tôi.' : '');
-      addMessage(db, conversationId, { role: 'assistant', content: answer, tokensIn: result.usage.inputTokens, tokensOut: result.usage.outputTokens });
+      const reply = result.text.trim() || (result.stopReason === 'too_many_tools' ? 'Tôi chưa tìm ra câu trả lời, bạn hỏi cụ thể hơn giúp tôi.' : '');
+      addMessage(db, conversationId, { role: 'assistant', content: reply, tokensIn: result.usage.inputTokens, tokensOut: result.usage.outputTokens });
       for (const c of result.toolCalls) audit.write({ kind: 'tool_call', userId: user.id, conversationId, tool: c.name, input: c.input, ok: c.ok, ms: c.ms });
-      audit.write({ kind: 'assistant_text', userId: user.id, conversationId, text: answer, stop: result.stopReason, usage: result.usage, nudged: result.nudged });
-      if (result.stopReason !== 'aborted') s.ctx.addTurn(text, answer);
+      audit.write({ kind: 'assistant_text', userId: user.id, conversationId, text: reply, stop: result.stopReason, usage: result.usage, nudged: result.nudged });
+      if (result.stopReason !== 'aborted') s.ctx.addTurn(text, reply);
       if (result.stopReason === 'error') send('error', { code: 'brain_error', message: `Bộ não AI lỗi: ${result.error}` });
       else send('done', {
-        conversationId, stop: result.stopReason, text: sanitizeText(answer), usage: result.usage, tools: result.toolCalls.map((c) => c.name), nudged: result.nudged,
+        conversationId, stop: result.stopReason, text: sanitizeText(reply), usage: result.usage, tools: result.toolCalls.map((c) => c.name), nudged: result.nudged,
         ms: Math.round(performance.now() - t0), firstTextMs: firstText === null ? null : Math.round(firstText),
+        firstAudioMs: speaker?.firstAudioMs ?? null, ttsErrors: speaker?.errors.length ? speaker.errors.slice(0, 2) : undefined, ...extra,
       });
-    } catch (e) {
-      send('error', { code: 'failed', message: (e as Error).message });
-    } finally {
-      s.busy = null;
-      res.end();
     }
   }
 
@@ -346,6 +438,12 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       return sendJson(res, 200, { signedIn: false }, { 'set-cookie': 'jv_sid=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0' });
     }
     if (key === 'POST /api/chat') return chat(req, res, s);
+    if (key === 'POST /api/voice') return voiceTurn(req, res, s);
+    if (key === 'GET /api/voice/status') {
+      requireUser(s);
+      const h = voice && 'health' in voice ? await (voice as SidecarVoice).health() : null;
+      return sendJson(res, 200, { enabled: !!voice, ready: !!h || (!!voice && !(voice instanceof SidecarVoice)), engine: h });
+    }
     if (key === 'POST /api/chat/stop') {
       s.busy?.abort();
       return sendJson(res, 200, { stopped: true });

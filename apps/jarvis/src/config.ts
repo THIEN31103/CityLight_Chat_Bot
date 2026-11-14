@@ -64,6 +64,8 @@ const Env = z.object({
   STT_MODEL: z.string().min(1).default('small'),
   TTS_PROVIDER: z.enum(['edge-tts', 'none']).default('edge-tts'),
   TTS_VOICE: z.string().min(1).default('vi-VN-NamMinhNeural'),
+  // the Python voice sidecar (voice/sidecar.py); loopback only
+  VOICE_URL: z.string().url().default('http://127.0.0.1:8791').transform((s) => s.replace(/\/+$/, '')),
 
   JARVIS_CABINET_ALLOWLIST: z.string().optional(),
   JARVIS_ACTIONS_ENABLED: bool(true),
@@ -101,6 +103,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     contextMessages: e.JARVIS_CONTEXT_MESSAGES,
     stt: { provider: e.STT_PROVIDER, model: e.STT_MODEL },
     tts: { provider: e.TTS_PROVIDER, voice: e.TTS_VOICE },
+    voice: { url: e.VOICE_URL, enabled: e.STT_PROVIDER !== 'none' && e.TTS_PROVIDER !== 'none' },
     cabinetAllowlist: parseAllowlist(e.JARVIS_CABINET_ALLOWLIST),
     actionsEnabled: e.JARVIS_ACTIONS_ENABLED,
     dailyTokenCapMax: tokenCapMax,

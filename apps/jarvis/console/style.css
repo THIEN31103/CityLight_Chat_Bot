@@ -135,6 +135,9 @@ label.row input { width: auto; }
 .status.busy::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 6px; animation: pulse 1.2s infinite; }
 .composer { display: flex; gap: 8px; align-items: flex-end; padding: 10px max(16px, calc((100% - 760px) / 2)) 18px; }
 .composer textarea { resize: none; max-height: 180px; min-height: 44px; }
+.voice { white-space: nowrap; min-height: 44px; }
+.voice.on { background: var(--accent-soft); border-color: var(--accent); font-weight: 600; }
+.voice.hot { box-shadow: 0 0 0 3px rgba(242, 181, 58, .45); animation: pulse 1.2s ease-in-out infinite; }
 
 /* admin */
 .admin-view { padding: 16px; overflow: auto; }

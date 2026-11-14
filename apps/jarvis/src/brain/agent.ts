@@ -8,17 +8,26 @@ import { asLlmTools, runTool, type ToolContext, type ToolDef } from '../tools/re
 
 export const MAX_TOOL_ROUNDS = 5;
 
-/** Greetings, thanks, "who are you": answered without data. Anything else is a question about the system. */
+// Words that make a question about the lighting system (folded, no diacritics). A question without any of them —
+// greetings, "giới thiệu về bạn", "bạn làm được gì" — is answered by the model without data and never nudged.
+const SYSTEM_WORDS =
+  /\b(tu|tucab|he thong|tinh hinh|tong quan|bao cao|canh bao|loi|su co|qua han|lich|bat|tat|sang|den|nhanh|ma|quan|phuong|khu vuc|vung|online|offline|ket noi|mat ket noi|dien ap|dong|ro|cong suat|nhiet do|plc|logo|plgo|telemetry|tram|tuyen|cabinet|alarm|incident|schedule|demo)\b|\b[a-z]{2,4}\d{2}\.\d{1,4}\b|\b[a-z]{2}\d{4}\b|\be\s?\d{3}\b/;
+
+/** Greetings, thanks, questions about Jarvis itself: answered without data. */
 export function looksLikeSmallTalk(text: string): boolean {
-  const f = fold(text).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const f = fold(text).replace(/[^a-z0-9. ]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!f) return true;
   if (/^(xin chao|chao|hi|hello|alo|cam on|thank|thanks|ok|oke|vang|da|uh|u|tam biet|bye|chuc ngu ngon)\b/.test(f) && f.split(' ').length <= 6) return true;
-  return /^(ban la ai|ban ten gi|ban lam duoc gi|ban giup duoc gi|jarvis la ai)/.test(f);
+  if (/(ban la ai|ban ten gi|ten ban|ban lam (duoc )?gi|ban giup (duoc )?gi|ban co the lam gi|gioi thieu|jarvis la ai|ban khoe khong)/.test(f)) return true;
+  return !SYSTEM_WORDS.test(f);
 }
 
 /** Added once when a small model answered a data question from imagination instead of calling a tool. */
 export const TOOL_NUDGE =
   '(System reminder, do not mention it) You did not call any tool and you know nothing about the system without one. Call the right tool now, then answer from its result in Vietnamese.';
+
+/** Said instead of a second answer that still used no data: honest, and never a made-up number. */
+export const NO_DATA_ANSWER = 'Tôi chưa tra được dữ liệu cho câu này. Bạn hỏi cụ thể hơn giúp tôi, ví dụ tủ nào, khu vực nào hay mã lỗi nào.';
 
 export type AgentEvent =
   | { type: 'reset' }
@@ -116,6 +125,13 @@ export async function runTurn(t: TurnInput): Promise<TurnResult> {
       t.onEvent?.({ type: 'reset' });
       messages.push({ role: 'assistant', content: text }, { role: 'user', content: TOOL_NUDGE });
       continue;
+    }
+    // asked again and still no data: an honest fixed sentence instead of a guess (or the model talking about tools)
+    if (!calls.length && nudged && !toolCalls.length) {
+      t.onEvent?.({ type: 'reset' });
+      t.onEvent?.({ type: 'text', text: NO_DATA_ANSWER });
+      produced.push({ role: 'assistant', content: NO_DATA_ANSWER });
+      return out({ text: NO_DATA_ANSWER, stopReason: 'end_turn' });
     }
     finalText += text;
 

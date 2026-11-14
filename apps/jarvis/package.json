@@ -8,6 +8,7 @@
     "start": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning --import tsx src/main.ts",
     "smoke": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning --import tsx scripts/smoke.ts",
     "bench:llm": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning --import tsx scripts/bench-llm.ts",
+    "bench:voice": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning --import tsx scripts/bench-voice.ts",
     "test": "vitest run --root ../.. apps/jarvis",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

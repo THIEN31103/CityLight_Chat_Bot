@@ -1,5 +1,7 @@
-// Jarvis console (milestone 2: text chat + admin). Plain ES module, no build step.
+// Jarvis console (text chat, voice mode, admin). Plain ES module, no build step.
 // All requests go to the Jarvis process on this host; the CityLight session never reaches the browser.
+import { Player, VoiceInput } from './voice.js';
+
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
@@ -19,12 +21,13 @@ async function api(method, path, body) {
   return data;
 }
 
-/** POST that answers with server-sent events; calls onEvent(name, data) for each. */
+/** POST that answers with server-sent events; calls onEvent(name, data) for each. An ArrayBuffer body is sent raw. */
 async function stream(path, body, onEvent, signal) {
+  const raw = body instanceof ArrayBuffer;
   const res = await fetch(path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-jarvis-csrf': session.csrf },
-    body: JSON.stringify(body),
+    headers: { 'content-type': raw ? 'application/octet-stream' : 'application/json', 'x-jarvis-csrf': session.csrf },
+    body: raw ? body : JSON.stringify(body),
     signal,
     credentials: 'same-origin',
   });
@@ -105,6 +108,7 @@ function render() {
   $('#who-role').textContent = session.user.roleLabel;
   $('#brain').textContent = session.brain;
   $('#admin-tab').hidden = !(session.rights.canGrant || session.rights.canViewChats || session.rights.canEditSettings);
+  $('#voice-btn').hidden = !session.voice;
   const l = session.limits;
   $('#limits').textContent = `Tối đa ${l.perUserPerMin} câu / phút · token hôm nay ${fmtNum(l.tokensToday)}${l.tokenCap ? ` / ${fmtNum(l.tokenCap)}` : ''}`;
   loadConversations();
@@ -140,6 +144,8 @@ $('#login-form').addEventListener('submit', async (e) => {
 });
 
 $('#logout').addEventListener('click', async () => {
+  if (voiceIn.on) $('#voice-btn').click();
+  player.stop();
   await api('POST', '/api/logout').catch(() => undefined);
   $('#messages').querySelectorAll('.msg').forEach((m) => m.remove());
   await refresh();
@@ -165,6 +171,7 @@ $('#composer').addEventListener('submit', (e) => {
 });
 $('#stop').addEventListener('click', () => {
   currentCancel?.abort();
+  player.stop();
   api('POST', '/api/chat/stop').catch(() => undefined);
 });
 $('#new-chat').addEventListener('click', async () => {
@@ -200,25 +207,34 @@ function showLive() {
   $('#composer').hidden = false;
 }
 
-async function ask(raw) {
+function ask(raw) {
   const text = raw.trim();
   if (!text || busy) return;
-  showLive();
   input.value = '';
   input.style.height = 'auto';
-  addBubble('user', text);
+  return turn({ text });
+}
+
+const STATUS_TEXT = { thinking: 'Đang nghĩ…', transcribing: 'Đang nghe lại câu nói…', speaking: 'Đang nói…' };
+
+/** One question, typed ({ text }) or spoken ({ pcm }): streams the answer, plays its audio in voice mode. */
+async function turn({ text, pcm }) {
+  showLive();
+  const userBubble = addBubble('user', text ?? '🎙 …');
   const bubble = addBubble('assistant', '');
   const body = el('span', { class: 'caret' });
   bubble.append(body);
   busy = true;
   $('#send').disabled = true;
   $('#stop').hidden = false;
-  setStatus('Đang nghĩ…', true);
+  setStatus(pcm ? STATUS_TEXT.transcribing : STATUS_TEXT.thinking, true);
   currentCancel = new AbortController();
   let got = '';
   try {
-    await stream('/api/chat', { text }, (event, data) => {
-      if (event === 'reset') {
+    await stream(pcm ? '/api/voice' : '/api/chat', pcm ?? { text }, (event, data) => {
+      if (event === 'transcript') {
+        userBubble.textContent = data.text ? `🎙 ${data.text}` : '🎙 (không nghe rõ)';
+      } else if (event === 'reset') {
         // Jarvis answered without looking anything up and is asked to check first: drop that draft
         got = '';
         body.textContent = '';
@@ -227,16 +243,26 @@ async function ask(raw) {
         got += data.text;
         body.textContent = got;
         bubble.scrollIntoView({ block: 'end' });
+      } else if (event === 'audio') {
+        player.enqueue(data.data, data.mime);
+        setStatus(STATUS_TEXT.speaking, true);
       } else if (event === 'status') {
-        setStatus(data.state === 'tool' ? `Đang tra cứu: ${data.label}…` : 'Đang nghĩ…', true);
+        if (data.state !== 'speaking' || player.playing) setStatus(data.state === 'tool' ? `Đang tra cứu: ${data.label}…` : STATUS_TEXT[data.state] ?? 'Đang nghĩ…', true);
       } else if (event === 'done') {
         body.classList.remove('caret');
+        if (data.heard === false) {
+          bubble.remove();
+          return;
+        }
         body.textContent = data.text || got || '(không có câu trả lời)';
         session.conversationId = data.conversationId;
         const meta = el('div', { class: 'meta' },
           ...(data.tools || []).map((t) => el('span', { class: 'pill' }, `đã tra: ${t}`)),
+          data.sttMs != null ? el('span', { class: 'pill' }, `nghe ${(data.sttMs / 1000).toFixed(1)} s`) : null,
+          data.firstAudioMs != null ? el('span', { class: 'pill' }, `tiếng đầu ${(data.firstAudioMs / 1000).toFixed(1)} s`) : null,
           el('span', { class: 'pill' }, `${(data.ms / 1000).toFixed(1)} s`),
-          el('span', { class: 'pill' }, `${fmtNum(data.usage.inputTokens + data.usage.outputTokens)} token`));
+          el('span', { class: 'pill' }, `${fmtNum(data.usage.inputTokens + data.usage.outputTokens)} token`),
+          data.ttsErrors ? el('span', { class: 'pill fail', title: data.ttsErrors.join('\n') }, 'lỗi đọc') : null);
         bubble.append(meta);
       } else if (event === 'error') {
         body.classList.remove('caret');
@@ -257,12 +283,68 @@ async function ask(raw) {
     currentCancel = null;
     $('#send').disabled = false;
     $('#stop').hidden = true;
-    setStatus('Sẵn sàng', false);
+    if (!player.playing) setStatus(voiceIn.on ? 'Đang nghe…' : 'Sẵn sàng', false);
     loadConversations();
     refreshLimits();
-    input.focus();
+    if (!voiceIn.on) input.focus();
   }
 }
+
+// ------------------------------------------------------------------ voice mode (milestone 3)
+
+const player = new Player(() => {
+  if (!busy) setStatus(voiceIn.on ? 'Đang nghe…' : 'Sẵn sàng', false);
+});
+
+/** the user started talking while Jarvis thinks or talks: Jarvis stops at once (barge-in) */
+function bargeIn() {
+  if (!busy && !player.playing) return;
+  player.stop();
+  if (busy) {
+    currentCancel?.abort();
+    api('POST', '/api/chat/stop').catch(() => undefined);
+  }
+}
+
+const voiceIn = new VoiceInput({
+  isPlaying: () => player.playing,
+  onSpeechStart: () => {
+    bargeIn();
+    setStatus('Đang nghe bạn nói…', true);
+    $('#voice-btn').classList.add('hot');
+  },
+  onUtterance: async (pcm) => {
+    $('#voice-btn').classList.remove('hot');
+    // a turn that was just interrupted needs a moment to release the session
+    for (let i = 0; busy && i < 20; i++) await new Promise((r) => setTimeout(r, 100));
+    if (!busy) turn({ pcm });
+  },
+});
+
+$('#voice-btn').addEventListener('click', async () => {
+  const b = $('#voice-btn');
+  if (voiceIn.on) {
+    await voiceIn.stop();
+    player.stop();
+    b.classList.remove('on', 'hot');
+    b.setAttribute('aria-pressed', 'false');
+    b.textContent = '🎙 Giọng nói: tắt';
+    setStatus('Sẵn sàng', false);
+    return;
+  }
+  try {
+    const st = await api('GET', '/api/voice/status');
+    if (!st.enabled) throw new Error('Chức năng giọng nói đang tắt trên máy chủ Jarvis');
+    if (!st.ready) throw new Error('Bộ giọng nói (voice sidecar) chưa chạy: xem README phần Giọng nói');
+    await voiceIn.start();
+    b.classList.add('on');
+    b.setAttribute('aria-pressed', 'true');
+    b.textContent = '🎙 Giọng nói: bật';
+    setStatus('Đang nghe…', false);
+  } catch (err) {
+    setStatus(err.name === 'NotAllowedError' ? 'Trình duyệt chưa cho dùng micro' : err.message, false);
+  }
+});
 
 async function refreshLimits() {
   try {

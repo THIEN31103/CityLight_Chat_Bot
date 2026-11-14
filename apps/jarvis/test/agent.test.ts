@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { User } from '@citylight/shared';
-import { TOOL_NUDGE, looksLikeSmallTalk, runTurn, type AgentEvent } from '../src/brain/agent';
+import { NO_DATA_ANSWER, TOOL_NUDGE, looksLikeSmallTalk, runTurn, type AgentEvent } from '../src/brain/agent';
 import { FakeLlm } from '../src/brain/providers/fake';
 import type { ToolContext, ToolDef } from '../src/tools/registry';
 import { z } from 'zod';
@@ -13,9 +13,14 @@ const echo: ToolDef = {
 };
 
 describe('small talk vs data questions', () => {
-  it.each(['Xin chào Jarvis', 'chào bạn', 'Cảm ơn nhé', 'ok', 'Bạn là ai?', ''])('"%s" is small talk', (t) => expect(looksLikeSmallTalk(t)).toBe(true));
-  it.each(['Hệ thống thế nào rồi?', 'Tủ DM0010 bị gì', 'chào, tủ số 3 có sáng không và lịch thế nào vậy bạn', 'Mã E201 là gì'])('"%s" needs data', (t) =>
-    expect(looksLikeSmallTalk(t)).toBe(false));
+  it.each(['Xin chào Jarvis', 'chào bạn', 'Cảm ơn nhé', 'ok', 'Bạn là ai?', '', 'bạn giới thiệu về bạn đi', 'bạn có thể làm gì', 'hôm nay trời đẹp nhỉ'])(
+    '"%s" is small talk',
+    (t) => expect(looksLikeSmallTalk(t)).toBe(true),
+  );
+  it.each([
+    'Hệ thống thế nào rồi?', 'Tủ DM0010 bị gì', 'chào, tủ số 3 có sáng không và lịch thế nào vậy bạn', 'Mã E201 là gì', 'phường nào đang có lỗi',
+    'TL01.0009 sao rồi', 'có sự cố nào quá hạn không', 'quận 3 có bao nhiêu đèn đang sáng',
+  ])('"%s" needs data', (t) => expect(looksLikeSmallTalk(t)).toBe(false));
 });
 
 describe('runTurn', () => {
@@ -30,6 +35,16 @@ describe('runTurn', () => {
     expect(llm.requests).toHaveLength(2);
     expect(llm.requests[1]!.messages.at(-1)).toEqual({ role: 'user', content: TOOL_NUDGE });
     expect(r.produced.filter((m) => m.role === 'assistant')).toHaveLength(1);
+    // the fake still calls no tool after the nudge: the fixed honest sentence, not the model's second guess
+    expect(r.text).toBe(NO_DATA_ANSWER);
+    expect(events.filter((e) => e.type === 'reset')).toHaveLength(2);
+  });
+
+  it('a question about Jarvis itself is answered at once, never nudged', async () => {
+    const llm = new FakeLlm();
+    const r = await runTurn({ llm, tools: [echo], ctx, system: 's', messages: [{ role: 'user', content: 'bạn giới thiệu về bạn đi' }], maxTokens: 100 });
+    expect(r).toMatchObject({ nudged: false, text: 'ok' });
+    expect(llm.requests).toHaveLength(1);
   });
 
   it('small talk is answered at once', async () => {

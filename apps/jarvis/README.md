@@ -10,7 +10,7 @@ Trợ lý tiếng Việt (chữ, sau này cả giọng nói) cho phòng điều 
 |---|---|---|
 | 1 | Khảo sát API, khung app, config, api-client, SQLite, fake + Ollama provider, sanitize | **xong code, unit test, chạy với stack local** (2026-11-12), **đo LLM** (2026-11-14); chưa đo STT / TTS (xem "Còn thiếu") |
 | 2 | Console chat chữ, tool đọc, system prompt, lịch sử, quyền dùng Jarvis, trần token | **xong, chờ duyệt** (2026-11-14): 130 unit test, chạy với stack local + `qwen3:4b-instruct` (xem "Milestone 2") |
-| 3 | Giọng nói | chưa |
+| 3 | Giọng nói | **xong phần chính, chờ duyệt** (2026-11-14): nút giọng nói, VAD, STT + TTS trên máy, đọc theo câu, barge-in, 164 unit test; còn đo STT trên GPU và ghi âm thật |
 | 4 | Guard + hành động | chưa |
 | 5 | Proactive, briefing, trial (hỏi Bảo trước) | chưa |
 
@@ -218,10 +218,59 @@ Ollama 0.40.16 cài ở `E:\ollama\app`, model ở `E:\ollama\models` (biến ng
 - Model 3,5 GB với ngữ cảnh 4096 không vừa GPU 4 GB: ~34 % chạy trên CPU, ~20 token/s. Ngữ cảnh 2048: 28 % CPU, ~24 token/s, chỉ nhanh hơn chút → giữ 4096 cho kết quả tool. Lúc chạy máy còn ~760 MB RAM trống.
 - Model đọc "tủ demo số mười" thành `{"cabinet":"demo10"}`: tool tìm tủ ở milestone 2 phải chuẩn hóa tên nói (số chữ → số, bỏ khoảng trắng, thử mã `DM0010`) trước khi gọi `/search`.
 
+## Milestone 3 — giọng nói
+
+Nút **🎙 Giọng nói** trong ô chat bật / tắt chế độ giọng nói (D3). Khi bật: micro mở với khử vọng / khử ồn / tự chỉnh âm lượng của Chrome, VAD năng lượng tự tìm đầu và cuối câu (im ~650 ms), mỗi câu gửi lên `/api/voice` dạng PCM 16 kHz. Jarvis nghe → chữ → cùng luồng trả lời như chat chữ → **đọc từng câu ngay khi câu đó viết xong**. Nói chen > 250 ms khi Jarvis đang nghĩ / nói → Jarvis im ngay và nghe câu mới (barge-in).
+
+```text
+console/voice.js, mic-worklet.js   micro, VAD, chuyển 16 kHz, phát âm thanh theo thứ tự
+src/voice/client.ts                SttProvider / TtsProvider -> sidecar HTTP
+src/voice/speech-text.ts           chữ hiển thị -> chữ để đọc (giờ, đơn vị, mã lỗi, mã tủ); tách câu khi đang stream
+src/console/speaker.ts             đọc theo câu, đúng thứ tự; giữ lại bản nháp chưa có tool; câu đệm "Để tôi kiểm tra."
+voice/sidecar.py                   faster-whisper (STT) + Piper (TTS, mặc định) hoặc edge-tts, HTTP 127.0.0.1:8791
+voice/requirements.txt             gói Python của sidecar
+scripts/bench-voice.ts             20 câu mẫu mục 11: TTS -> STT -> router
+```
+
+### Cài và chạy sidecar (Windows, máy này)
+
+```bash
+py -3.11 -m venv E:/jarvis-voice/venv
+E:/jarvis-voice/venv/Scripts/python.exe -m pip install -r apps/jarvis/voice/requirements.txt
+cd E:/jarvis-voice/piper && ../venv/Scripts/python.exe -m piper.download_voices vi_VN-vais1000-medium
+# chạy (model whisper tự tải lần đầu vào HF_HOME)
+HF_HOME=E:/jarvis-voice/hf STT_MODEL=small STT_DEVICE=cpu TTS_ENGINE=piper \
+  PIPER_VOICE=E:/jarvis-voice/piper/vi_VN-vais1000-medium.onnx \
+  E:/jarvis-voice/venv/Scripts/python.exe -u apps/jarvis/voice/sidecar.py
+```
+
+GPU: thêm `nvidia-cublas-cu12` + `nvidia-cudnn-cu12` (~1 GB) và `STT_DEVICE=cuda STT_COMPUTE=int8_float16`; sidecar tự thêm DLL của chúng vào PATH. GPU 4 GB phải chia với LLM.
+
+### Quyết định
+
+| # | Đặc tả | Đã chốt | Lý do |
+|---|---|---|---|
+| D10 | TTS `edge-tts` (cloud) | **Piper `vi_VN-vais1000-medium` chạy trên máy** (mặc định), edge-tts còn làm tùy chọn `TTS_ENGINE=edge` | 2026-11-14: edge-tts 7.0.2 bị dịch vụ từ chối (403); bản 7.3.1 trả "không có âm thanh" cho 8 / 12 câu tiếng Việt, mỗi lần lỗi mất ~2,6 s. Piper: 0,06 s / câu, miễn phí, không ra mạng |
+| D11 | STT stream (partial) + Silero VAD | STT **cả câu** sau khi VAD trình duyệt báo hết câu; Silero VAD của faster-whisper (`vad_filter`) cắt im lặng | Đơn giản, đủ cho 1 – 2 câu ngắn; partial để sau nếu cần hiện chữ khi đang nói |
+| D12 | Kết nối WebSocket cho audio | `POST /api/voice` (PCM) + SSE trả về (chữ + âm thanh base64 từng câu) | Cùng cơ chế với chat chữ, không thêm thư viện; câu Jarvis ngắn |
+| D13 | — | Whisper hay "bịa" câu kiểu "Hãy subscribe kênh…" với tiếng rất ngắn: sidecar bỏ đoạn có `no_speech_prob` cao hoặc chứa các cụm đó | Đo: "Hủy." → câu quảng cáo YouTube |
+
+### Số đo (2026-11-14, `npm run bench:voice`, giọng Piper đọc 20 câu mẫu, CPU i7-11800H)
+
+| STT | Nghe 1 câu p50 / p95 | Gần đúng (≥ 80 % từ) | Router đúng tool từ câu nghe được |
+|---|---|---|---|
+| `small` int8 CPU 8 luồng | 2,2 s / 2,5 s | 12 / 20 | 10 / 12 |
+| `base` int8 CPU | 0,7 s / 3,8 s | 10 / 20 | 8 / 12 |
+| `small` GPU | chưa đo (đang tải thư viện CUDA, mạng ~0,2 MB/s) | | |
+
+- TTS Piper: p50 0,06 s, p95 0,15 s mỗi câu.
+- Cả vòng qua console (Piper đọc câu hỏi → `/api/voice` → tool → đọc trả lời): tiếng đầu ~2 – 2,7 s **sau khi STT xong**, tức ~4,5 s sau khi người dùng nói xong (mục 9 muốn ≤ 2,5 s): STT CPU là chỗ chậm nhất. Câu đệm "Để tôi kiểm tra." có sẵn nên vang lên ngay khi tool bắt đầu.
+- Giọng Piper là giọng máy, khó nghe hơn người thật cho STT; đánh giá thật cần 20 câu ghi âm của Bảo (mục 11). Mã lỗi đọc từng chữ số ("E hai không một") được router ghép lại (`spokenAlarmCode`).
+
 ## Còn thiếu (cần máy / quyết định)
 
-- **Đo STT / TTS** (mục 9): cần `faster-whisper` + thư viện CUDA (~1–1,5 GB) + model, `edge-tts`. Chưa cài. STT sẽ phải chia 4 GB VRAM với LLM.
-- Câu trả lời 2,5 – 7 s (2 lượt model, ~1,9 K token prompt, 1 / 3 model chạy CPU). Mục 9 đặt chữ đầu ≤ 1,5 s: lượt có router đạt ~0,5 – 2 s; GPU lớn hơn hoặc model nhỏ hơn sẽ nhanh hơn.
+- STT trên GPU (đang tải thư viện CUDA) và 20 câu ghi âm thật để đo đúng mục 9.
+- Câu trả lời chữ 2,5 – 7 s (2 lượt model, ~1,9 K token prompt, 1 / 3 model chạy CPU). GPU lớn hơn hoặc model nhỏ hơn sẽ nhanh hơn.
 
 ## Phần cứng máy hiện tại
 
@@ -230,5 +279,5 @@ RTX 3050 Laptop 4 GB VRAM, RAM 7,7 GB, i7-11800H, ổ C còn ~19 GB (cài lên E
 ## Dữ liệu và bảo mật
 
 - Cookie phiên chỉ nằm trong bộ nhớ, không ghi đĩa, không log. Không log mật khẩu, mã 2FA / OTP, CSRF.
-- LLM chạy trên máy (Ollama): dữ liệu tủ không ra ngoài. TTS `edge-tts` là dịch vụ cloud của Microsoft: câu Jarvis đọc sẽ đi qua đó (đã lọc theo G6).
+- LLM (Ollama), STT (faster-whisper) và TTS (Piper) đều chạy trên máy: tiếng nói và dữ liệu tủ không ra ngoài. Chỉ khi chọn `TTS_ENGINE=edge` thì câu Jarvis đọc mới đi qua dịch vụ cloud của Microsoft (đã lọc theo G6). Âm thanh không được lưu, chỉ lưu chữ đã lọc.
 - Thu quyền một manager **không** tự thu quyền những người manager đó đã cấp (mục 8.1, làm ở milestone 2).
