@@ -89,6 +89,8 @@ describe('speaker', () => {
     sp.text('Hệ thống có 510 tủ. ');
     await sp.end();
     expect(said(out)).toEqual([FILLER, 'Hệ thống có 510 tủ.']);
+    // the console shows each piece's text when it is heard, but never the filler
+    expect(out.map((c) => c.filler)).toEqual([true, false]);
     expect(tts.calls.join(' ')).not.toContain('156');
   });
 

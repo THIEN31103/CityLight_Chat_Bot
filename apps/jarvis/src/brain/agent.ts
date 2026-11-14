@@ -2,7 +2,8 @@
 // cancelled (stop button, barge-in later, console closed). Read tools only in milestone 2; action tools will only
 // create a PendingAction (milestone 4), never call a command endpoint from here.
 import type { LlmMessage, LlmProvider, LlmToolCall } from './llm';
-import { route } from './router';
+import { CONTROL_CAPABILITY_ANSWER, isControlCapabilityQuestion, isSwitchOrder, isWhoAmI, route, SWITCH_ANSWER } from './router';
+import { ROLE_LABELS } from '@citylight/shared';
 import { fold } from '../tools/names';
 import { asLlmTools, runTool, type ToolContext, type ToolDef } from '../tools/registry';
 
@@ -48,6 +49,8 @@ export interface TurnInput {
   onEvent?: (ev: AgentEvent) => void;
   /** run the keyword router before the model (default true) */
   useRouter?: boolean;
+  /** tools only the router runs, not offered to the model (a short tool list keeps the small model on track) */
+  routerTools?: ToolDef[];
 }
 
 export interface TurnResult {
@@ -63,7 +66,7 @@ export interface TurnResult {
 }
 
 export async function runTurn(t: TurnInput): Promise<TurnResult> {
-  const byName = new Map(t.tools.map((d) => [d.name, d]));
+  const byName = new Map([...(t.routerTools ?? []), ...t.tools].map((d) => [d.name, d]));
   const llmTools = asLlmTools(t.tools);
   const messages = [...t.messages];
   const produced: LlmMessage[] = [];
@@ -93,6 +96,19 @@ export async function runTurn(t: TurnInput): Promise<TurnResult> {
       produced.push(result);
     }
   };
+
+  // fixed answers, said plainly instead of whatever the model looks up: what Jarvis can do with the lights (nothing
+  // yet, milestone 4), an order to switch, and who the user is
+  const fixed = t.useRouter === false ? null
+    : isControlCapabilityQuestion(lastUser) ? CONTROL_CAPABILITY_ANSWER
+    : isSwitchOrder(lastUser) ? SWITCH_ANSWER
+    : isWhoAmI(lastUser) ? `Bạn là ${t.ctx.user.fullName}, đăng nhập với vai trò ${ROLE_LABELS[t.ctx.user.role] ?? t.ctx.user.role}.`
+    : null;
+  if (fixed) {
+    t.onEvent?.({ type: 'text', text: fixed });
+    produced.push({ role: 'assistant', content: fixed });
+    return out({ text: fixed, stopReason: 'end_turn' });
+  }
 
   // plain intents: fetch first, so the model starts from real data
   const routed = t.useRouter === false || !needsData ? null : route(lastUser, t.ctx.focus);

@@ -111,7 +111,8 @@ function render() {
   $('#voice-btn').hidden = !session.voice;
   const l = session.limits;
   $('#limits').textContent = `Tối đa ${l.perUserPerMin} câu / phút · token hôm nay ${fmtNum(l.tokensToday)}${l.tokenCap ? ` / ${fmtNum(l.tokenCap)}` : ''}`;
-  loadConversations();
+  // after a reload (F5) the chat in progress is shown again, not an empty screen
+  showCurrent();
   $('#input').focus();
 }
 
@@ -171,7 +172,7 @@ $('#composer').addEventListener('submit', (e) => {
 });
 $('#stop').addEventListener('click', () => {
   currentCancel?.abort();
-  player.stop();
+  stopVoice();
   api('POST', '/api/chat/stop').catch(() => undefined);
 });
 async function newChat() {
@@ -185,11 +186,28 @@ async function newChat() {
 }
 $('#new-chat').addEventListener('click', newChat);
 $('#new-chat-top').addEventListener('click', newChat);
-$('#back-live').addEventListener('click', () => {
+$('#back-live').addEventListener('click', showCurrent);
+
+/**
+ * Back from reading an old chat to the one in progress: its messages are shown again (the screen used to stay empty,
+ * end-to-end check of 2026-11-14).
+ */
+async function showCurrent() {
   showLive();
   clearMessages();
+  const id = session.conversationId;
+  if (id) {
+    try {
+      const { messages } = await api('GET', `/api/conversations/${id}`);
+      if (viewingId === null && session.conversationId === id) {
+        for (const m of messages) if (m.role === 'user' || m.role === 'assistant') addBubble(m.role, m.content);
+      }
+    } catch {
+      /* deleted meanwhile: an empty screen is right */
+    }
+  }
   loadConversations();
-});
+}
 
 function clearMessages() {
   $('#messages').querySelectorAll('.msg').forEach((m) => m.remove());
@@ -234,6 +252,16 @@ async function turn({ text, pcm }) {
   setStatus(pcm ? STATUS_TEXT.transcribing : STATUS_TEXT.thinking, true);
   currentCancel = new AbortController();
   let got = '';
+  // Voice turns show the answer in step with the voice (2026-11-14: the text used to be on screen seconds before it
+  // was said): each piece appears when its audio starts, the filler is only heard, and the full text replaces the
+  // pieces once the last one has played (or at once when no audio came, e.g. the voice sidecar failed).
+  let shown = '';
+  const reveal = (t) => {
+    shown = shown ? `${shown} ${t}` : t;
+    body.textContent = shown;
+    bubble.scrollIntoView({ block: 'end' });
+  };
+  revealRest?.();
   try {
     await stream(pcm ? '/api/voice' : '/api/chat', pcm ?? { text }, (event, data) => {
       if (event === 'transcript') {
@@ -241,24 +269,31 @@ async function turn({ text, pcm }) {
       } else if (event === 'reset') {
         // Jarvis answered without looking anything up and is asked to check first: drop that draft
         got = '';
-        body.textContent = '';
+        if (!pcm) body.textContent = '';
         setStatus('Đang tra cứu dữ liệu…', true);
       } else if (event === 'text') {
         got += data.text;
+        if (pcm) return;
         body.textContent = got;
         bubble.scrollIntoView({ block: 'end' });
       } else if (event === 'audio') {
-        player.enqueue(data.data, data.mime);
+        player.enqueue(data.data, data.mime, data.filler ? undefined : () => reveal(data.text));
         setStatus(STATUS_TEXT.speaking, true);
       } else if (event === 'status') {
         if (data.state !== 'speaking' || player.playing) setStatus(data.state === 'tool' ? `Đang tra cứu: ${data.label}…` : STATUS_TEXT[data.state] ?? 'Đang nghĩ…', true);
       } else if (event === 'done') {
-        body.classList.remove('caret');
         if (data.heard === false) {
           bubble.remove();
           return;
         }
-        body.textContent = data.text || got || '(không có câu trả lời)';
+        const full = data.text || got || '(không có câu trả lời)';
+        const finish = () => {
+          revealRest = null;
+          body.classList.remove('caret');
+          body.textContent = full;
+        };
+        if (pcm && player.playing) revealRest = finish;
+        else finish();
         session.conversationId = data.conversationId;
         const meta = el('div', { class: 'meta' },
           ...(data.tools || []).map((t) => el('span', { class: 'pill' }, `đã tra: ${t}`)),
@@ -282,7 +317,7 @@ async function turn({ text, pcm }) {
       body.textContent = err.message;
     }
   } finally {
-    body.classList.remove('caret');
+    if (!revealRest) body.classList.remove('caret');
     busy = false;
     currentCancel = null;
     $('#send').disabled = false;
@@ -296,14 +331,24 @@ async function turn({ text, pcm }) {
 
 // ------------------------------------------------------------------ voice mode (milestone 3)
 
+/** set while a finished voice answer is still being read out: shows its full text (when it ends or is cut off) */
+let revealRest = null;
+
 const player = new Player(() => {
+  revealRest?.();
   if (!busy) setStatus(voiceIn.on ? 'Đang nghe…' : 'Sẵn sàng', false);
 });
+
+/** stop the voice and show the whole answer it was reading */
+function stopVoice() {
+  player.stop();
+  revealRest?.();
+}
 
 /** the user started talking while Jarvis thinks or talks: Jarvis stops at once (barge-in) */
 function bargeIn() {
   if (!busy && !player.playing) return;
-  player.stop();
+  stopVoice();
   if (busy) {
     currentCancel?.abort();
     api('POST', '/api/chat/stop').catch(() => undefined);
@@ -329,7 +374,7 @@ $('#voice-btn').addEventListener('click', async () => {
   const b = $('#voice-btn');
   if (voiceIn.on) {
     await voiceIn.stop();
-    player.stop();
+    stopVoice();
     b.classList.remove('on', 'hot');
     b.setAttribute('aria-pressed', 'false');
     b.textContent = '🎙 Giọng nói: tắt';
@@ -399,8 +444,7 @@ async function loadConversations() {
 async function openOwn(id) {
   if (busy) return;
   if (id === session.conversationId) {
-    showLive();
-    loadConversations();
+    if (viewingId) showCurrent();
     return;
   }
   const { messages } = await api('GET', `/api/conversations/${id}`);

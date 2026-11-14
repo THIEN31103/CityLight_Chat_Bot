@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { User } from '@citylight/shared';
 import { NO_DATA_ANSWER, TOOL_NUDGE, looksLikeSmallTalk, runTurn, type AgentEvent } from '../src/brain/agent';
+import { SWITCH_ANSWER } from '../src/brain/router';
 import { FakeLlm } from '../src/brain/providers/fake';
 import type { ToolContext, ToolDef } from '../src/tools/registry';
 import { z } from 'zod';
@@ -73,6 +74,22 @@ describe('runTurn', () => {
     expect(llm.requests).toHaveLength(1);
     expect(llm.requests[0]!.messages.find((m) => m.role === 'tool')!.content).toContain('"total":10');
     expect(events[0]).toMatchObject({ type: 'tool_start', name: 'get_system_overview' });
+  });
+
+  it('the router may run a tool the model is not offered (street search)', async () => {
+    const find: ToolDef = { ...echo, name: 'find_cabinets', input: z.object({ query: z.string() }), run: async (_c, i) => ({ found: [(i as { query: string }).query] }) };
+    const llm = new FakeLlm();
+    const r = await runTurn({ llm, tools: [echo], routerTools: [find], ctx, system: 's', maxTokens: 100, messages: [{ role: 'user', content: 'các tủ trên đường Lý Thường Kiệt' }] });
+    expect(r.toolCalls.map((c) => c.name)).toEqual(['find_cabinets']);
+    expect(llm.requests[0]!.tools?.map((t) => t.name)).toEqual(['get_system_overview']);
+    expect(llm.requests[0]!.messages.find((m) => m.role === 'tool')!.content).toContain('Lý Thường Kiệt');
+  });
+
+  it('an order to switch lights gets the fixed "cannot yet" sentence, no model call', async () => {
+    const llm = new FakeLlm();
+    const r = await runTurn({ llm, tools: [echo], ctx, system: 's', maxTokens: 100, messages: [{ role: 'user', content: 'Bật đèn tủ TL01.0009 lên giúp tôi' }] });
+    expect(r.text).toBe(SWITCH_ANSWER);
+    expect(llm.requests).toHaveLength(0);
   });
 
   it('an unknown tool name is reported to the model, not thrown', async () => {

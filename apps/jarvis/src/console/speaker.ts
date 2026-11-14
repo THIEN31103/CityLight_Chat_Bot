@@ -12,6 +12,8 @@ export interface SpokenChunk {
   audio: Uint8Array;
   mime: string;
   ms: number;
+  /** the "Để tôi kiểm tra." said while a tool runs: heard, not part of the answer text */
+  filler: boolean;
 }
 
 export class Speaker {
@@ -55,7 +57,7 @@ export class Speaker {
       const held = this.held;
       this.held = [];
       if (held.length) held.forEach((s) => this.say(s));
-      else if (!this.spokeAnything && this.filler) this.sayAudio(FILLER, this.filler);
+      else if (!this.spokeAnything && this.filler) this.sayAudio(FILLER, this.filler, true);
     }
   }
 
@@ -85,7 +87,7 @@ export class Speaker {
     this.sayAudio(sentence, () => this.tts.synth(spoken, this.signal));
   }
 
-  private sayAudio(text: string, make: () => Promise<TtsAudio | null>) {
+  private sayAudio(text: string, make: () => Promise<TtsAudio | null>, filler = false) {
     this.spokeAnything = true;
     const seq = ++this.seq;
     // synthesis starts now (in parallel with the next sentences); delivery stays in order
@@ -98,7 +100,7 @@ export class Speaker {
       if (!a || this.stopped || this.signal.aborted) return;
       const ms = Math.round(performance.now() - this.started);
       this.firstAudioMs ??= ms;
-      this.emit({ seq, text, audio: a.audio, mime: a.mime, ms });
+      this.emit({ seq, text, audio: a.audio, mime: a.mime, ms, filler });
     });
   }
 }

@@ -19,7 +19,7 @@ import { bootstrapAdmin, canEditSettings, canGrant, canViewChatsOf, getAccess, l
 import { addTokenUsage, tokensToday, type Db } from '../store/db';
 import { addMessage, createConversation, deleteOwn, getConversation, getMessages, listAll, listOwn, tokenReport } from '../store/history';
 import { SettingsError, effectiveTokenCap, getSettings, updateSettings } from '../store/settings';
-import { READ_TOOLS } from '../tools/read';
+import { READ_TOOLS, SPARE_TOOLS } from '../tools/read';
 import type { ToolDef } from '../tools/registry';
 import { SidecarVoice, type SttProvider, type TtsAudio, type TtsProvider } from '../voice/client';
 import { toSpeech } from '../voice/speech-text';
@@ -35,6 +35,8 @@ const MAX_BODY = 64 * 1024;
 /** 30 s of 16 kHz 16-bit mono */
 const MAX_AUDIO = 30 * 16_000 * 2;
 const MAX_TEXT = 1000;
+/** street search and the area list: run when the router sees them plainly asked for ("các tủ trên đường X", "những khu vực nào") */
+const ROUTER_TOOLS = SPARE_TOOLS.filter((d) => d.name === 'find_cabinets' || d.name === 'list_areas');
 export const ADMIN_NOTICE = 'Quản trị viên có thể xem nội dung chat';
 
 const TOOL_LABELS: Record<string, string> = {
@@ -240,7 +242,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         send('done', { text: '', heard: false, sttMs: stt.ms });
         return;
       }
-      const speaker = new Speaker(voice, !looksLikeSmallTalk(text), (c) => send('audio', { seq: c.seq, text: c.text, mime: c.mime, data: Buffer.from(c.audio).toString('base64'), ms: c.ms }), ac.signal, fillerAudio);
+      const speaker = new Speaker(voice, !looksLikeSmallTalk(text), (c) => send('audio', { seq: c.seq, text: c.text, filler: c.filler, mime: c.mime, data: Buffer.from(c.audio).toString('base64'), ms: c.ms }), ac.signal, fillerAudio);
       await answer(s, user, text, send, ac, speaker, { sttMs: stt.ms, audioMs: stt.audioMs });
     } catch (e) {
       send('error', { code: 'failed', message: (e as Error).message });
@@ -275,7 +277,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     ac.signal.addEventListener('abort', () => speaker?.stop());
     {
       const result = await runTurn({
-        llm, tools, maxTokens: cfg.llm.maxTokens, signal: ac.signal,
+        llm, tools, routerTools: deps.tools ? undefined : ROUTER_TOOLS, maxTokens: cfg.llm.maxTokens, signal: ac.signal,
         ctx: { reads: s.reads, user, focus: s.ctx.focus, userText: text },
         system: systemPrompt(user, s.ctx.focus, new Date(), { voice: !!speaker }),
         messages: s.ctx.messagesFor(text, cfg.contextMessages),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { route } from '../src/brain/router';
+import { isControlCapabilityQuestion, isSwitchOrder, isWhoAmI, route } from '../src/brain/router';
 import { KEEP_MESSAGES, ShiftContext } from '../src/brain/context';
 
 const focus = { cabinet: { id: 'c1', code: 'DM0010', name: 'Tủ demo 10' } };
@@ -20,6 +20,16 @@ describe('keyword router', () => {
     ['dòng rò tủ DM0003 24 giờ qua có bất thường không', 'get_cabinet_history', { cabinet: 'dm0003', hours: 24 }],
     ['lịch bật tắt tủ đó thế nào', 'get_schedule', { cabinet: 'tủ đó' }],
     ['Tủ demo số 1 có đang sáng không', 'get_cabinet', { cabinet: 'demo so 1' }],
+    // missed by the end-to-end run of 2026-11-14 (C6, C9, C10, C13)
+    ['Tủ đó có cảnh báo gì không?', 'get_cabinet', { cabinet: 'tủ đó' }],
+    ['Có bao nhiêu cảnh báo nghiêm trọng đang mở?', 'list_alarms', { severity: 'critical' }],
+    ['cảnh báo nhẹ hiện tại', 'list_alarms', { severity: 'minor' }],
+    ['Tìm giúp tôi các tủ trên đường Lý Thường Kiệt', 'find_cabinets', { query: 'Lý Thường Kiệt' }],
+    ['tủ ở phố Hàng Bài nhé', 'find_cabinets', { query: 'Hàng Bài' }],
+    ['Hệ thống có những khu vực nào?', 'list_areas', {}],
+    ['danh sách các quận', 'list_areas', {}],
+    ['Tủ TL01.0009 đã bật đèn chưa?', 'get_cabinet', { cabinet: 'tl01.0009' }],
+    ['tủ đó tắt đèn chưa', 'get_cabinet', { cabinet: 'tủ đó' }],
   ])('%s -> %s', (q, name, input) => {
     expect(route(q, focus)).toEqual({ name, input });
   });
@@ -48,6 +58,15 @@ describe('keyword router', () => {
   });
 });
 
+describe('switch orders (Jarvis cannot switch yet)', () => {
+  it.each(['Bật đèn tủ TL01.0009 lên giúp tôi', 'tắt hết đèn đi', 'bật tay tủ demo số hai', 'trả tủ đó về chạy theo lịch'])('order: %s', (q) => {
+    expect(isSwitchOrder(q)).toBe(true);
+  });
+  it.each(['Tủ TL01.0009 đã bật đèn chưa?', 'tủ đó đang tắt đèn à?', 'lịch bật tắt tủ đó thế nào', 'xác nhận', 'có bất thường không', 'Tối qua tủ TL01.0016 bật lúc mấy giờ?'])('not an order: %s', (q) => {
+    expect(isSwitchOrder(q)).toBe(false);
+  });
+});
+
 describe('shift context', () => {
   it('keeps 20 messages but sends only the last N, with a note of older questions', () => {
     const c = new ShiftContext();
@@ -59,4 +78,15 @@ describe('shift context', () => {
     expect(sent[0]!.content).toContain('câu 12');
     expect(sent[0]!.content).not.toContain('câu 1;');
   });
+});
+
+describe('questions about Jarvis itself (fixed answers)', () => {
+  it.each(['bạn có thể điều khiển đèn chưa', 'bạn có tính năng điều khiển tủ chưa', 'Jarvis điều khiển đèn được không?', 'bạn biết bật tắt đèn không', 'có chức năng gửi lệnh tắt đèn không'])(
+    'capability: %s', (q) => expect(isControlCapabilityQuestion(q)).toBe(true),
+  );
+  it.each(['Tủ TL01.0009 đã bật đèn chưa?', 'tủ đó có bật đèn lúc mấy giờ không', 'Bật đèn tủ TL01.0009 lên giúp tôi', 'Hệ thống thế nào rồi?', 'bạn là ai'])(
+    'not a capability question: %s', (q) => expect(isControlCapabilityQuestion(q)).toBe(false),
+  );
+  it.each(['biết tui là ai không', 'tôi là ai', 'Jarvis có biết mình là ai không'])('who am I: %s', (q) => expect(isWhoAmI(q)).toBe(true));
+  it.each(['bạn là ai', 'Jarvis là ai vậy'])('not who am I: %s', (q) => expect(isWhoAmI(q)).toBe(false));
 });

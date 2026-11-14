@@ -171,4 +171,8 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .topbar { flex-wrap: wrap; }
   .who #brain { display: none; }
   .msg { max-width: 95%; }
+  /* phone: the voice button on its own row, the question box keeps the width (it was 125 px wide at 375 px) */
+  .composer { flex-wrap: wrap; }
+  .composer .voice { flex-basis: 100%; }
+  .composer textarea { flex: 1; min-width: 0; }
 }

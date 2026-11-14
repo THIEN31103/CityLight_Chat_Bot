@@ -368,5 +368,5 @@ export const READ_TOOLS = [
   getSystemOverview, getCabinet, getCabinetHistory, listAlarms, explainAlarmCode, getAreaCabinets, getSchedule, listIncidents,
 ] as unknown as ToolDef[];
 
-/** Written and tested, not offered yet: list_areas, find_cabinets; get_command_status comes back with actions (milestone 4). */
+/** Not offered to the model: list_areas, find_cabinets run only through the keyword router; get_command_status comes back with actions (milestone 4). */
 export const SPARE_TOOLS = [findCabinets, listAreas, getCommandStatus] as unknown as ToolDef[];

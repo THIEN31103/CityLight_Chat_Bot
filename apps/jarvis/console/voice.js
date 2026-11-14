@@ -4,7 +4,10 @@
 // would hear itself, so while it speaks a louder voice is needed to interrupt it (barge-in).
 
 const FRAME_MS = 40;
-const END_SILENCE_MS = 650;
+// silence that ends a sentence: 650 ms cut real sentences in two ("Tổng quan." + "Tổng quan hệ mà.", 2026-11-14)
+const END_SILENCE_MS = 900;
+// once a sentence has started, quieter sound still counts as speech (soft last syllables after noise suppression)
+const KEEP_FACTOR = 0.55;
 // shorter than this is a click, a cough or a door, not a question (and it used to come back as words)
 const MIN_SPEECH_MS = 550;
 // voice must last this long before a sentence starts (longer while Jarvis talks: barge-in, spec 4.2)
@@ -84,7 +87,7 @@ export class VoiceInput {
       return;
     }
     this.frames.push(frame);
-    this.silenceMs = loud ? 0 : this.silenceMs + FRAME_MS;
+    this.silenceMs = rms > threshold * KEEP_FACTOR ? 0 : this.silenceMs + FRAME_MS;
     const total = this.frames.length * FRAME_MS;
     if (this.silenceMs >= END_SILENCE_MS || total >= MAX_UTTERANCE_MS) {
       const speechMs = total - this.silenceMs;
@@ -129,18 +132,25 @@ export class Player {
     return !!this.current || this.queue.length > 0;
   }
 
-  enqueue(base64, mime = 'audio/mpeg') {
+  /** `onStart` runs when this piece starts playing (the console shows its text then, in step with the voice) */
+  enqueue(base64, mime = 'audio/mpeg', onStart) {
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-    this.queue.push(URL.createObjectURL(new Blob([bytes], { type: mime })));
+    this.queue.push({ url: URL.createObjectURL(new Blob([bytes], { type: mime })), onStart });
     if (!this.current) this.next();
   }
 
   next() {
-    const url = this.queue.shift();
-    if (!url) {
+    const item = this.queue.shift();
+    if (!item) {
       this.current = null;
       this.onIdle?.();
       return;
+    }
+    const { url, onStart } = item;
+    try {
+      onStart?.();
+    } catch (e) {
+      console.error(e);
     }
     const a = new Audio(url);
     this.current = a;
@@ -154,7 +164,7 @@ export class Player {
   }
 
   stop() {
-    for (const u of this.queue) URL.revokeObjectURL(u);
+    for (const q of this.queue) URL.revokeObjectURL(q.url);
     this.queue = [];
     if (this.current) {
       this.current.pause();
