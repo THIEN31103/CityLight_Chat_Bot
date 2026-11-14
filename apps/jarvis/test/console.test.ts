@@ -25,6 +25,7 @@ beforeAll(async () => {
     { id: 'mgr', email: 'mgr@demo.vn', password: 'mat-khau-mgr-1', role: 'manager', totp: '222222' },
     { id: 'op', email: 'op@demo.vn', password: 'mat-khau-op-1', role: 'operator', totp: '333333' },
     { id: 'view', email: 'view@demo.vn', password: 'mat-khau-view-1', role: 'viewer' },
+    { id: 'newmgr', email: 'new-mgr@demo.vn', password: 'mat-khau-tam-1', role: 'manager', tempPassword: true },
   ]);
   db = openDb(':memory:');
   llm = new FakeLlm();
@@ -96,6 +97,14 @@ describe('console', () => {
     await b.call('GET', '/api/session');
     const r = await fetch(`${base}/api/login`, { method: 'POST', headers: { cookie: b.cookie, 'content-type': 'application/json' }, body: '{}' });
     expect(r.status).toBe(403);
+  });
+
+  it('a new account still on its temporary password is sent to the web to change it first', async () => {
+    const b = new Browser();
+    const r = await b.signIn('new-mgr@demo.vn', 'mat-khau-tam-1');
+    expect(r.status).toBe(403);
+    expect(r.data.code).toBe('password_change_required');
+    expect((await b.call('GET', '/api/session')).data.signedIn).toBe(false);
   });
 
   it('an operator without a grant passes 2FA but cannot open Jarvis', async () => {

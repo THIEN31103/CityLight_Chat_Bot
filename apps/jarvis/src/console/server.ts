@@ -153,6 +153,11 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       await s.api.logout().catch(() => undefined);
       throw new HttpError(403, 'totp_setup_required', 'Tài khoản cần bật xác thực 2 lớp trên web CityLight trước khi dùng Jarvis');
     }
+    // a new or reset account has a temporary password: the API refuses everything until it is changed on the web
+    if (user.passwordChangeRequired) {
+      await s.api.logout().catch(() => undefined);
+      throw new HttpError(403, 'password_change_required', 'Tài khoản đang dùng mật khẩu tạm: đăng nhập web CityLight để đổi mật khẩu trước khi dùng Jarvis');
+    }
     rememberUser(db, user);
     if (bootstrapAdmin(db, user)) audit.write({ kind: 'bootstrap_admin', userId: user.id, role: user.role });
     if (!rights(actorOf(user)).canUse) {

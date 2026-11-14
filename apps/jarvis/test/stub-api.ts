@@ -12,6 +12,8 @@ export interface StubUser {
   password: string;
   role: 'admin' | 'manager' | 'operator' | 'viewer' | 'maintenance';
   totp?: string;
+  /** created or reset by an admin: temporary password still to be changed */
+  tempPassword?: boolean;
 }
 
 export const CABINET = {
@@ -76,7 +78,7 @@ export async function startStubApi(users: StubUser[]): Promise<StubApi> {
     };
     const publicUser = (u: StubUser) => ({
       id: u.id, email: u.email, fullName: u.email.split('@')[0], role: u.role, scopeAll: true, scopeAreaIds: [], lang: 'vi',
-      totpEnabled: !!u.totp, totpRequired: ['admin', 'manager', 'operator'].includes(u.role) && !!u.totp,
+      totpEnabled: !!u.totp, totpRequired: ['admin', 'manager', 'operator'].includes(u.role) && !!u.totp, passwordChangeRequired: !!u.tempPassword,
     });
 
     if (req.method === 'POST' && p === '/auth/login') {
