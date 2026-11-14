@@ -49,7 +49,7 @@ describe('config', () => {
 
   it('defaults: free local model, loopback console', () => {
     const c = loadConfig({});
-    expect(c.llm).toMatchObject({ provider: 'ollama', model: 'qwen3:4b', think: undefined });
+    expect(c.llm).toMatchObject({ provider: 'ollama', model: 'qwen3:4b-instruct', numCtx: 4096, think: undefined });
     expect(c.console.host).toBe('127.0.0.1');
     expect(c.apiBase).toBe('http://localhost:3000/api/v1');
   });

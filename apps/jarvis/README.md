@@ -8,7 +8,7 @@ Trợ lý tiếng Việt (chữ, sau này cả giọng nói) cho phòng điều 
 
 | Milestone | Nội dung | Trạng thái |
 |---|---|---|
-| 1 | Khảo sát API, khung app, config, api-client, SQLite, fake + Ollama provider, sanitize | **xong phần code + unit test**; chưa chạy với stack thật, chưa đo STT / TTS / LLM (xem "Còn thiếu") |
+| 1 | Khảo sát API, khung app, config, api-client, SQLite, fake + Ollama provider, sanitize | **xong code, unit test, chạy với stack local** (2026-11-12), **đo LLM** (2026-11-14); chưa đo STT / TTS (xem "Còn thiếu") |
 | 2 | Console chat chữ, tool đọc, system prompt, lịch sử, quyền dùng Jarvis, trần token | chưa |
 | 3 | Giọng nói | chưa |
 | 4 | Guard + hành động | chưa |
@@ -18,7 +18,7 @@ Trợ lý tiếng Việt (chữ, sau này cả giọng nói) cho phòng điều 
 
 | # | Đặc tả | Đã chốt | Lý do |
 |---|---|---|---|
-| D1 | G9: Claude `claude-haiku-5-5` mặc định | **LLM miễn phí chạy trên máy qua Ollama**, mặc định `qwen3:4b` (đo ở bước đo, có thể đổi) | Đức Thiện chốt 2026-11-10: không dùng API trả phí. Interface `LlmProvider` giữ nguyên để thêm Claude sau |
+| D1 | G9: Claude `claude-haiku-5-5` mặc định | **LLM miễn phí chạy trên máy qua Ollama**, mặc định `qwen3:4b-instruct` (đã đo, xem "Số đo") | Đức Thiện chốt 2026-11-10: không dùng API trả phí. Interface `LlmProvider` giữ nguyên để thêm Claude sau |
 | D2 | Xưng hô theo cấu hình | Jarvis xưng "tôi", gọi người dùng là **"bạn"** | Đức Thiện chốt |
 | D3 | PTT (giữ Space) | **Một nút bật / tắt chế độ giọng nói**; khi bật, VAD tự nhận hết câu. Không wake word | Đức Thiện chốt |
 | D4 | SQLite: `node:sqlite` hoặc `better-sqlite3` | **`node:sqlite`** (có sẵn trong Node 22, không cần build native trên Windows) | Node in `ExperimentalWarning`; script tắt bằng `--disable-warning=ExperimentalWarning`. Vitest 2 không nhận `node:sqlite` khi import tĩnh nên `store/db.ts` nạp bằng `createRequire` |
@@ -117,7 +117,7 @@ apps/jarvis/
   src/brain/providers/ollama.ts  LLM miễn phí trên máy (/api/chat, stream NDJSON, tool calling)
   src/brain/providers/fake.ts    provider giả cho test (mục 5.6)
   src/main.ts          tiến trình: config, DB, dọn lịch sử, GET /health (console ở milestone 2)
-  scripts/smoke.ts     chạy thử với API thật: đăng nhập, đọc, kiểm sanitize
+  scripts/smoke.ts     chạy thử với API thật: đăng nhập, đọc, kiểm sanitize (JARVIS_SMOKE_QUERY = từ khóa tìm tủ)
   scripts/bench-llm.ts đo độ trễ + chọn đúng tool của model đang cấu hình
   test/                vitest; stub-api.ts giả lập phần API mà client dùng
 ```
@@ -139,7 +139,24 @@ Chạy thử với API thật (stack local, tài khoản test):
 JARVIS_SMOKE_EMAIL=... JARVIS_SMOKE_PASSWORD=... npm run smoke -w @citylight/jarvis -- 123456
 ```
 
-Đo LLM (cần Ollama đang chạy và đã `ollama pull qwen3:4b`):
+### Stack local trên máy Đức Thiện
+
+Docker chỉ có **trong WSL2 Ubuntu** (không có trên Windows, không có Docker Desktop). Máy ảo WSL tự tắt khi không còn tiến trình `wsl.exe` nào, kéo theo các container, nên giữ một phiên WSL mở suốt lúc test.
+
+```bash
+wsl.exe -d Ubuntu -- sleep 7200                                     # giữ WSL sống (để chạy nền)
+node infra/scripts/gen-emqx-acl.mjs
+wsl.exe -d Ubuntu -- bash -lc "cd /mnt/e/CITY_LIGHT/server_citylight && docker compose -f infra/docker-compose.yml --env-file infra/.env up -d"
+node --env-file=.env --import tsx packages/db/src/migrate.ts
+cd apps/api && node --env-file=../../.env --import tsx src/main.ts  # API :3000 (chạy từ apps/api: cần tsconfig decorators)
+cd apps/workers && node --env-file=../../.env --import tsx src/ingest.ts
+cd apps/workers && node --env-file=../../.env --import tsx src/command-worker.ts
+cd apps/simulator && node --env-file=../../infra/.env --import tsx src/index.ts --count 20   # tủ giả cần tài khoản thiết bị ở infra/.env
+```
+
+Fleet giả local có mã `TL01.xxxx` (không có `DM00xx` như trial): `JARVIS_SMOKE_QUERY=TL01`. Role manager / operator bắt buộc 2FA, nên chạy smoke bằng một tài khoản test có 2FA (cách các e2e của repo làm: tạo `*@e2e-….citylight.test`, bật 2FA qua API, xóa khi xong).
+
+Đo LLM (cần Ollama đang chạy và đã `ollama pull qwen3:4b-instruct`):
 
 ```bash
 npm run bench:llm -w @citylight/jarvis -- 3
@@ -151,16 +168,29 @@ npm run bench:llm -w @citylight/jarvis -- 3
 - `tsc --noEmit` sạch.
 - `main.ts` chạy, `/health` trả `{ status:"ok", llm, api, schema:1 }`.
 - `scripts/smoke.ts` chạy với stub: đăng nhập 2FA, đọc, sanitize không còn LTID / IMEI / ICCID.
+- **2026-11-12, API thật** (stack local trong WSL, 510 tủ trong DB, 20 tủ giả đang gửi): tài khoản manager test bật 2FA qua API, rồi smoke 14 / 14 bước ok — health, login → challenge, 2fa/verify, me, map/stats (510 tủ), alarms (37 đang mở), alarm-rules (37 mã), areas/tree (102), search `TL01`, chi tiết tủ (2084 B), diagnostics (12 mục), telemetry, sanitize (2014 B, không còn LTID / IMEI / ICCID), logout. Mỗi lần đọc 6–40 ms. Tài khoản test đã xóa.
+
+## Số đo LLM (2026-11-14, `scripts/bench-llm.ts`, 4 câu × 3 lượt, chế độ chữ)
+
+Ollama 0.40.16 cài ở `E:\ollama\app`, model ở `E:\ollama\models` (biến người dùng `OLLAMA_MODELS`). Prompt hệ thống ngắn + 2 tool, ngữ cảnh 4096.
+
+| Model | Chữ / tool đầu tiên p50 | Trọn câu p50 / p95 | Đúng tool | Ghi chú |
+|---|---|---|---|---|
+| `qwen3:4b` | 258 ms | **63 s** / 76 s | 3 / 6 | Bản Thinking-2507: `think=false` và `/no_think` **không** tắt được, model suy nghĩ bằng tiếng Anh tới 1024 token. Không dùng được |
+| **`qwen3:4b-instruct`** | **150 ms** | **1,9 s** / 2,0 s | **6 / 6** | Trả lời thẳng, tiếng Việt tự nhiên. Lần đầu nạp model ~7 s |
+
+- Đạt mục tiêu chế độ chữ mục 9 (chữ đầu tiên p50 ≤ 1,5 s). Câu cần tool: thời gian trên chỉ tính tới lúc model gọi tool, chưa cộng thời gian API + lượt trả lời thứ hai (đo ở milestone 2).
+- Model 3,5 GB với ngữ cảnh 4096 không vừa GPU 4 GB: ~34 % chạy trên CPU, ~20 token/s. Ngữ cảnh 2048: 28 % CPU, ~24 token/s, chỉ nhanh hơn chút → giữ 4096 cho kết quả tool. Lúc chạy máy còn ~760 MB RAM trống.
+- Model đọc "tủ demo số mười" thành `{"cabinet":"demo10"}`: tool tìm tủ ở milestone 2 phải chuẩn hóa tên nói (số chữ → số, bỏ khoảng trắng, thử mã `DM0010`) trước khi gọi `/search`.
 
 ## Còn thiếu (cần máy / quyết định)
 
-- **Stack local**: máy này không có Docker → chưa chạy `npm run infra:up`, simulator, smoke với API thật. Cần cài Docker Desktop (cài phần mềm hệ thống → hỏi trước) hoặc chạy trên máy khác.
-- **Đo STT / TTS / LLM** (mục 9): cần cài Ollama + model (~2,5 GB), `faster-whisper` + thư viện CUDA (~1–1,5 GB) + model, `edge-tts`. Chưa cài vì cần đồng ý.
-- **Ollama provider** mới chỉ test định dạng luồng bằng server giả; chưa chạy với model thật.
+- **Đo STT / TTS** (mục 9): cần `faster-whisper` + thư viện CUDA (~1–1,5 GB) + model, `edge-tts`. Chưa cài. STT sẽ phải chia 4 GB VRAM với LLM.
+- Đo cả vòng có tool thật (câu hỏi → tool → API → câu trả lời): milestone 2.
 
 ## Phần cứng máy hiện tại
 
-RTX 3050 Laptop 4 GB VRAM, RAM 7,7 GB, i7-11800H, ổ C còn ~19 GB (cài lên E:). Model LLM ~4B tham số và STT cùng chia 4 GB VRAM → có thể chậm hơn mục tiêu mục 9; số đo thật quyết định.
+RTX 3050 Laptop 4 GB VRAM, RAM 7,7 GB, i7-11800H, ổ C còn ~19 GB (cài lên E:).
 
 ## Dữ liệu và bảo mật
 

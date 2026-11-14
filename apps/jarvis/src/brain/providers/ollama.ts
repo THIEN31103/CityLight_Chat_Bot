@@ -6,6 +6,8 @@ import type { LlmEvent, LlmMessage, LlmProvider, LlmRequest, LlmTool } from '../
 export interface OllamaOptions {
   baseUrl: string;
   model: string;
+  /** context window in tokens (options.num_ctx); undefined = Ollama default */
+  numCtx?: number;
   /** thinking models (qwen3...): false = answer straight away (much faster); undefined = model default */
   think?: boolean;
   fetch?: typeof fetch;
@@ -63,7 +65,7 @@ export class OllamaLlm implements LlmProvider {
       model: this.model,
       messages: toOllamaMessages(req.system, req.messages),
       stream: true,
-      options: { num_predict: req.maxTokens },
+      options: { num_predict: req.maxTokens, ...(this.opts.numCtx ? { num_ctx: this.opts.numCtx } : {}) },
       // keep the model in VRAM between turns: a cold load costs seconds
       keep_alive: '30m',
     };

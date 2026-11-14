@@ -46,7 +46,10 @@ const Env = z.object({
   JARVIS_API_TIMEOUT_MS: int(5000, 500, 60_000),
 
   LLM_PROVIDER: z.enum(['ollama', 'fake']).default('ollama'),
-  LLM_MODEL: z.string().min(1).default('qwen3:4b'),
+  // qwen3:4b is the thinking-only 2507 build (think=false does not stop it, ~60 s per answer); instruct answers at once
+  LLM_MODEL: z.string().min(1).default('qwen3:4b-instruct'),
+  // context window: 4096 leaves room for tool results; ~1/3 of a 4B model runs on CPU with a 4 GB GPU either way
+  LLM_NUM_CTX: int(4096, 1024, 262_144),
   OLLAMA_URL: z.string().url().default('http://127.0.0.1:11434').transform((s) => s.replace(/\/+$/, '')),
   LLM_MAX_TOKENS: int(1024, 64, 32_768),
   // thinking models (qwen3...): false answers at once; unset = leave the model's default
@@ -92,7 +95,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
   return {
     apiBase: e.CITYLIGHT_API_BASE,
     apiTimeoutMs: e.JARVIS_API_TIMEOUT_MS,
-    llm: { provider: e.LLM_PROVIDER, model: e.LLM_MODEL, ollamaUrl: e.OLLAMA_URL, maxTokens: e.LLM_MAX_TOKENS, think: e.LLM_THINK },
+    llm: { provider: e.LLM_PROVIDER, model: e.LLM_MODEL, ollamaUrl: e.OLLAMA_URL, maxTokens: e.LLM_MAX_TOKENS, numCtx: e.LLM_NUM_CTX, think: e.LLM_THINK },
     stt: { provider: e.STT_PROVIDER, model: e.STT_MODEL },
     tts: { provider: e.TTS_PROVIDER, voice: e.TTS_VOICE },
     cabinetAllowlist: parseAllowlist(e.JARVIS_CABINET_ALLOWLIST),

@@ -48,7 +48,7 @@ export function createLlm(cfg: Config['llm']): LlmProvider {
     case 'fake':
       return new FakeLlm();
     case 'ollama':
-      return new OllamaLlm({ baseUrl: cfg.ollamaUrl, model: cfg.model, think: cfg.think });
+      return new OllamaLlm({ baseUrl: cfg.ollamaUrl, model: cfg.model, numCtx: cfg.numCtx, think: cfg.think });
   }
 }
 

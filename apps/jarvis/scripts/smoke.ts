@@ -1,6 +1,7 @@
 // Smoke test against a running CityLight API (local stack by default): sign in, read, check sanitize.
 //   npm run smoke -w @citylight/jarvis -- [6-digit 2FA code]
 // Credentials come from JARVIS_SMOKE_EMAIL / JARVIS_SMOKE_PASSWORD (local test accounts only; never a real one in a file).
+// JARVIS_SMOKE_QUERY: cabinet search term (default DM00).
 // Prints timings and sizes, never cookies, passwords or codes. Only GET requests after sign-in, plus logout.
 import { ApiClient, ApiProblem } from '../src/api/client';
 import { CityLightReads } from '../src/api/read';
@@ -49,7 +50,9 @@ await step('map/stats', () => reads.mapStats(), (s) => `${s.cabinets.total} tủ
 await step('alarms (open)', () => reads.alarms({ active: true, size: 10 }), (p) => `${p.total} đang mở`);
 await step('alarm-rules', () => reads.alarmRules(), (r) => `${r.length} mã`);
 await step('areas/tree', () => reads.areaTree(), (t) => `${t.areas.length} khu vực`);
-const found = await step('search DM00', () => reads.search('DM00'), (l) => l.map((c) => c.code).join(' ') || '(không có)');
+// trial demo cabinets are DM00xx; the local simulator fleet is TL01.xxxx: JARVIS_SMOKE_QUERY=TL01
+const query = process.env.JARVIS_SMOKE_QUERY?.trim() || 'DM00';
+const found = await step(`search ${query}`, () => reads.search(query), (l) => l.map((c) => c.code).join(' ') || '(không có)');
 const first = found?.[0];
 if (first) {
   const detail = await step(`cabinets/${first.code}`, () => reads.cabinet(first.id), (d) => `${JSON.stringify(d).length} B`);

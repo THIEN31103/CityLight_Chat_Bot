@@ -67,13 +67,13 @@ describe('ollama provider (wire format only; a real model is measured by scripts
       { message: { role: 'assistant', content: 'ổn định.' }, done: false },
       { message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop', prompt_eval_count: 310, eval_count: 7 },
     ]);
-    const llm = new OllamaLlm({ baseUrl: o.url, model: 'qwen3:4b', think: false });
+    const llm = new OllamaLlm({ baseUrl: o.url, model: 'qwen3:4b', numCtx: 4096, think: false });
     const r = await collect(llm.stream(req([{ role: 'user', content: 'tình hình?' }], {
       tools: [{ name: 'get_system_overview', description: 'tổng quan', inputSchema: { type: 'object', properties: {} } }],
     })));
     expect(r).toMatchObject({ text: 'Hệ thống ổn định.', usage: { inputTokens: 310, outputTokens: 7 }, stopReason: 'end_turn', error: null });
     const sent = o.bodies[0]!;
-    expect(sent).toMatchObject({ model: 'qwen3:4b', stream: true, think: false });
+    expect(sent).toMatchObject({ model: 'qwen3:4b', stream: true, think: false, options: { num_predict: 256, num_ctx: 4096 } });
     expect((sent.messages as { role: string }[])[0]).toEqual({ role: 'system', content: 'sys' });
     expect((sent.tools as { function: { name: string } }[])[0]!.function.name).toBe('get_system_overview');
     await o.close();
