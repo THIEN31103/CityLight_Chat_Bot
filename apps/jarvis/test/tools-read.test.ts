@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { READ_TOOLS } from '../src/tools/read';
+import { READ_TOOLS, viText } from '../src/tools/read';
 import type { ToolContext } from '../src/tools/registry';
 
 describe('get_system_overview', () => {
@@ -39,4 +39,13 @@ describe('list_alarms', () => {
     const groups = out.nhom_lon_nhat as { district: string; count: number }[];
     expect(groups[0]).toMatchObject({ district: 'Quận 3', count: 386 });
   });
+});
+
+describe('viText', () => {
+  it.each([
+    ['Mất kết nối telemetry', 'Mất kết nối dữ liệu đo'],
+    ['không nhận frame telemetry trong 60 giây', 'không nhận gói tin dữ liệu đo trong 60 giây'],
+    ['Tủ offline', 'Tủ mất kết nối'],
+    ['Lỗi PLC_KEY', 'Lỗi PLC_KEY'],
+  ])('%s -> %s', (a, b) => expect(viText(a)).toBe(b));
 });

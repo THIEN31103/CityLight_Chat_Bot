@@ -185,6 +185,21 @@ async function newChat() {
   input.focus();
 }
 $('#new-chat').addEventListener('click', newChat);
+
+// phone: the chat list opens as a drawer; picking a chat, starting one or tapping outside closes it
+function setDrawer(open) {
+  $('.sidebar').classList.toggle('open', open);
+  $('#history-btn').setAttribute('aria-expanded', String(open));
+}
+$('#history-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  setDrawer(!$('.sidebar').classList.contains('open'));
+});
+document.addEventListener('click', (e) => {
+  const side = $('.sidebar');
+  if (!side.classList.contains('open')) return;
+  if (!side.contains(e.target) || e.target.closest('button.open, #new-chat')) setDrawer(false);
+});
 $('#new-chat-top').addEventListener('click', newChat);
 $('#back-live').addEventListener('click', showCurrent);
 

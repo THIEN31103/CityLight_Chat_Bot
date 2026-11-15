@@ -63,9 +63,23 @@ function setFocus(focus: Focus, c: { id: string; code: string; name: string }) {
 
 const brief = (c: CabinetSummary) => ({ code: c.code, name: c.name, status: STATUS_VI[c.status] ?? c.status });
 
+/**
+ * English words in CityLight's own texts (alarm names like "Mất kết nối telemetry"), put in Vietnamese before the
+ * model sees them: it copied them into answers ("tình trạng offline", 2026-11-15).
+ */
+const VI_WORDS: [RegExp, string][] = [
+  [/(dữ liệu |data )?\btelemetry\b/gi, 'dữ liệu đo'], [/\boffline\b/gi, 'mất kết nối'], [/\bonline\b/gi, 'trực tuyến'],
+  [/\bframes?\b/gi, 'gói tin'], [/\bfirmware\b/gi, 'phần mềm thiết bị'], [/\bdimming\b/gi, 'tiết giảm'],
+];
+export const viText = (s: string | null | undefined): string => {
+  let out = s ?? '';
+  for (const [re, by] of VI_WORDS) out = out.replace(re, by);
+  return out;
+};
+
 const alarmBrief = (a: Alarm) => ({
   code: a.code, severity: SEVERITY_VI[a.severity], cabinet: a.cabinetCode, cabinetName: a.cabinetName, district: a.districtName,
-  message: a.message, since: vnTime(a.startedAt), acked: !!a.ackedAt,
+  message: viText(a.message), since: vnTime(a.startedAt), acked: !!a.ackedAt,
 });
 
 // ---------------------------------------------------------------- tools
@@ -147,7 +161,7 @@ const getCabinet: ToolDef<{ cabinet: string }> = {
       plcOnline: st.plcOnline, powerMeterOnline: st.pmOnline,
       voltageV: [num('vL1'), num('vL2'), num('vL3')], currentA: [num('iL1'), num('iL2'), num('iL3')],
       powerKw: num('pTotalKw'), leakMa: num('leakMa'), tempC: num('tempC'), doorOpen: st.doorOpen,
-      openAlarms: (alarms as Alarm[]).filter((a) => a.active).slice(0, 5).map((a) => ({ code: a.code, severity: SEVERITY_VI[a.severity], message: a.message, since: vnTime(a.startedAt) })),
+      openAlarms: (alarms as Alarm[]).filter((a) => a.active).slice(0, 5).map((a) => ({ code: a.code, severity: SEVERITY_VI[a.severity], message: viText(a.message), since: vnTime(a.startedAt) })),
       diagnostics: problems.slice(0, 6).map((d: DiagnosticItem) => ({ part: d.subsystem, status: d.status, code: d.code, evidence: d.evidence, detail: d.detail })),
       diagnosticsOk: diag ? diag.items.length - problems.length : null,
       schedule: sched ? { mode: sched.mode, on1: sched.on1, off1: sched.off1, on2: sched.on2, off2: sched.off2, source: sched.source, fromZone: sched.inheritedFromZone } : null,
@@ -236,10 +250,10 @@ const listAlarms: ToolDef<{ severity?: 'critical' | 'major' | 'minor'; district?
       items.push(...next.items);
     }
     const page = { total: first.total, items };
-    const groups = new Map<string, { code: string; type: string; severity: string; district: string; count: number; cabinets: string[]; since: string; message: string }>();
+    const groups = new Map<string, { code: string; severity: string; district: string; count: number; cabinets: string[]; since: string; message: string }>();
     for (const a of page.items) {
       const k = `${a.code}|${a.districtName}`;
-      const g = groups.get(k) ?? { code: a.code, type: a.type, severity: SEVERITY_VI[a.severity], district: a.districtName, count: 0, cabinets: [], since: a.startedAt, message: a.message };
+      const g = groups.get(k) ?? { code: a.code, severity: SEVERITY_VI[a.severity], district: a.districtName, count: 0, cabinets: [], since: a.startedAt, message: viText(a.message) };
       g.count++;
       if (g.cabinets.length < 5) g.cabinets.push(a.cabinetCode);
       if (a.startedAt < g.since) g.since = a.startedAt;
@@ -272,7 +286,7 @@ const explainAlarmCode: ToolDef<{ code: string }> = {
     const hit = rules.find((r) => r.code.toUpperCase() === q) ?? rules.find((r) => r.type.toUpperCase() === q);
     if (!hit) return { error: 'not_found', message: `Không có mã ${code} trong danh mục`, known: rules.slice(0, 12).map((r) => r.code) };
     ctx.focus.alarmCode = hit.code;
-    return { code: hit.code, title: hit.title, severity: SEVERITY_VI[hit.severity], condition: hit.condition, raisedByServer: hit.enabled };
+    return { code: hit.code, title: viText(hit.title), severity: SEVERITY_VI[hit.severity], condition: viText(hit.condition), raisedByServer: hit.enabled };
   },
 };
 
