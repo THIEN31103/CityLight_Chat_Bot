@@ -10,6 +10,7 @@ import type { Focus, ToolContext, ToolDef } from './registry';
 const STATUS_VI: Record<CabinetStatus, string> = {
   on: 'đang sáng', off: 'đang tắt', fault: 'có lỗi', offline: 'mất kết nối', dimming: 'tiết giảm', unknown: 'chưa rõ',
 };
+const MAX_ALARM_PAGES = 10;
 const SEVERITY_VI = { critical: 'nghiêm trọng', major: 'quan trọng', minor: 'nhẹ' } as const;
 const COMMAND_STATUS_VI: Record<string, string> = {
   queued: 'đang chờ gửi', sent: 'đã gửi', acked: 'tủ đã nhận, chờ xác nhận đèn', confirmed: 'đã xác nhận (đèn đã đổi)',
@@ -76,13 +77,20 @@ const getSystemOverview: ToolDef<Record<string, never>> = {
   schema: obj({}),
   input: z.object({}).strict() as unknown as z.ZodType<Record<string, never>, z.ZodTypeDef, unknown>,
   async run(ctx) {
-    const [stats, alarms] = await Promise.all([
+    const noRight = (e: unknown) => (e instanceof ApiProblem && e.status === 403 ? null : Promise.reject(e));
+    // the counts by severity come from the API's totals: counting the items of one page said "100 nghiêm trọng" when
+    // all 486 open alarms were critical (2026-11-15)
+    const count = (severity: 'critical' | 'major' | 'minor') =>
+      ctx.reads.alarms({ active: true, severity, size: 1 }, { signal: ctx.signal }).then((p) => p.total, noRight);
+    const [stats, alarms, critical, major, minor] = await Promise.all([
       ctx.reads.mapStats({ signal: ctx.signal }),
-      ctx.reads.alarms({ active: true, size: 100 }, { signal: ctx.signal }).catch((e) => (e instanceof ApiProblem && e.status === 403 ? null : Promise.reject(e))),
+      ctx.reads.alarms({ active: true, size: 100 }, { signal: ctx.signal }).catch(noRight),
+      count('critical'),
+      count('major'),
+      count('minor'),
     ]);
     const c = stats.cabinets;
-    const bySeverity = { critical: 0, major: 0, minor: 0 };
-    for (const a of alarms?.items ?? []) bySeverity[a.severity]++;
+    const bySeverity = { critical: critical ?? 0, major: major ?? 0, minor: minor ?? 0 };
     const order = { critical: 0, major: 1, minor: 2 };
     const top = [...(alarms?.items ?? [])].sort((a, b) => order[a.severity] - order[b.severity] || b.startedAt.localeCompare(a.startedAt)).slice(0, 3);
     return {
@@ -219,7 +227,15 @@ const listAlarms: ToolDef<{ severity?: 'critical' | 'major' | 'minor'; district?
     // small models add a severity filter nobody asked for; keep it only when the question names a level
     const said = fold(ctx.userText ?? '');
     const severity = ctx.userText === undefined || /nghiem trong|quan trong|\bnhe\b|critical|major|minor|muc/.test(said) ? asked : undefined;
-    const page = await ctx.reads.alarms({ active, severity, district, size: 200 }, { signal: ctx.signal });
+    // every page (up to MAX_ALARM_PAGES x 100), so "quận nào nhiều nhất" counts all open alarms, not the newest 100
+    const first = await ctx.reads.alarms({ active, severity, district, size: 100, page: 1 }, { signal: ctx.signal });
+    const items = [...first.items];
+    for (let p = 2; items.length < first.total && p <= MAX_ALARM_PAGES; p++) {
+      const next = await ctx.reads.alarms({ active, severity, district, size: 100, page: p }, { signal: ctx.signal });
+      if (!next.items.length) break;
+      items.push(...next.items);
+    }
+    const page = { total: first.total, items };
     const groups = new Map<string, { code: string; type: string; severity: string; district: string; count: number; cabinets: string[]; since: string; message: string }>();
     for (const a of page.items) {
       const k = `${a.code}|${a.districtName}`;
@@ -231,7 +247,16 @@ const listAlarms: ToolDef<{ severity?: 'critical' | 'major' | 'minor'; district?
     }
     const list = [...groups.values()].sort((x, y) => y.count - x.count).slice(0, limit).map((g) => ({ ...g, since: vnTime(g.since) }));
     if (list[0]) ctx.focus.alarmCode = list[0].code;
-    return { total: page.total, shown: page.items.length, groups: list };
+    // the model added up the group counts ("20 nghiêm trọng" when 486 were open, 2026-11-15): the total is named
+    // plainly and the groups say they only cover the newest page
+    return {
+      tong_so_canh_bao: page.total,
+      muc_do: severity ? SEVERITY_VI[severity] : 'mọi mức',
+      ghi_chu: page.items.length >= page.total
+        ? `Số lượng cảnh báo là tong_so_canh_bao = ${page.total}. Các nhóm dưới đây đếm đủ mọi cảnh báo (chỉ liệt kê ${list.length} nhóm lớn nhất).`
+        : `Số lượng cảnh báo là tong_so_canh_bao = ${page.total}. Các nhóm dưới đây chỉ tính trên ${page.items.length} cảnh báo mới nhất, đừng cộng chúng lại.`,
+      nhom_lon_nhat: list,
+    };
   },
 };
 
