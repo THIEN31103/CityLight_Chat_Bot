@@ -129,6 +129,15 @@ label.row input { width: auto; }
 .msg { max-width: 85%; padding: 10px 14px; border-radius: 16px; white-space: pre-wrap; word-wrap: break-word; }
 .msg.user { align-self: flex-end; background: var(--user); color: var(--user-ink); border-bottom-right-radius: 4px; }
 .msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+/* milestone 4: the action waiting for a yes */
+.pending-card { align-self: flex-start; width: min(520px, 100%); background: var(--panel); border: 1px solid var(--accent); border-left-width: 4px; white-space: normal; display: grid; gap: 6px; }
+.pending-card.t2 { border-color: var(--bad); }
+.pending-card .pc-head { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.pending-card .countdown { color: var(--muted); font-variant-numeric: tabular-nums; }
+.pending-card .pc-summary { font-weight: 600; }
+.pending-card .pc-note, .pending-card .pc-how { font-size: 13px; color: var(--muted); }
+.pending-card .pc-actions { display: flex; gap: 8px; margin-top: 4px; }
+.pending-card.closed { opacity: .6; border-color: var(--line); }
 .msg.error { align-self: flex-start; background: transparent; border: 1px dashed var(--bad); color: var(--bad); }
 .msg .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .pill { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); }

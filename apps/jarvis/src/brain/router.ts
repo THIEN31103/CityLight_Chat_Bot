@@ -24,6 +24,9 @@ function cabinetArg(raw: string, marked: string, focus: Focus): string | null {
   return m[0].startsWith('tucab ') ? raw : m[0];
 }
 
+/** The cabinet a sentence names, as words for the resolver ("tủ đó" = the one in focus); null = none named. */
+export const cabinetRefOf = (raw: string, focus: Focus): string | null => cabinetArg(raw, wordsToDigits(fold(markCabinetWord(raw))), focus);
+
 /** switching words: these are requests to act, never routed to a read tool (actions come in milestone 4) */
 const ACTION = /\b(bat tay|bat nhanh|bat tu|bat den|bat het|tat tay|tat nhanh|tat tu|tat den|tat het|tra (tu|ve)|chay theo lich|xung bat|xac nhan|dong y|huy)\b/;
 

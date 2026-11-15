@@ -59,6 +59,8 @@ export interface StubApi {
 export async function startStubApi(users: StubUser[]): Promise<StubApi> {
   const sessions = new Map<string, StubUser>();
   const challenges = new Map<string, StubUser>();
+  // commands (milestone 4): queued on POST, confirmed on the first GET; one command per Idempotency-Key
+  const commands = new Map<string, { id: string; key: string; type: string; params: unknown; by: string; polls: number }>();
   const seen: StubApi['seen'] = [];
 
   const server = createServer(async (req, res) => {
@@ -132,6 +134,21 @@ export async function startStubApi(users: StubUser[]): Promise<StubApi> {
       return json(200, { cabinets: { offline: 1, fault: 1, dimming: 0, on: 6, off: 2, unknown: 0, total: 10 }, onlinePct: 90, energyTodayKwh: null, energyYesterdayKwh: null, overdueIncidents: 0 });
     if (req.method === 'GET' && p === '/alarms')
       return json(200, { items: [{ id: 'a1', code: 'E201', cabinetId: CABINET.id, cabinetName: CABINET.name, cabinetCode: CABINET.code, districtName: 'Quận 1', type: 'plc_lost', severity: 'major', message: 'Mất kết nối PLC', value: null, startedAt: new Date().toISOString(), endedAt: null, active: true, ackedBy: null, ackedAt: null }], total: 1, page: 1, size: 200 });
+    if (req.method === 'POST' && p === `/cabinets/${CABINET.id}/commands`) {
+      if (user.role === 'viewer') return problem(res, 403, 'forbidden', 'Không đủ quyền');
+      const b = await body(req);
+      const key = String(req.headers['idempotency-key'] ?? '');
+      const seenCmd = [...commands.values()].find((c) => c.key === key);
+      const cmd = seenCmd ?? { id: `cmd-${commands.size + 1}`, key, type: String(b.type), params: b.params, by: user.id, polls: 0 };
+      commands.set(cmd.id, cmd);
+      return json(202, { id: cmd.id, cabinetId: CABINET.id, cabinetName: CABINET.name, type: cmd.type, params: cmd.params, batchId: null, status: 'queued', requestedBy: user.id, queuedAt: new Date().toISOString(), sentAt: null, ackedAt: null, confirmedAt: null, error: null });
+    }
+    if (req.method === 'GET' && p.startsWith('/commands/')) {
+      const cmd = commands.get(p.slice('/commands/'.length));
+      if (!cmd) return problem(res, 404, 'not_found', 'Không tìm thấy lệnh');
+      cmd.polls++;
+      return json(200, { id: cmd.id, cabinetId: CABINET.id, cabinetName: CABINET.name, type: cmd.type, params: cmd.params, batchId: null, status: 'confirmed', requestedBy: cmd.by, queuedAt: new Date().toISOString(), sentAt: new Date().toISOString(), ackedAt: new Date().toISOString(), confirmedAt: new Date().toISOString(), error: null });
+    }
     if (req.method === 'GET' && p === '/users') {
       if (user.role !== 'admin' && user.role !== 'manager') return problem(res, 403, 'forbidden', 'Không đủ quyền');
       return json(200, users.map((u) => ({ ...publicUser(u), active: true })));

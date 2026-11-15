@@ -221,10 +221,14 @@ async function showCurrent() {
       /* deleted meanwhile: an empty screen is right */
     }
   }
+  // an action still waiting (after F5 or coming back from an old chat) keeps its card
+  if (viewingId === null && session.pending && Date.parse(session.pending.expiresAt) > Date.now()) showPendingCard(session.pending);
   loadConversations();
 }
 
 function clearMessages() {
+  for (const c of pendingCards.values()) clearInterval(c.timer);
+  pendingCards.clear();
   $('#messages').querySelectorAll('.msg').forEach((m) => m.remove());
   $('#empty').hidden = false;
 }
@@ -255,47 +259,59 @@ function ask(raw) {
 const STATUS_TEXT = { thinking: 'Đang nghĩ…', transcribing: 'Đang nghe lại câu nói…', speaking: 'Đang nói…' };
 
 /** One question, typed ({ text }) or spoken ({ pcm }): streams the answer, plays its audio in voice mode. */
-async function turn({ text, pcm }) {
+async function turn({ text, pcm, confirmId }) {
   showLive();
-  const userBubble = addBubble('user', text ?? '🎙 …');
+  // a click on "Xác nhận" streams the command like a turn; in voice mode its result is spoken too
+  const spoken = !!pcm || (!!confirmId && voiceIn.on);
+  const userBubble = addBubble('user', confirmId ? '✔ Xác nhận (bấm nút)' : text ?? '🎙 …');
   const bubble = addBubble('assistant', '');
   const body = el('span', { class: 'caret' });
   bubble.append(body);
   busy = true;
   $('#send').disabled = true;
   $('#stop').hidden = false;
-  setStatus(pcm ? STATUS_TEXT.transcribing : STATUS_TEXT.thinking, true);
+  setStatus(pcm ? STATUS_TEXT.transcribing : confirmId ? 'Đang gửi lệnh…' : STATUS_TEXT.thinking, true);
   currentCancel = new AbortController();
   let got = '';
   // Voice turns show the answer in step with the voice (2026-11-14: the text used to be on screen seconds before it
   // was said): each piece appears when its audio starts, the filler is only heard, and the full text replaces the
   // pieces once the last one has played (or at once when no audio came, e.g. the voice sidecar failed).
   let shown = '';
+  // a turn that created a confirmation card keeps the CARD in view: scrolling to the answer text used to push the
+  // card below the screen, so it looked like it came late (user report, 2026-11-15)
+  let card = null;
+  const keepInView = () => (card ?? bubble).scrollIntoView({ block: 'end' });
   const reveal = (t) => {
     shown = shown ? `${shown} ${t}` : t;
     body.textContent = shown;
-    bubble.scrollIntoView({ block: 'end' });
+    keepInView();
   };
   revealRest?.();
   try {
-    await stream(pcm ? '/api/voice' : '/api/chat', pcm ?? { text }, (event, data) => {
+    const [path, payload] = confirmId ? [`/api/pending/${encodeURIComponent(confirmId)}/confirm`, { voice: voiceIn.on }] : pcm ? ['/api/voice', pcm] : ['/api/chat', { text }];
+    await stream(path, payload, (event, data) => {
       if (event === 'transcript') {
         userBubble.textContent = data.text ? `🎙 ${data.text}` : '🎙 (không nghe rõ)';
       } else if (event === 'reset') {
         // Jarvis answered without looking anything up and is asked to check first: drop that draft
         got = '';
-        if (!pcm) body.textContent = '';
-        setStatus('Đang tra cứu dữ liệu…', true);
+        if (!spoken) body.textContent = '';
+        if (!confirmId) setStatus('Đang tra cứu dữ liệu…', true);
+      } else if (event === 'pending') {
+        card = showPendingCard(data);
+      } else if (event === 'pending_closed') {
+        closePendingCard(data.id, data.state);
       } else if (event === 'text') {
         got += data.text;
-        if (pcm) return;
+        if (spoken) return;
         body.textContent = got;
-        bubble.scrollIntoView({ block: 'end' });
+        keepInView();
       } else if (event === 'audio') {
         player.enqueue(data.data, data.mime, data.filler ? undefined : () => reveal(data.text));
         setStatus(STATUS_TEXT.speaking, true);
       } else if (event === 'status') {
-        if (data.state !== 'speaking' || player.playing) setStatus(data.state === 'tool' ? `Đang tra cứu: ${data.label}…` : STATUS_TEXT[data.state] ?? 'Đang nghĩ…', true);
+        if (data.state === 'command') setStatus(data.label, true);
+        else if (data.state !== 'speaking' || player.playing) setStatus(data.state === 'tool' ? `Đang tra cứu: ${data.label}…` : STATUS_TEXT[data.state] ?? 'Đang nghĩ…', true);
       } else if (event === 'done') {
         if (data.heard === false) {
           bubble.remove();
@@ -307,7 +323,7 @@ async function turn({ text, pcm }) {
           body.classList.remove('caret');
           body.textContent = full;
         };
-        if (pcm && player.playing) revealRest = finish;
+        if (spoken && player.playing) revealRest = finish;
         else finish();
         session.conversationId = data.conversationId;
         const meta = el('div', { class: 'meta' },
@@ -318,6 +334,7 @@ async function turn({ text, pcm }) {
           el('span', { class: 'pill' }, `${fmtNum(data.usage.inputTokens + data.usage.outputTokens)} token`),
           data.ttsErrors ? el('span', { class: 'pill fail', title: data.ttsErrors.join('\n') }, 'lỗi đọc') : null);
         bubble.append(meta);
+        keepInView();
       } else if (event === 'error') {
         body.classList.remove('caret');
         bubble.className = 'msg error';
@@ -342,6 +359,69 @@ async function turn({ text, pcm }) {
     refreshLimits();
     if (!voiceIn.on) input.focus();
   }
+}
+
+// ------------------------------------------------------------------ confirmation card (milestone 4)
+
+const pendingCards = new Map();
+const CLOSED = { confirmed: 'Đã gửi lệnh', cancelled: 'Đã hủy', expired: 'Đã hết hạn', replaced: 'Đã thay bằng lệnh mới', gone: 'Không còn hiệu lực' };
+
+/**
+ * The action waiting for a yes: its fixed summary, how to confirm it (T1: say / type / click, T2: click only), a 60 s
+ * countdown, and the two buttons. The server decides everything again on click; the card only shows.
+ */
+function showPendingCard(p) {
+  if (pendingCards.has(p.id)) return pendingCards.get(p.id).card;
+  session.pending = p;
+  for (const id of [...pendingCards.keys()]) closePendingCard(id, 'replaced');
+  const left = el('span', { class: 'countdown' });
+  const ok = el('button', { class: 'primary', type: 'button' }, 'Xác nhận');
+  const no = el('button', { class: 'ghost', type: 'button' }, 'Hủy');
+  const card = el('div', { class: `msg pending-card ${p.tier === 'T2' ? 't2' : 't1'}`, role: 'group', 'aria-label': 'Lệnh chờ xác nhận' },
+    el('div', { class: 'pc-head' }, el('strong', {}, '⚠ Lệnh chờ xác nhận'), left),
+    el('div', { class: 'pc-summary' }, p.summary),
+    p.note ? el('div', { class: 'pc-note' }, p.note) : null,
+    el('div', { class: 'pc-how' }, p.tier === 'T2' ? 'Lệnh tắt: chỉ bấm nút mới gửi được.' : 'Nói hoặc gõ "xác nhận" / "hủy lệnh", hoặc bấm nút.'),
+    el('div', { class: 'pc-actions' }, ok, no));
+  $('#empty').hidden = true;
+  $('#messages').append(card);
+  card.scrollIntoView({ block: 'end' });
+  const until = Date.parse(p.expiresAt);
+  const tick = () => {
+    const s = Math.max(0, Math.round((until - Date.now()) / 1000));
+    left.textContent = `còn ${s} giây`;
+    if (s <= 0) closePendingCard(p.id, 'expired');
+  };
+  tick();
+  const timer = setInterval(tick, 1000);
+  pendingCards.set(p.id, { card, timer, ok, no });
+  card.scrollIntoView({ block: 'end' });
+  ok.addEventListener('click', () => {
+    if (busy) return;
+    ok.disabled = no.disabled = true;
+    turn({ confirmId: p.id });
+  });
+  no.addEventListener('click', async () => {
+    if (busy) return;
+    ok.disabled = no.disabled = true;
+    const r = await api('POST', `/api/pending/${encodeURIComponent(p.id)}/cancel`).catch((e) => ({ text: e.message }));
+    closePendingCard(p.id, r.cancelled ? 'cancelled' : 'gone');
+    addBubble('user', '✖ Hủy (bấm nút)');
+    addBubble('assistant', r.text);
+    loadConversations();
+  });
+  return card;
+}
+
+function closePendingCard(id, state) {
+  const c = pendingCards.get(id);
+  if (!c) return;
+  clearInterval(c.timer);
+  pendingCards.delete(id);
+  c.ok.disabled = c.no.disabled = true;
+  c.card.classList.add('closed');
+  c.card.querySelector('.countdown').textContent = CLOSED[state] ?? state;
+  if (session?.pending?.id === id) session.pending = null;
 }
 
 // ------------------------------------------------------------------ voice mode (milestone 3)

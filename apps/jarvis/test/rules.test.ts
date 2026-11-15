@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { RoleKey } from '@citylight/shared';
@@ -156,4 +156,12 @@ describe('static guard (spec 6.10)', () => {
       expect(text).not.toMatch(/idempotencyKey/);
     },
   );
+
+  // milestone 4: guard/pending.ts is the only file that sends a command; everything else reaches it through the guard
+  const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? walk(path.join(dir, d.name)) : d.name.endsWith('.ts') ? [path.join(dir, d.name)] : []));
+  it('only guard/pending.ts posts to a command endpoint', () => {
+    const root = path.resolve(__dirname, '../src');
+    const senders = walk(root).filter((f) => /\/commands['"`]|commands`,|command-batches|idempotencyKey:/.test(readFileSync(f, 'utf8')) && /\.post\s*[<(]|['"]POST['"]/.test(readFileSync(f, 'utf8')));
+    expect(senders.map((f) => path.relative(root, f).replace(/\\/g, '/'))).toEqual(['guard/pending.ts']);
+  });
 });

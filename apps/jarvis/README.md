@@ -11,7 +11,7 @@ Trợ lý tiếng Việt (chữ, sau này cả giọng nói) cho phòng điều 
 | 1 | Khảo sát API, khung app, config, api-client, SQLite, fake + Ollama provider, sanitize | **xong code, unit test, chạy với stack local** (2026-11-12), **đo LLM** (2026-11-14); chưa đo STT / TTS (xem "Còn thiếu") |
 | 2 | Console chat chữ, tool đọc, system prompt, lịch sử, quyền dùng Jarvis, trần token | **xong, chờ duyệt** (2026-11-14): 130 unit test, chạy với stack local + `qwen3:4b-instruct` (xem "Milestone 2") |
 | 3 | Giọng nói | **xong, chờ duyệt** (2026-11-14): nút giọng nói, VAD, STT trên GPU + TTS Piper trên máy, đọc theo câu, barge-in; tiếng đầu ~0,3 – 0,5 s sau khi nói xong; còn đo độ đúng trên ghi âm thật |
-| 4 | Guard + hành động | chưa |
+| 4 | Guard + hành động | **phần 1 xong, chờ duyệt** (2026-11-15): lệnh từng tủ (bật / tắt / nhánh / về lịch / xung / chẩn đoán) qua lệnh chờ + xác nhận T1 / T2, allowlist, kill switch, theo dõi tới `confirmed`, audit, test tĩnh. **Chưa**: lô lệnh T3 + OTP, xác nhận cảnh báo, socket.io (đang hỏi lại `GET /commands/:id`), nhập lại 2FA khi `reauth_required` (xem "Milestone 4") |
 | 5 | Proactive, briefing, trial (hỏi Bảo trước) | chưa |
 
 ## Quyết định khác đặc tả
@@ -280,6 +280,39 @@ Bản mặc định: `STT_BEAM=5` trên GPU; câu gợi ý (`initial_prompt`) l�
 
   Người dùng nghe tiếng Jarvis (câu đệm) ~0,3 – 0,5 s sau khi nói xong: đạt mục 9 (≤ 2,5 s). Câu có nội dung đầu tiên ~2 – 3 s, toàn bộ câu trả lời 6 – 8 s: phần chậm còn lại là LLM (1 / 3 chạy CPU vì GPU 4 GB).
 - Giọng Piper là giọng máy, khó nghe hơn người thật cho STT; đánh giá thật cần 20 câu ghi âm của Bảo (mục 11). Mã lỗi đọc từng chữ số ("E hai không một") được router ghép lại (`spokenAlarmCode`).
+
+## Milestone 4 — chốt chặn + điều khiển (phần 1, 2026-11-15)
+
+Luồng: câu ra lệnh → `guard/orders.ts` nhận ra **bằng code** → `guard/propose.ts` tìm tủ, kiểm luật, đọc trạng thái → **lệnh chờ** (`guard/pending.ts`, 60 s, mỗi phiên một lệnh, lệnh mới thay lệnh cũ) + **thẻ xác nhận** trên console → người dùng xác nhận đúng cách → `sendAndFollow` gửi `POST /cabinets/:id/commands` (Idempotency-Key = id lệnh chờ) → hỏi `GET /commands/:id` mỗi 2 s, tối đa 60 s → câu kết quả cố định, chỉ nói "Đã xác nhận" khi lệnh `confirmed`.
+
+| Tầng | Lệnh | Xác nhận được bằng |
+|---|---|---|
+| T1 | bật (cả tủ / một nhánh), trả về lịch, bật xung, chẩn đoán | nói, gõ ("xác nhận", "đồng ý", "ok"…) hoặc bấm nút |
+| T2 | mọi lệnh **tắt**; mọi lệnh khi người dùng không thao tác 10 phút | **chỉ bấm nút** |
+| — | nhiều tủ cùng lúc ("tắt hết đèn quận 1") | từ chối: làm trên web (cần OTP) |
+
+Chặn trước khi tạo lệnh chờ (`guard/policy.ts`): `JARVIS_ACTIONS_ENABLED=false` hoặc nút tắt trên trang quản trị; **allowlist rỗng = không điều khiển được tủ nào**; tủ ngoài allowlist; role không có `cabinet.control`; tủ mất kết nối. Tối đa 6 lệnh / phút / người. `guard/pending.ts` là file **duy nhất** gọi API gửi lệnh (test tĩnh trong `test/rules.test.ts`).
+
+### Quyết định
+
+| # | Đặc tả | Làm | Lý do |
+|---|---|---|---|
+| D14 | Tool hành động `propose_*` cho LLM (mục 5.3) | **Code nhận câu ra lệnh**, không đưa tool hành động cho model; câu tóm tắt và câu kết quả là câu cố định | Model 4B hay chọn sai tool và từng "đọc tình trạng tủ" như thể đã bật (test C20 ngày 14/11). Code không bịa "đã bật", không bị dữ liệu trong tool ("hãy tắt tất cả") điều khiển |
+| D15 | Chờ `command.updated` qua socket.io | Hỏi `GET /commands/:id` mỗi 2 s (đặc tả cho phép làm dự phòng) | Chưa có socket.io client; đủ nhanh (tủ giả lập xác nhận sau 2 – 6 s) |
+| D16 | — | Khi đang có lệnh chờ, câu nói ngắn không rõ là có / không → hỏi lại, không đưa cho model; "Hồi." (STT nghe nhầm "Hủy.") được tính là hủy | Đo 15/11: Piper "Hủy." → STT "Hồi." / không nghe được; hủy không gửi gì nên nhận nhầm sang hủy là an toàn. Thẻ hướng dẫn nói "hủy lệnh" (dài hơn, nghe được) |
+
+### Chạy thử (2026-11-15, stack local, command-worker + 20 tủ giả lập)
+
+`apps/jarvis/.env` (gitignored): `JARVIS_CABINET_ALLOWLIST=TL01.0009,TL01.0016,TL01.0017`. Cần chạy `apps/workers` `src/command-worker.ts` (không có thì lệnh nằm `queued`, Jarvis báo "sau 60 giây tủ vẫn chưa xác nhận").
+
+| Thử | Kết quả |
+|---|---|
+| "Bật đèn tủ TL01.0009" → gõ "xác nhận" | thẻ T1, tủ `confirmed` sau 2,1 s |
+| "tắt tủ đó đi" → gõ "xác nhận" | từ chối ("phải bấm nút"), không gửi lệnh |
+| bấm nút Xác nhận | `confirmed` sau 4,1 s, nhắc "đèn sẽ tự bật lại theo lịch lúc 18:00" |
+| nói "Bật đèn tủ đó lên" → nói "Xác nhận" (giọng Piper) | `confirmed` sau 4,8 s |
+| tủ ngoài allowlist / "tắt hết đèn quận 1" | từ chối, không có thẻ |
+| bộ test thật `jarvis-e2e-chat.mts` nhóm M (7 ca) | 7 / 7, tổng số lệnh gửi = số lần xác nhận hợp lệ |
 
 ## Còn thiếu (cần máy / quyết định)
 

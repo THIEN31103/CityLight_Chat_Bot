@@ -25,6 +25,12 @@ import { SidecarVoice, type SttProvider, type TtsAudio, type TtsProvider } from 
 import { toSpeech } from '../voice/speech-text';
 import { ConsoleSession, RateLimiter, SessionStore } from './session';
 import { FILLER, Speaker } from './speaker';
+import { isControlCapabilityQuestion } from '../brain/router';
+import { classifyReply } from '../guard/confirm-words';
+import { parseOrder } from '../guard/orders';
+import { sendAndFollow, type PendingAction, type Via } from '../guard/pending';
+import { CommandRate, controlUnavailable, type GuardState } from '../guard/policy';
+import { outcomeText, propose, STATUS_VI } from '../guard/propose';
 
 const STATIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../console');
 const STATIC: Record<string, string> = {
@@ -53,6 +59,8 @@ export interface ConsoleDeps {
   tools?: ToolDef[];
   /** tests: a fake CityLight fetch */
   fetch?: typeof fetch;
+  /** tests: how often a sent command is polled (default 2 s) */
+  commandPollMs?: number;
   /** speech engines; default: the local sidecar (voice/sidecar.py) when voice is enabled, none otherwise */
   voice?: (SttProvider & TtsProvider) | null;
 }
@@ -145,6 +153,10 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       brain: `${llm.name}/${llm.model}`,
       voice: !!voice,
       limits: { perUserPerMin: st.perUserPerMin, tokenCap: effectiveTokenCap(st, cfg), tokensToday: tokensToday(db) },
+      pending: (() => {
+        const p = s.pending.active();
+        return p ? pendingView(p) : null;
+      })(),
     };
   }
 
@@ -182,10 +194,10 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
   // ---------------------------------------------------------------- chat
 
   /** Checks that apply before any work (busy, per-minute limit, daily token cap). */
-  function admit(s: ConsoleSession, user: User) {
+  function admit(s: ConsoleSession, user: User, countsAsQuestion = true) {
     if (s.busy) throw new HttpError(409, 'busy', 'Jarvis đang trả lời câu trước');
     const st = settings();
-    if (!limiter.allow(user.id, st.perUserPerMin)) throw new HttpError(429, 'rate_limited', `Tối đa ${st.perUserPerMin} câu / phút, đợi một chút`);
+    if (countsAsQuestion && !limiter.allow(user.id, st.perUserPerMin)) throw new HttpError(429, 'rate_limited', `Tối đa ${st.perUserPerMin} câu / phút, đợi một chút`);
     const cap = effectiveTokenCap(st, cfg);
     if (cap > 0 && tokensToday(db) >= cap) {
       audit.write({ kind: 'token_cap_hit', userId: user.id, cap });
@@ -213,10 +225,12 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     const text = typeof body.text === 'string' ? body.text.trim() : '';
     if (!text) throw new HttpError(422, 'empty', 'Câu hỏi trống');
     if (text.length > MAX_TEXT) throw new HttpError(422, 'too_long', `Tối đa ${MAX_TEXT} ký tự`);
-    admit(s, user);
+    // "xác nhận", "hủy lệnh", an order: answered in code without the model, so not counted as a question (the commands
+    // themselves have their own limit, 6 a minute); a "xác nhận" used to be refused after 10 questions (2026-11-15)
+    admit(s, user, !handledInCode(s, text));
     const { ac, send } = openStream(res, s);
     try {
-      await answer(s, user, text, send, ac, null);
+      if (!(await control(s, user, text, send, ac, null))) await answer(s, user, text, send, ac, null);
     } catch (e) {
       send('error', { code: 'failed', message: (e as Error).message });
     } finally {
@@ -242,14 +256,23 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         send('done', { text: '', heard: false, sttMs: stt.ms });
         return;
       }
-      const speaker = new Speaker(voice, !looksLikeSmallTalk(text), (c) => send('audio', { seq: c.seq, text: c.text, filler: c.filler, mime: c.mime, data: Buffer.from(c.audio).toString('base64'), ms: c.ms }), ac.signal, fillerAudio);
-      await answer(s, user, text, send, ac, speaker, { sttMs: stt.ms, audioMs: stt.audioMs });
+      const extra = { sttMs: stt.ms, audioMs: stt.audioMs };
+      // orders and yes / no to a waiting action are handled in code; their fixed sentences are spoken at once
+      if (await control(s, user, text, send, ac, speakerFor(send, ac, false), extra)) return;
+      const speaker = speakerFor(send, ac, !looksLikeSmallTalk(text))!;
+      await answer(s, user, text, send, ac, speaker, extra);
     } catch (e) {
       send('error', { code: 'failed', message: (e as Error).message });
     } finally {
       s.busy = null;
       res.end();
     }
+  }
+
+  /** a speaker that streams audio events to this turn; null when voice is off */
+  function speakerFor(send: (e: string, d: unknown) => void, ac: AbortController, needsData: boolean): Speaker | null {
+    if (!voice) return null;
+    return new Speaker(voice, needsData, (c) => send('audio', { seq: c.seq, text: c.text, filler: c.filler, mime: c.mime, data: Buffer.from(c.audio).toString('base64'), ms: c.ms }), ac.signal, needsData ? fillerAudio : undefined);
   }
 
   let filler: Promise<TtsAudio | null> | null = null;
@@ -319,6 +342,126 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         firstAudioMs: speaker?.firstAudioMs ?? null, ttsErrors: speaker?.errors.length ? speaker.errors.slice(0, 2) : undefined, ...extra,
       });
     }
+  }
+
+  // ---------------------------------------------------------------- actions (milestone 4)
+
+  const commandRate = new CommandRate();
+  const guardState = (): GuardState => ({ envEnabled: cfg.actionsEnabled, settingsEnabled: settings().actionsEnabled, allowlist: cfg.cabinetAllowlist });
+  const pendingView = (p: PendingAction) => ({ id: p.id, summary: p.summary, tier: p.tier, expiresAt: new Date(p.expiresAt).toISOString(), note: p.note ?? null });
+  type Send = (e: string, d: unknown) => void;
+
+  /**
+   * Handles in code, without the model: a yes / no to the waiting action, "can you control the lights", and orders to
+   * a cabinet. Returns false when the text is none of these (the agent answers it).
+   */
+  async function control(s: ConsoleSession, user: User, text: string, send: Send, ac: AbortController, speaker: Speaker | null, extra: Record<string, unknown> = {}): Promise<boolean> {
+    s.lastInteraction = Date.now();
+    // tests script the fake model with a [[fake:{...}]] prefix whose JSON may hold words like "bật"
+    if (llm.name === 'fake' && text.startsWith('[[fake:')) return false;
+    const via: Via = speaker ? 'voice' : 'text';
+    const gone = s.pending.expired();
+    const p = s.pending.active();
+    const reply = classifyReply(text);
+    if (p && reply) {
+      if (reply === 'unclear') return fixedTurn(s, user, text, `Bạn muốn xác nhận hay hủy lệnh: ${p.summary}?`, send, speaker, extra);
+      if (reply === 'cancel') {
+        s.pending.cancel(p.id);
+        audit.write({ kind: 'pending_cancelled', userId: user.id, pendingId: p.id, via });
+        send('pending_closed', { id: p.id, state: 'cancelled' });
+        return fixedTurn(s, user, text, `Đã hủy lệnh: ${p.summary}.`, send, speaker, extra);
+      }
+      if (!commandRate.allow(user.id)) return fixedTurn(s, user, text, 'Jarvis đã gửi 6 lệnh trong một phút qua, bạn đợi một chút rồi xác nhận lại.', send, speaker, extra);
+      const t = s.pending.take(p.id, via);
+      if (!t.ok) {
+        audit.write({ kind: 'pending_refused', userId: user.id, pendingId: p.id, via, reason: t.reason });
+        return fixedTurn(s, user, text, t.reason, send, speaker, extra);
+      }
+      await execute(s, user, text, t.pending, via, send, ac, speaker, extra);
+      return true;
+    }
+    // a short reply that is neither yes nor no while an action waits (speech recognition got it wrong): ask again,
+    // never pass it to the model, which answered "Hồi." with a question about the system
+    if (p && !reply && text.trim().split(/\s+/).length <= 2 && !parseOrder(text, s.ctx.focus))
+      return fixedTurn(s, user, text, `Tôi chưa nghe rõ. Bạn muốn xác nhận hay hủy lệnh: ${p.summary}?`, send, speaker, extra);
+    if (reply && (reply === 'confirm' || reply === 'cancel') && text.trim().split(/\s+/).length <= 3) {
+      if (gone) send('pending_closed', { id: gone.id, state: 'expired' });
+      return fixedTurn(s, user, text, gone ? `Lệnh "${gone.summary}" đã hết hạn 60 giây, bạn ra lệnh lại nếu vẫn cần.` : 'Không có lệnh nào đang chờ xác nhận.', send, speaker, extra);
+    }
+    if (isControlCapabilityQuestion(text)) {
+      const off = controlUnavailable(guardState(), user.role);
+      return fixedTurn(s, user, text, off
+        ? `Chưa. ${off} Muốn bật hay tắt đèn, bạn thao tác trên web CityLight giúp tôi nhé.`
+        : 'Có. Tôi bật, tắt, trả về lịch, bật xung hoặc gửi lệnh chẩn đoán cho từng tủ được phép, và chỉ gửi sau khi bạn xác nhận. Lệnh tắt phải bấm nút trên màn hình.', send, speaker, extra);
+    }
+    const order = parseOrder(text, s.ctx.focus);
+    if (!order) return false;
+    send('status', { state: 'tool', label: 'chuẩn bị lệnh' });
+    const prop = await propose(order, { reads: s.reads, user, focus: s.ctx.focus, userText: text, signal: ac.signal }, guardState(), user.role, Date.now() - s.lastInteraction);
+    if (prop.kind === 'refused') {
+      audit.write({ kind: 'action_refused', userId: user.id, text, reason: prop.say });
+      return fixedTurn(s, user, text, prop.say, send, speaker, extra);
+    }
+    const { pending, replaced } = s.pending.create(prop.draft);
+    if (replaced) send('pending_closed', { id: replaced.id, state: 'replaced' });
+    audit.write({ kind: 'pending_created', userId: user.id, role: user.role, pendingId: pending.id, cabinet: pending.cabinet.code, command: pending.command, tier: pending.tier, replaced: replaced?.id });
+    send('pending', pendingView(pending));
+    return fixedTurn(s, user, text, `${replaced ? 'Lệnh trước đó đã được thay bằng lệnh này. ' : ''}${prop.say}`, send, speaker, extra);
+  }
+
+  /** true when control() will answer this text without the model */
+  function handledInCode(s: ConsoleSession, text: string): boolean {
+    if (llm.name === 'fake' && text.startsWith('[[fake:')) return false;
+    if (classifyReply(text) && text.trim().split(/\s+/).length <= 4) return true;
+    if (s.pending.active() && text.trim().split(/\s+/).length <= 2) return true;
+    return isControlCapabilityQuestion(text) || !!parseOrder(text, s.ctx.focus);
+  }
+
+  /** A turn whose answer is a fixed sentence: same history, audit and events as a model turn, no tokens. */
+  async function fixedTurn(
+    s: ConsoleSession, user: User, text: string, reply: string, send: Send, speaker: Speaker | null, extra: Record<string, unknown> = {}, spoken = reply,
+  ): Promise<true> {
+    const t0 = performance.now();
+    if (!s.conversationId) s.conversationId = createConversation(db, user, text);
+    const conversationId = s.conversationId;
+    addMessage(db, conversationId, { role: 'user', content: text });
+    audit.write({ kind: 'user_text', userId: user.id, role: user.role, conversationId, text, voice: !!speaker });
+    send('text', { text: reply });
+    if (speaker) {
+      speaker.text(spoken);
+      send('status', { state: 'speaking' });
+      await speaker.end();
+    }
+    addMessage(db, conversationId, { role: 'assistant', content: reply });
+    audit.write({ kind: 'assistant_text', userId: user.id, conversationId, text: reply, stop: 'fixed' });
+    s.ctx.addTurn(text, reply);
+    send('done', {
+      conversationId, stop: 'end_turn', text: reply, usage: { inputTokens: 0, outputTokens: 0 }, tools: [], ms: Math.round(performance.now() - t0),
+      firstAudioMs: speaker?.firstAudioMs ?? null, ttsErrors: speaker?.errors.length ? speaker.errors.slice(0, 2) : undefined, ...extra,
+    });
+    return true;
+  }
+
+  /** Sends the confirmed action and follows it; the result is said only from the command's real status. */
+  async function execute(s: ConsoleSession, user: User, text: string, p: PendingAction, via: Via, send: Send, ac: AbortController, speaker: Speaker | null, extra: Record<string, unknown> = {}) {
+    audit.write({ kind: 'pending_confirmed', userId: user.id, role: user.role, pendingId: p.id, cabinet: p.cabinet.code, command: p.command, via });
+    send('pending_closed', { id: p.id, state: 'confirmed' });
+    const first = `Đang gửi lệnh: ${p.summary}.`;
+    send('text', { text: `${first}\n` });
+    speaker?.text(first);
+    send('status', { state: 'command', label: 'Đang gửi lệnh…' });
+    const outcome = await sendAndFollow(s.api, p, { signal: ac.signal, pollMs: deps.commandPollMs, onStatus: (st) => send('status', { state: 'command', label: STATUS_VI[st] ?? st }) });
+    if (outcome.status !== 'not_sent') commandRate.record(user.id);
+    audit.write({ kind: 'command_result', userId: user.id, pendingId: p.id, commandId: outcome.commandId, status: outcome.status, error: outcome.error, apiError: outcome.code });
+    let result: string;
+    if (ac.signal.aborted) result = 'Lệnh đã gửi nhưng bạn đã dừng theo dõi; xem kết quả trên web CityLight.';
+    else {
+      const after = outcome.status === 'confirmed' ? ((await s.reads.cabinet(p.cabinet.id).catch(() => null))?.state as Record<string, unknown> | undefined) : undefined;
+      result = outcomeText(p, outcome, after);
+    }
+    send('reset', {});
+    // the first sentence was already heard: only the result is spoken now
+    await fixedTurn(s, user, text, `${first}\n${result}`, send, speaker, { ...extra, command: { status: outcome.status, id: outcome.commandId } }, result);
   }
 
   // ---------------------------------------------------------------- admin
@@ -450,6 +593,45 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       requireUser(s);
       const h = voice && 'health' in voice ? await (voice as SidecarVoice).health() : null;
       return sendJson(res, 200, { enabled: !!voice, ready: !!h || (!!voice && !(voice instanceof SidecarVoice)), engine: h });
+    }
+    // the buttons of the confirmation card: confirming streams the command's progress like a turn
+    if (method === 'POST' && /^\/api\/pending\/[\w-]+\/confirm$/.test(url.pathname)) {
+      const { user } = requireUser(s);
+      const id = url.pathname.split('/')[3]!;
+      const b = await readJson(req);
+      if (s.busy) throw new HttpError(409, 'busy', 'Jarvis đang trả lời câu trước');
+      const { ac, send } = openStream(res, s);
+      const speaker = b.voice === true ? speakerFor(send, ac, false) : null;
+      try {
+        s.lastInteraction = Date.now();
+        const asked = '(bấm nút Xác nhận)';
+        if (!commandRate.allow(user.id)) await fixedTurn(s, user, asked, 'Jarvis đã gửi 6 lệnh trong một phút qua, bạn đợi một chút rồi xác nhận lại.', send, speaker);
+        else {
+          const t = s.pending.take(id, 'button');
+          if (!t.ok) {
+            send('pending_closed', { id, state: 'gone' });
+            await fixedTurn(s, user, asked, t.reason, send, speaker);
+          } else await execute(s, user, asked, t.pending, 'button', send, ac, speaker);
+        }
+      } catch (e) {
+        send('error', { code: 'failed', message: (e as Error).message });
+      } finally {
+        s.busy = null;
+        res.end();
+      }
+      return;
+    }
+    if (method === 'POST' && /^\/api\/pending\/[\w-]+\/cancel$/.test(url.pathname)) {
+      const { user } = requireUser(s);
+      const p = s.pending.cancel(url.pathname.split('/')[3]!);
+      if (p) {
+        audit.write({ kind: 'pending_cancelled', userId: user.id, pendingId: p.id, via: 'button' });
+        if (s.conversationId) {
+          addMessage(db, s.conversationId, { role: 'user', content: '(bấm nút Hủy)' });
+          addMessage(db, s.conversationId, { role: 'assistant', content: `Đã hủy lệnh: ${p.summary}.` });
+        }
+      }
+      return sendJson(res, 200, { cancelled: !!p, text: p ? `Đã hủy lệnh: ${p.summary}.` : 'Không có lệnh nào đang chờ.' });
     }
     if (key === 'POST /api/chat/stop') {
       s.busy?.abort();

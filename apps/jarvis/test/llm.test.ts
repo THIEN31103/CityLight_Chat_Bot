@@ -52,7 +52,8 @@ async function fakeOllama(lines: object[], status = 200) {
     let s = '';
     for await (const c of r) s += c;
     bodies.push(JSON.parse(s) as Record<string, unknown>);
-    res.writeHead(status, { 'content-type': 'application/x-ndjson' });
+    // no keep-alive: a pooled socket to a port a closed fake server used made later tests fail under parallel load
+    res.writeHead(status, { 'content-type': 'application/x-ndjson', connection: 'close' });
     for (const l of lines) res.write(`${JSON.stringify(l)}\n`);
     res.end();
   });
