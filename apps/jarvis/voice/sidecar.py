@@ -35,7 +35,9 @@ if os.environ.get("STT_DEVICE", "cpu") == "cuda" and os.name == "nt":
             os.add_dll_directory(d)
             os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
 
-from faster_whisper import WhisperModel
+# STT_MODEL=none: speech recognition runs elsewhere (Jarvis STT_PROVIDER=groq), this process only speaks (Piper)
+if os.environ.get("STT_MODEL", "small") != "none":
+    from faster_whisper import WhisperModel
 
 HOST = os.environ.get("VOICE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VOICE_PORT", "8791"))
@@ -60,14 +62,18 @@ PROMPT = (
 # a sentence whose words the model itself doubts is noise (a cough, a keyboard, a door), not a question
 MIN_AVG_LOGPROB = float(os.environ.get("STT_MIN_LOGPROB", "-1.0"))
 
-print(f"[voice] loading faster-whisper {STT_MODEL} on {STT_DEVICE}/{STT_COMPUTE}, {STT_THREADS} threads ...", flush=True)
-t0 = time.time()
-model = WhisperModel(STT_MODEL, device=STT_DEVICE, compute_type=STT_COMPUTE, cpu_threads=STT_THREADS)
+model = None
 stt_lock = threading.Lock()  # one transcription at a time: CPU / VRAM are shared with the LLM
-# first transcription on a GPU pays for CUDA start-up (~1.5 s, and it came back empty once): do it now, on a tone
-_tone = (0.1 * np.sin(2 * np.pi * 220 * np.arange(16000) / 16000)).astype(np.float32)
-list(model.transcribe(_tone, language="vi", beam_size=1, without_timestamps=True)[0])
-print(f"[voice] STT ready in {time.time() - t0:.1f} s", flush=True)
+if STT_MODEL == "none":
+    print("[voice] STT off (STT_MODEL=none): this process only speaks", flush=True)
+else:
+    print(f"[voice] loading faster-whisper {STT_MODEL} on {STT_DEVICE}/{STT_COMPUTE}, {STT_THREADS} threads ...", flush=True)
+    t0 = time.time()
+    model = WhisperModel(STT_MODEL, device=STT_DEVICE, compute_type=STT_COMPUTE, cpu_threads=STT_THREADS)
+    # first transcription on a GPU pays for CUDA start-up (~1.5 s, and it came back empty once): do it now, on a tone
+    _tone = (0.1 * np.sin(2 * np.pi * 220 * np.arange(16000) / 16000)).astype(np.float32)
+    list(model.transcribe(_tone, language="vi", beam_size=1, without_timestamps=True)[0])
+    print(f"[voice] STT ready in {time.time() - t0:.1f} s", flush=True)
 
 piper_voice = None
 if TTS_ENGINE == "piper":
@@ -202,6 +208,8 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(size)
         try:
             if self.path == "/stt":
+                if model is None:
+                    return self._json(503, {"error": "stt_off", "message": "STT_MODEL=none: speech recognition runs in Jarvis (STT_PROVIDER=groq)"})
                 return self._json(200, transcribe(body, self.headers.get("content-type", "")))
             if self.path == "/tts":
                 req = json.loads(body.decode("utf-8"))

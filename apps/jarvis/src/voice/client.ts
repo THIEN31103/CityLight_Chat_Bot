@@ -1,3 +1,4 @@
+import type { Config } from '../config';
 // Speech-to-text and text-to-speech behind interfaces (spec 4.1); the default implementation talks to the local
 // Python sidecar (voice/sidecar.py: faster-whisper + edge-tts). A different engine only needs these two interfaces.
 
@@ -62,4 +63,14 @@ export class SidecarVoice implements SttProvider, TtsProvider {
     const res = await this.call('/tts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, voice: this.opts.voice }) }, signal);
     return { audio: new Uint8Array(await res.arrayBuffer()), mime: res.headers.get('content-type') ?? 'audio/mpeg' };
   }
+}
+
+/** The speech engines from the config: the local sidecar for both, or Groq hearing + the sidecar speaking. */
+export async function createVoice(cfg: Pick<Config, 'voice' | 'stt' | 'tts' | 'groq'>): Promise<(SttProvider & TtsProvider) | null> {
+  if (!cfg.voice.enabled) return null;
+  const sidecar = new SidecarVoice({ url: cfg.voice.url, voice: cfg.tts.voice });
+  if (cfg.stt.provider !== 'groq') return sidecar;
+  const { GroqStt, MixedVoice } = await import('./groq-stt');
+  if (!cfg.groq.apiKey) throw new Error('STT_PROVIDER=groq needs GROQ_API_KEY');
+  return new MixedVoice(new GroqStt({ baseUrl: cfg.groq.baseUrl, apiKey: cfg.groq.apiKey, model: cfg.stt.model }), sidecar, { engine: 'groq', model: cfg.stt.model });
 }

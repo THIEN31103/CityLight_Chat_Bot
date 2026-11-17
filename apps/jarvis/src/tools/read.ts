@@ -108,8 +108,9 @@ const getSystemOverview: ToolDef<Record<string, never>> = {
     const order = { critical: 0, major: 1, minor: 2 };
     const top = [...(alarms?.items ?? [])].sort((a, b) => order[a.severity] - order[b.severity] || b.startedAt.localeCompare(a.startedAt)).slice(0, 3);
     return {
-      cabinets: { total: c.total, online: c.total - c.offline, offline: c.offline, on: c.on, off: c.off, fault: c.fault, dimming: c.dimming, unknown: c.unknown },
-      onlinePct: Math.round(stats.onlinePct * 10) / 10,
+      // Vietnamese keys: with "offline" the model copied the English word into its answer (2026-11-17)
+      tu: { tong_so: c.total, truc_tuyen: c.total - c.offline, mat_ket_noi: c.offline, dang_sang: c.on, dang_tat: c.off, dang_loi: c.fault, tiet_giam: c.dimming, chua_ro: c.unknown },
+      ty_le_truc_tuyen_phan_tram: Math.round(stats.onlinePct * 10) / 10,
       openAlarms: alarms ? { total: alarms.total, bySeverity: { nghiem_trong: bySeverity.critical, quan_trong: bySeverity.major, nhe: bySeverity.minor }, top: top.map(alarmBrief) } : 'không có quyền xem cảnh báo',
       overdueIncidents: stats.overdueIncidents,
     };
@@ -307,8 +308,10 @@ const listAreas: ToolDef<Record<string, never>> = {
   async run(ctx) {
     const areas = await areaTree(ctx);
     const districts = areas.filter((a) => a.kind === 'district');
+    // Vietnamese keys: with "districts" the cloud model (gpt-oss) answered "Tôi không biết" to "những khu vực nào"
     return {
-      districts: districts.map((d) => ({ name: d.name, cabinets: d.cabinetCount, wards: areas.filter((w) => w.parentId === d.id).length })).sort((a, b) => b.cabinets - a.cabinets),
+      so_khu_vuc: districts.length,
+      khu_vuc: districts.map((d) => ({ ten: d.name, so_tu: d.cabinetCount, so_phuong: areas.filter((w) => w.parentId === d.id).length })).sort((a, b) => b.so_tu - a.so_tu),
     };
   },
 };

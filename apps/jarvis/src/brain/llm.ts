@@ -1,8 +1,9 @@
-// The brain behind one interface (spec 4.1): ollama (free, local, default) or fake (tests only).
-// A cloud provider (Claude) can be added later behind the same interface without touching the agent.
+// The brain behind one interface (spec 4.1): ollama (free, local, default), groq (free cloud tier, OpenAI-compatible)
+// or fake (tests only). Another cloud provider can be added behind the same interface without touching the agent.
 import type { Config } from '../config';
 import { FakeLlm } from './providers/fake';
 import { OllamaLlm } from './providers/ollama';
+import { OpenAiCompatLlm } from './providers/openai-compat';
 
 /** JSON Schema of one tool's input, as the model sees it. */
 export interface LlmTool {
@@ -43,8 +44,11 @@ export interface LlmProvider {
   stream(req: LlmRequest): AsyncIterable<LlmEvent>;
 }
 
-export function createLlm(cfg: Config['llm']): LlmProvider {
+export function createLlm(cfg: Config['llm'], groq?: Config['groq']): LlmProvider {
   switch (cfg.provider) {
+    case 'groq':
+      if (!groq?.apiKey) throw new Error('LLM_PROVIDER=groq needs GROQ_API_KEY');
+      return new OpenAiCompatLlm({ name: 'groq', baseUrl: groq.baseUrl, apiKey: groq.apiKey, model: cfg.model, reasoningEffort: cfg.reasoningEffort, fallbackModels: cfg.fallbackModels });
     case 'fake':
       return new FakeLlm();
     case 'ollama':

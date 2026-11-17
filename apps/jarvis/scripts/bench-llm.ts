@@ -6,7 +6,7 @@ import { collect, createLlm, type LlmTool } from '../src/brain/llm';
 import { loadConfig } from '../src/config';
 
 const cfg = loadConfig();
-const llm = createLlm(cfg.llm);
+const llm = createLlm(cfg.llm, cfg.groq);
 const rounds = Math.max(1, Number(process.argv[2] ?? 3));
 
 const SYSTEM =

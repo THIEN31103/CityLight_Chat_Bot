@@ -314,6 +314,36 @@ Chặn trước khi tạo lệnh chờ (`guard/policy.ts`): `JARVIS_ACTIONS_ENAB
 | tủ ngoài allowlist / "tắt hết đèn quận 1" | từ chối, không có thẻ |
 | bộ test thật `jarvis-e2e-chat.mts` nhóm M (7 ca) | 7 / 7, tổng số lệnh gửi = số lần xác nhận hợp lệ |
 
+## Chạy AI + nghe giọng trên Groq (2026-11-17, máy quá nặng)
+
+Ollama (~3,5 GB) và Whisper trên GPU là hai phần nặng nhất. Groq có gói miễn phí không cần thẻ, API kiểu OpenAI, có gọi công cụ và Whisper `large-v3-turbo` (giới hạn 11/2026 theo các trang tổng hợp: AI ~1.000 câu / ngày, nghe giọng 8 giờ âm thanh / ngày; xem số thật trong trang quản lý Groq).
+
+| # | Đặc tả / trước đây | Làm | Lý do |
+|---|---|---|---|
+| D17 | LLM chạy trên máy (Ollama) | Thêm `LLM_PROVIDER=groq` (`brain/providers/openai-compat.ts`); Ollama vẫn là mặc định, đổi bằng một dòng `.env` | Máy 7,7 GB RAM / GPU 4 GB không gánh nổi cả stack + model |
+| D18 | STT trên máy (faster-whisper small, GPU) | Thêm `STT_PROVIDER=groq` (`voice/groq-stt.ts`, cùng câu gợi ý và bộ lọc "nghe bịa" như sidecar); sidecar chạy `STT_MODEL=none` chỉ còn đọc (Piper) | Bỏ được Whisper trên GPU; model lớn có thể nghe tiếng Việt tốt hơn bản small |
+
+Dữ liệu ra ngoài máy: câu hỏi, câu trả lời, kết quả công cụ (đã lọc LTID / IMEI / email / số điện thoại theo G6) và âm thanh từng câu nói. Dữ liệu giả lập thì được; dữ liệu thật của khách cần khách đồng ý (mục 10). Khóa `GROQ_API_KEY` chỉ nằm trong `apps/jarvis/.env` (gitignored), chỉ gửi trong header `Authorization`, không ghi log.
+
+```
+# apps/jarvis/.env
+LLM_PROVIDER=groq
+GROQ_API_KEY=...            # tự dán, không commit
+STT_PROVIDER=groq
+# LLM_MODEL=openai/gpt-oss-20b   (mặc định khi để trống)
+```
+
+Sidecar chỉ đọc: chạy như cũ nhưng `STT_MODEL=none` (không cần `STT_DEVICE=cuda`).
+
+### Đo thật (2026-11-17, tài khoản Groq miễn phí, stack local + 20 tủ giả lập)
+
+- Giới hạn đọc từ header của Groq: **mỗi model 8.000 token / phút và 1.000 câu / ngày**; một câu hỏi của Jarvis tốn ~2.000 token → một model chịu ~4 câu / phút. Model dùng được: `openai/gpt-oss-20b`, `openai/gpt-oss-120b`, `qwen/qwen3.8-27b` (qwen **gọi công cụ sai** trên Groq nên không dùng).
+- Khi một model hết lượt (429), câu chuyển sang model kế (`LLM_FALLBACK_MODELS`, mặc định `openai/gpt-oss-120b`); hết cả thì chờ số giây Groq yêu cầu (tối đa 15 s) rồi thử lại một lần.
+- Bộ test thật `jarvis-e2e-chat.mts`: **72 / 72**; thời gian một câu p50 3,7 s, p90 15 s (p90 là lúc test hỏi dồn dập, phải chờ hạn mức). Lần chạy đầu, chưa xoay vòng model: 48 / 72 (hết lượt).
+- Nghe giọng `whisper-large-v3-turbo`: 0,4 – 2,7 s mỗi câu, nghe "Mã E201 là gì?" đúng từng chữ; mạng chập chờn 2 / 8 lần lúc đầu → thử lại 1 lần khi lỗi mạng.
+- Bộ nhớ khi chạy: Piper ~176 MB, Jarvis + API + worker + giả lập (node) ~250 MB, Docker trong WSL ~350 MB. Trước đây riêng Ollama ~3,5 GB và Whisper trên GPU ~1 GB.
+- Sửa theo model mới: tên trường tiếng Việt trong kết quả công cụ (model chép chữ "offline", không hiểu "districts"), chỉ giữ câu của lượt cuối (một lần bị lặp câu), "Tôi không biết." trống trong khi công cụ có dữ liệu → hỏi lại model một lần (`DATA_NUDGE`).
+
 ## Còn thiếu (cần máy / quyết định)
 
 - 20 câu ghi âm thật (Bảo, mục 11) để đo đúng độ chính xác STT.

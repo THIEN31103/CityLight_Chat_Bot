@@ -102,3 +102,22 @@ describe('runTurn', () => {
     expect(llm.requests[1]!.messages.find((m) => m.role === 'tool')!.content).toContain('unknown_tool');
   });
 });
+
+describe('a bare "không biết" although a tool answered', () => {
+  it('is dropped and the model is asked once to answer from the data', async () => {
+    const replies = ['Tôi không biết.', 'Hệ thống có 12 khu vực.'];
+    const llm = {
+      name: 'scripted', model: 'm', requests: [] as unknown[],
+      async *stream(r: unknown) {
+        (this.requests as unknown[]).push(r);
+        yield { type: 'text' as const, text: replies.shift()! };
+        yield { type: 'done' as const, stopReason: 'end_turn' as const };
+      },
+    };
+    const events: AgentEvent[] = [];
+    const r = await runTurn({ llm, tools: [echo], ctx, system: 's', maxTokens: 100, onEvent: (e) => events.push(e), messages: [{ role: 'user', content: 'Tình hình hệ thống sao rồi?' }] });
+    expect(r.text).toBe('Hệ thống có 12 khu vực.');
+    expect(llm.requests).toHaveLength(2);
+    expect(events.some((e) => e.type === 'reset')).toBe(true);
+  });
+});

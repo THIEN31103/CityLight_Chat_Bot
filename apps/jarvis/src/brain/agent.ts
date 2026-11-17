@@ -24,6 +24,11 @@ export function looksLikeSmallTalk(text: string): boolean {
 }
 
 /** Added once when a small model answered a data question from imagination instead of calling a tool. */
+/** "Tôi không biết." / "Không biết." alone: given while the tool result held the answer (gpt-oss, 2026-11-17) */
+export const BARE_DONT_KNOW = /^\s*(tôi\s+)?(không|chưa)\s+(biết|rõ)\.?\s*$/i;
+export const DATA_NUDGE =
+  '(System reminder, do not mention it) The tool result above holds the data. Answer my question from it now, in Vietnamese, 1-2 sentences. If it says nothing matched, say that.';
+
 export const TOOL_NUDGE =
   '(System reminder, do not mention it) You did not call any tool and you know nothing about the system without one. Call the right tool now, then answer from its result in Vietnamese.';
 
@@ -74,6 +79,7 @@ export async function runTurn(t: TurnInput): Promise<TurnResult> {
   const toolCalls: TurnResult['toolCalls'] = [];
   let finalText = '';
   let nudged = false;
+  let redone = false;
   const lastUser = [...t.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
   const needsData = !looksLikeSmallTalk(lastUser);
   const out = (r: Omit<TurnResult, 'produced' | 'usage' | 'toolCalls' | 'nudged'>): TurnResult => ({ ...r, produced, usage, toolCalls, nudged });
@@ -142,6 +148,13 @@ export async function runTurn(t: TurnInput): Promise<TurnResult> {
       messages.push({ role: 'assistant', content: text }, { role: 'user', content: TOOL_NUDGE });
       continue;
     }
+    // a bare "không biết" although a tool answered: ask once to answer from the data (code decides, not the model)
+    if (!calls.length && toolCalls.length && !redone && BARE_DONT_KNOW.test(text) && round < MAX_TOOL_ROUNDS) {
+      redone = true;
+      t.onEvent?.({ type: 'reset' });
+      messages.push({ role: 'assistant', content: text }, { role: 'user', content: DATA_NUDGE });
+      continue;
+    }
     // asked again and still no data: an honest fixed sentence instead of a guess (or the model talking about tools)
     if (!calls.length && nudged && !toolCalls.length) {
       t.onEvent?.({ type: 'reset' });
@@ -149,13 +162,14 @@ export async function runTurn(t: TurnInput): Promise<TurnResult> {
       produced.push({ role: 'assistant', content: NO_DATA_ANSWER });
       return out({ text: NO_DATA_ANSWER, stopReason: 'end_turn' });
     }
-    finalText += text;
-
     if (!calls.length) {
       const answer: LlmMessage = { role: 'assistant', content: text };
       produced.push(answer);
-      return out({ text: finalText, stopReason: stop === 'max_tokens' ? 'max_tokens' : 'end_turn' });
+      // the answer is the last round's text; what came before a tool call is kept only when nothing follows
+      // (a cloud model wrote the answer, called a tool again and wrote it twice: "…kết nối.491 tủ…", 2026-11-17)
+      return out({ text: text.trim() ? text : finalText, stopReason: stop === 'max_tokens' ? 'max_tokens' : 'end_turn' });
     }
+    finalText = text.trim() ? text : finalText;
 
     await runCalls(calls, text);
   }

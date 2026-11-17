@@ -40,9 +40,19 @@ export class VoiceInput {
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
     });
-    this.ctx = new AudioContext();
+    // 16 kHz straight from the browser: its resampler filters properly, the box average in toPcm16 (48 -> 16 kHz)
+    // blurred real voices (2026-11-17: "Tổng quan dạy hắn", "Hôn mong" from a real microphone, Piper audio was fine)
+    // Some browsers (Firefox) refuse to connect a microphone to a context at another rate: then the device rate.
+    let src;
+    try {
+      this.ctx = new AudioContext({ sampleRate: 16000 });
+      src = this.ctx.createMediaStreamSource(this.stream);
+    } catch {
+      await this.ctx?.close().catch(() => undefined);
+      this.ctx = new AudioContext();
+      src = this.ctx.createMediaStreamSource(this.stream);
+    }
     await this.ctx.audioWorklet.addModule('/mic-worklet.js');
-    const src = this.ctx.createMediaStreamSource(this.stream);
     this.node = new AudioWorkletNode(this.ctx, 'jarvis-mic');
     this.node.port.onmessage = (e) => this.feed(e.data);
     src.connect(this.node);

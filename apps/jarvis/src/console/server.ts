@@ -2,7 +2,7 @@
 // Loopback by default; a LAN address needs JARVIS_CONSOLE_TOKEN (config.ts). Every state-changing request needs the
 // session's CSRF value in x-jarvis-csrf and, when the browser sends one, an Origin equal to the Host.
 import { timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +23,7 @@ import { READ_TOOLS, SPARE_TOOLS } from '../tools/read';
 import type { ToolDef } from '../tools/registry';
 import { SidecarVoice, type SttProvider, type TtsAudio, type TtsProvider } from '../voice/client';
 import { toSpeech } from '../voice/speech-text';
+import { pcmToWav } from '../voice/groq-stt';
 import { ConsoleSession, RateLimiter, SessionStore } from './session';
 import { FILLER, Speaker } from './speaker';
 import { isControlCapabilityQuestion } from '../brain/router';
@@ -251,6 +252,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       send('status', { state: 'transcribing' });
       const stt = await voice.transcribe(pcm, ac.signal);
       const text = sanitizeText(stt.text).trim();
+      if (cfg.debugAudio) keepForDebug(pcm, { heard: text, sttMs: stt.ms, audioMs: stt.audioMs });
       send('transcript', { text, sttMs: stt.ms, audioMs: stt.audioMs });
       if (!text || text.length < 2) {
         send('done', { text: '', heard: false, sttMs: stt.ms });
@@ -266,6 +268,19 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     } finally {
       s.busy = null;
       res.end();
+    }
+  }
+
+  /** JARVIS_DEBUG_AUDIO: the sentence as a WAV file and what was heard, next to each other (local only) */
+  function keepForDebug(pcm: Uint8Array, info: Record<string, unknown>) {
+    try {
+      const dir = path.join(cfg.dataDir, 'voice-debug');
+      mkdirSync(dir, { recursive: true });
+      const name = new Date().toISOString().replace(/[:.]/g, '-');
+      writeFileSync(path.join(dir, `${name}.wav`), pcmToWav(pcm));
+      writeFileSync(path.join(dir, `${name}.json`), JSON.stringify(info));
+    } catch (e) {
+      console.error('[jarvis] voice-debug', (e as Error).message);
     }
   }
 
