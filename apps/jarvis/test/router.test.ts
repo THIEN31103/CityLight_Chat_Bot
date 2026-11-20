@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isControlCapabilityQuestion, isSwitchOrder, isWhoAmI, route } from '../src/brain/router';
+import { isControlCapabilityQuestion, isSwitchOrder, isWhoAmI, route, isListHowQuestion } from '../src/brain/router';
 import { KEEP_MESSAGES, ShiftContext } from '../src/brain/context';
 
 const focus = { cabinet: { id: 'c1', code: 'DM0010', name: 'Tủ demo 10' } };
@@ -30,11 +30,17 @@ describe('keyword router', () => {
     ['danh sách các quận', 'list_areas', {}],
     ['Tủ TL01.0009 đã bật đèn chưa?', 'get_cabinet', { cabinet: 'tl01.0009' }],
     ['tủ đó tắt đèn chưa', 'get_cabinet', { cabinet: 'tủ đó' }],
+    // a list of cabinets over the whole system, never "which area?" (user report 2026-11-20)
+    ['bạn có thể liệt kê 10 mã tủ nào đang hoạt động bình thường không', 'get_area_cabinets', { state: 'binh_thuong', limit: 10 }],
+    ['tủ nào đang bật đèn?', 'get_area_cabinets', { state: 'dang_sang' }],
+    ['tủ nào mất kết nối', 'get_area_cabinets', { state: 'mat_ket_noi' }],
+    ['cho tui 5 tủ đang tắt', 'get_area_cabinets', { state: 'dang_tat', limit: 5 }],
+    ['liệt kê các tủ', 'get_area_cabinets', {}],
   ])('%s -> %s', (q, name, input) => {
     expect(route(q, focus)).toEqual({ name, input });
   });
 
-  it.each(['Xin chào Jarvis', 'bạn làm được gì', 'tắt hết đèn đi', 'cảm ơn', 'trả tủ đó về chạy theo lịch', 'bật tay tủ demo số hai', 'xác nhận'])('%s -> no route (the model decides)', (q) => {
+  it.each(['Xin chào Jarvis', 'bạn làm được gì', 'tắt hết đèn đi', 'cảm ơn', 'trả tủ đó về chạy theo lịch', 'bật tay tủ demo số hai', 'xác nhận', 'khu vực nào cũng được đi', 'phường Bến Nghé có tủ nào lỗi'])('%s -> no route (the model decides)', (q) => {
     expect(route(q, focus)).toBeNull();
   });
 
@@ -89,4 +95,12 @@ describe('questions about Jarvis itself (fixed answers)', () => {
   );
   it.each(['biết tui là ai không', 'tôi là ai', 'Jarvis có biết mình là ai không'])('who am I: %s', (q) => expect(isWhoAmI(q)).toBe(true));
   it.each(['bạn là ai', 'Jarvis là ai vậy'])('not who am I: %s', (q) => expect(isWhoAmI(q)).toBe(false));
+});
+
+describe('"how do you list cabinets" (2026-11-20)', () => {
+  it.each(['bạn có thể liệt kê các tủ như nào', 'liệt kê tủ thế nào', 'bạn liệt kê được những gì về tủ'])('how: %s', (q) => {
+    expect(isListHowQuestion(q)).toBe(true);
+    expect(route(q)).toBeNull();
+  });
+  it.each(['liệt kê 10 tủ mất kết nối', 'liệt kê các tủ', 'danh sách tủ đang sáng'])('a list, not how: %s', (q) => expect(isListHowQuestion(q)).toBe(false));
 });

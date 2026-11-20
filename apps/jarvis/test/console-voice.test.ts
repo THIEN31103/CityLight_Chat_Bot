@@ -69,7 +69,8 @@ describe('voice turn', () => {
   });
 
   it('a spoken data question: transcript, routed tool, answer spoken sentence by sentence', async () => {
-    heard.text = '[[fake:{"text":"Hệ thống có 10 tủ. Có 1 tủ mất kết nối từ 17:05.","chunks":4}]] Hệ thống thế nào rồi?';
+    // the scripted answer sits in the question the router reads: no state words in it (they would route a cabinet list)
+    heard.text = '[[fake:{"text":"Hệ thống có 10 tủ. Có 1 tủ lỗi từ 17:05.","chunks":4}]] Hệ thống thế nào rồi?';
     spoken.length = 0;
     const { status, events } = await speak(2);
     expect(status).toBe(200);
@@ -79,7 +80,7 @@ describe('voice turn', () => {
     expect(audio.map((a) => a.seq)).toEqual([1, 2, 3]);
     expect(audio[0]!.mime).toBe('audio/wav');
     // the filler covers the tool, then the two sentences, said the way they are spoken
-    expect(spoken).toEqual(['Để tôi kiểm tra.', 'Hệ thống có 10 tủ.', 'Có 1 tủ mất kết nối từ 5 giờ 5 phút chiều.']);
+    expect(spoken).toEqual(['Để tôi kiểm tra.', 'Hệ thống có 10 tủ.', 'Có 1 tủ lỗi từ 5 giờ 5 phút chiều.']);
     const done = events.find((e) => e.event === 'done')!.data;
     expect(done).toMatchObject({ tools: ['get_system_overview'], sttMs: 50 });
     expect(done.firstAudioMs).not.toBeNull();

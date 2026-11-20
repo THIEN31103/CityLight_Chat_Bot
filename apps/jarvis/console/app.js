@@ -215,7 +215,7 @@ async function showCurrent() {
     try {
       const { messages } = await api('GET', `/api/conversations/${id}`);
       if (viewingId === null && session.conversationId === id) {
-        for (const m of messages) if (m.role === 'user' || m.role === 'assistant') addBubble(m.role, m.content);
+        for (const m of messages) if ((m.role === 'user' || m.role === 'assistant') && m.content.trim()) addBubble(m.role, m.content);
       }
     } catch {
       /* deleted meanwhile: an empty screen is right */
@@ -514,6 +514,8 @@ function updateChatTools() {
   const c = conversations.find((x) => x.id === id);
   $('#chat-title').textContent = id ? (c?.title || 'Cuộc chat') + (viewingId ? ' (xem lại)' : '') : 'Cuộc chat mới';
   $('#delete-chat').hidden = !id;
+  $('#rename-chat').hidden = !id || !c;
+  $('#delete-all').hidden = !conversations.length;
 }
 
 async function loadConversations() {
@@ -527,6 +529,7 @@ async function loadConversations() {
           el('button', { class: 'open', title: c.title || '', onclick: () => openOwn(c.id) },
             el('span', { class: 'title' }, c.title || '(chưa có tiêu đề)'),
             el('span', { class: 'meta' }, `${fmtTime(c.updatedAt)} · ${c.messages} tin`)),
+          el('button', { class: 'ren', title: 'Đổi tên đoạn chat này', 'aria-label': `Đổi tên đoạn chat ${c.title || ''}`, onclick: () => renameOwn(c.id) }, '✎'),
           el('button', { class: 'del', title: 'Xóa đoạn chat này', 'aria-label': `Xóa đoạn chat ${c.title || ''}`, onclick: () => removeOwn(c.id) }, '🗑'))),
     );
     if (!list.length) ul.append(el('li', { class: 'hint' }, 'Chưa có cuộc chat nào.'));
@@ -544,7 +547,7 @@ async function openOwn(id) {
   }
   const { messages } = await api('GET', `/api/conversations/${id}`);
   clearMessages();
-  for (const m of messages) if (m.role === 'user' || m.role === 'assistant') addBubble(m.role, m.content);
+  for (const m of messages) if ((m.role === 'user' || m.role === 'assistant') && m.content.trim()) addBubble(m.role, m.content);
   viewingId = id;
   $('#viewing').hidden = false;
   $('#composer').hidden = true;
@@ -572,6 +575,48 @@ async function removeOwn(id) {
   setStatus('Đã xóa đoạn chat', false);
   loadConversations();
 }
+
+/** Renames one of the user's own conversations (the browser asks for the new name). */
+async function renameOwn(id) {
+  if (busy) return;
+  const c = conversations.find((x) => x.id === id);
+  const name = prompt('Tên mới cho đoạn chat (tối đa 80 ký tự):', c?.title || '');
+  if (name === null) return;
+  const title = name.replace(/\s+/g, ' ').trim();
+  if (!title || title === c?.title) return;
+  try {
+    await api('PATCH', `/api/conversations/${id}`, { title: title.slice(0, 80) });
+  } catch (err) {
+    setStatus(err.message, false);
+    return;
+  }
+  setStatus('Đã đổi tên đoạn chat', false);
+  loadConversations();
+}
+
+/** Deletes every conversation of the user (asks first) and starts a new one. */
+async function removeAll() {
+  if (busy || !conversations.length) return;
+  if (!confirm(`Xóa hẳn tất cả ${conversations.length} đoạn chat của bạn? Không khôi phục được.`)) return;
+  try {
+    await api('DELETE', '/api/conversations');
+  } catch (err) {
+    setStatus(err.message, false);
+    return;
+  }
+  session.conversationId = null;
+  viewingId = null;
+  clearMessages();
+  showLive();
+  setStatus('Đã xóa tất cả đoạn chat', false);
+  loadConversations();
+}
+
+$('#delete-all').addEventListener('click', removeAll);
+$('#rename-chat').addEventListener('click', () => {
+  const id = viewingId ?? session.conversationId;
+  if (id) renameOwn(id);
+});
 
 $('#delete-chat').addEventListener('click', () => {
   const id = viewingId ?? session.conversationId;

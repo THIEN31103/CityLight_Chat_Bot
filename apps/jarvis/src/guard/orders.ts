@@ -59,3 +59,15 @@ export function describeCommand(c: ActionCommand): string {
       return 'Gửi lệnh tự kiểm tra RS485';
   }
 }
+
+/**
+ * "cho tui một mã tủ để điều khiển", "tủ nào điều khiển được", "bạn bật tắt được những tủ nào": the answer is the
+ * allowlist, from code. The model had no tool for it and the question ended in "Tôi chưa tra được…" (2026-11-17).
+ */
+export function isAllowedCabinetsQuestion(raw: string): boolean {
+  const f = fold(raw.replace(/(^|[^\p{L}])[tT][ủỦ](?=[^\p{L}]|$)/gu, '$1tucab'));
+  // "tủ nào đang bật đèn" asks about the state: "bật / tắt" counts only with "được"
+  const control = /(dieu khien|ra lenh|gui lenh)/.test(f) || /\b(bat|tat)\b.*\bduoc\b/.test(f);
+  const which = /(ma tucab|tucab nao|nhung tucab|cac tucab|danh sach tucab|tucab gi|may tucab|tucab duoc phep|tucab de)/.test(f);
+  return control && which;
+}

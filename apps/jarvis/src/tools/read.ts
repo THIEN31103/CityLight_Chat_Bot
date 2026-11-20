@@ -157,16 +157,19 @@ const getCabinet: ToolDef<{ cabinet: string }> = {
     return {
       code: cab.code, name: cab.name, district: cab.districtName, ward: cab.wardName,
       status: STATUS_VI[st.status as CabinetStatus] ?? st.status,
-      online: st.online, lastSeen: vnTime(st.lastSeenAt as string | null),
+      // never connected: "chưa từng" instead of null, which the model turned into "Không biết thời điểm" (2026-11-20)
+      // Vietnamese words: with "online" the model wrote "đang sáng, online" (2026-11-20)
+      ket_noi: st.online ? 'trực tuyến' : 'mất kết nối', lastSeen: vnTime(st.lastSeenAt as string | null) ?? 'chưa từng gửi dữ liệu lên hệ thống',
       branch1On: st.branch1On, branch2On: st.branch2On, manualMode: st.manualMode,
-      plcOnline: st.plcOnline, powerMeterOnline: st.pmOnline,
+      plc: st.plcOnline === false ? 'mất kết nối' : st.plcOnline ? 'trực tuyến' : null,
+      dong_ho_dien: st.pmOnline === false ? 'mất kết nối' : st.pmOnline ? 'trực tuyến' : null,
       voltageV: [num('vL1'), num('vL2'), num('vL3')], currentA: [num('iL1'), num('iL2'), num('iL3')],
-      powerKw: num('pTotalKw'), leakMa: num('leakMa'), tempC: num('tempC'), doorOpen: st.doorOpen,
+      powerKw: num('pTotalKw'), leakMa: num('leakMa'), tempC: num('tempC'), cua_tu: st.doorOpen === true ? 'đang mở' : st.doorOpen === false ? 'đóng' : null,
       openAlarms: (alarms as Alarm[]).filter((a) => a.active).slice(0, 5).map((a) => ({ code: a.code, severity: SEVERITY_VI[a.severity], message: viText(a.message), since: vnTime(a.startedAt) })),
       diagnostics: problems.slice(0, 6).map((d: DiagnosticItem) => ({ part: d.subsystem, status: d.status, code: d.code, evidence: d.evidence, detail: d.detail })),
       diagnosticsOk: diag ? diag.items.length - problems.length : null,
       schedule: sched ? { mode: sched.mode, on1: sched.on1, off1: sched.off1, on2: sched.on2, off2: sched.off2, source: sched.source, fromZone: sched.inheritedFromZone } : null,
-      capabilities: detail.capabilities,
+      // capabilities ("manual_control"…) left out: the model read them as "Jarvis can switch this cabinet" (2026-11-20)
     };
   },
 };
@@ -316,31 +319,73 @@ const listAreas: ToolDef<Record<string, never>> = {
   },
 };
 
-const getAreaCabinets: ToolDef<{ area: string }> = {
+/** state filters, in the words the model sees: "bình thường" = connected and without fault */
+const STATE_FILTER = ['binh_thuong', 'dang_sang', 'dang_tat', 'co_loi', 'mat_ket_noi'] as const;
+type StateFilter = (typeof STATE_FILTER)[number];
+const MATCHES: Record<StateFilter, (c: CabinetSummary) => boolean> = {
+  binh_thuong: (c) => c.status === 'on' || c.status === 'off' || c.status === 'dimming',
+  dang_sang: (c) => c.status === 'on' || c.status === 'dimming',
+  dang_tat: (c) => c.status === 'off',
+  co_loi: (c) => c.status === 'fault',
+  mat_ket_noi: (c) => c.status === 'offline',
+};
+
+const STATE_WORDS_VI: Record<StateFilter, string> = {
+  binh_thuong: 'hoạt động bình thường', dang_sang: 'đang sáng', dang_tat: 'đang tắt', co_loi: 'có lỗi', mat_ket_noi: 'mất kết nối',
+};
+
+type AreaCabinetsInput = { area?: string; state?: StateFilter; limit?: number };
+const getAreaCabinets: ToolDef<AreaCabinetsInput> = {
   name: 'get_area_cabinets',
   kind: 'read',
-  description: 'Cabinets of one ward or district by name: counts by state and a few cabinets, faulty / offline first.',
-  schema: obj({ area: { type: 'string', description: 'Tên phường hoặc quận' } }, ['area']),
-  input: z.object({ area: z.string().trim().min(1).max(100) }),
-  async run(ctx, { area }) {
-    const areas = await areaTree(ctx);
-    const q = fold(area).replace(/^(phuong|quan|huyen|xa|thi tran) /, '');
-    const hits = areas.filter((a) => a.kind !== 'unit' && fold(a.name).includes(q));
-    if (!hits.length) return { error: 'not_found', message: `Không thấy khu vực "${area}"` };
-    const exact = hits.filter((a) => fold(a.name).replace(/^(phuong|quan|huyen|xa|thi tran) /, '') === q);
-    const pick = exact.length === 1 ? exact[0]! : hits.length === 1 ? hits[0]! : null;
-    if (!pick) return { error: 'ambiguous', message: 'Nhiều khu vực khớp, hỏi lại người dùng', choices: hits.slice(0, 6).map((a) => a.name) };
-    ctx.focus.area = { id: pick.id, name: pick.name };
-    const wards = pick.kind === 'ward' ? [pick] : areas.filter((a) => a.parentId === pick.id && a.kind === 'ward').slice(0, 15);
-    const lists = await Promise.all(wards.map((w) => ctx.reads.areaCabinets(w.id, { signal: ctx.signal })));
-    const all = lists.flat();
+  description:
+    'Cabinets with their state: of one ward or district, or of the whole system when area is left empty. Counts by state and a list (faulty / offline first), optionally only one state. Use for "liệt kê các tủ…", "10 tủ đang bình thường", "tủ nào mất kết nối", "phường X có tủ nào lỗi". Never ask the user for an area: leave it empty.',
+  schema: obj({
+    area: { type: 'string', description: 'Tên phường hoặc quận; bỏ trống = toàn hệ thống' },
+    state: { type: 'string', enum: [...STATE_FILTER], description: 'chỉ tủ ở trạng thái này; binh_thuong = có kết nối, không lỗi' },
+    limit: { type: 'integer', minimum: 1, maximum: 30, description: 'số tủ trong danh sách, mặc định 15' },
+  }),
+  input: z.object({
+    area: z.string().trim().max(100).optional(),
+    state: z.enum(STATE_FILTER).optional(),
+    limit: z.number().int().min(1).max(30).optional(),
+  }),
+  async run(ctx, { area, state, limit }) {
+    let all: CabinetSummary[];
+    let where: Record<string, unknown>;
+    if (!area || /^(toan bo|tat ca|he thong|toan he thong|bat ky|bat ki)/.test(fold(area))) {
+      all = await ctx.reads.mapCabinets({ signal: ctx.signal });
+      where = { khu_vuc: 'toàn hệ thống' };
+    } else {
+      const areas = await areaTree(ctx);
+      const q = fold(area).replace(/^(phuong|quan|huyen|xa|thi tran) /, '');
+      const hits = areas.filter((a) => a.kind !== 'unit' && fold(a.name).includes(q));
+      if (!hits.length) return { error: 'not_found', message: `Không thấy khu vực "${area}"` };
+      // "quận 1" is the district, not "Phường 1" nor "Quận 10" (2026-11-20): the word the user said picks the kind
+      const said = /^(quan|huyen)\b/.test(fold(area)) ? 'district' : /^(phuong|xa|thi tran)\b/.test(fold(area)) ? 'ward' : null;
+      const same = hits.filter((a) => fold(a.name).replace(/^(phuong|quan|huyen|xa|thi tran) /, '') === q);
+      const exact = said && same.some((a) => a.kind === said) ? same.filter((a) => a.kind === said) : same;
+      const pick = exact.length === 1 ? exact[0]! : hits.length === 1 ? hits[0]! : null;
+      if (!pick) return { error: 'ambiguous', message: 'Nhiều khu vực khớp, hỏi lại người dùng', choices: hits.slice(0, 6).map((a) => a.name) };
+      ctx.focus.area = { id: pick.id, name: pick.name };
+      const wards = pick.kind === 'ward' ? [pick] : areas.filter((a) => a.parentId === pick.id && a.kind === 'ward').slice(0, 15);
+      all = (await Promise.all(wards.map((w) => ctx.reads.areaCabinets(w.id, { signal: ctx.signal })))).flat();
+      where = { khu_vuc: pick.name, wardsCounted: pick.kind === 'district' ? wards.length : undefined };
+    }
     const counts: Record<string, number> = {};
     for (const c of all) counts[STATUS_VI[c.status] ?? c.status] = (counts[STATUS_VI[c.status] ?? c.status] ?? 0) + 1;
     const rank = (s: CabinetStatus) => ({ fault: 0, offline: 1, unknown: 2, on: 3, dimming: 3, off: 4 })[s] ?? 5;
+    const chosen = state ? all.filter(MATCHES[state]) : [...all].sort((a, b) => rank(a.status) - rank(b.status));
     return {
-      area: pick.name, kind: pick.kind, total: all.length, byStatus: counts,
-      cabinets: [...all].sort((a, b) => rank(a.status) - rank(b.status)).slice(0, 15).map(brief),
-      wardsCounted: pick.kind === 'district' ? wards.length : undefined,
+      ...where,
+      tong_so_tu: all.length,
+      theo_trang_thai: counts,
+      ...(state ? { loc: state, so_tu_khop: chosen.length } : {}),
+      // "10 tủ đang bị lỗi" with no faulty cabinet ended in "Không biết." (2026-11-20): say none, and what there is
+      ...(state && !chosen.length
+        ? { ghi_chu: `Không có tủ nào ${STATE_WORDS_VI[state]}. Hiện có: ${Object.entries(counts).map(([k, n]) => `${n} tủ ${k}`).join(', ')}. Nói cả hai ý này.` }
+        : {}),
+      danh_sach: chosen.slice(0, limit ?? 15).map(brief),
     };
   },
 };

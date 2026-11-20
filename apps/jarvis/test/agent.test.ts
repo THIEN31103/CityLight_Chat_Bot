@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { User } from '@citylight/shared';
-import { NO_DATA_ANSWER, TOOL_NUDGE, looksLikeSmallTalk, runTurn, type AgentEvent } from '../src/brain/agent';
+import { DATA_FAIL_ANSWER, NO_DATA_ANSWER, TOOL_NOT_OFFERED, TOOL_NUDGE, looksLikeSmallTalk, runTurn, type AgentEvent } from '../src/brain/agent';
 import { SWITCH_ANSWER } from '../src/brain/router';
 import { FakeLlm } from '../src/brain/providers/fake';
 import type { ToolContext, ToolDef } from '../src/tools/registry';
@@ -32,13 +32,15 @@ describe('runTurn', () => {
       llm, tools: [echo], ctx, system: 's', messages: [{ role: 'user', content: 'Hệ thống thế nào rồi?' }], maxTokens: 100, onEvent: (e) => events.push(e), useRouter: false,
     });
     expect(r.nudged).toBe(true);
-    expect(events.some((e) => e.type === 'reset')).toBe(true);
+    // the drafts are never shown (2026-11-20): only the fixed sentence reaches the screen, nothing to take back
+    expect(events.some((e) => e.type === 'reset')).toBe(false);
+    expect(events.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text)).toEqual([NO_DATA_ANSWER]);
     expect(llm.requests).toHaveLength(2);
     expect(llm.requests[1]!.messages.at(-1)).toEqual({ role: 'user', content: TOOL_NUDGE });
     expect(r.produced.filter((m) => m.role === 'assistant')).toHaveLength(1);
     // the fake still calls no tool after the nudge: the fixed honest sentence, not the model's second guess
     expect(r.text).toBe(NO_DATA_ANSWER);
-    expect(events.filter((e) => e.type === 'reset')).toHaveLength(2);
+    expect(events.filter((e) => e.type === 'reset')).toHaveLength(0);
   });
 
   it('a question about Jarvis itself is answered at once, never nudged', async () => {
@@ -81,7 +83,8 @@ describe('runTurn', () => {
     const llm = new FakeLlm();
     const r = await runTurn({ llm, tools: [echo], routerTools: [find], ctx, system: 's', maxTokens: 100, messages: [{ role: 'user', content: 'các tủ trên đường Lý Thường Kiệt' }] });
     expect(r.toolCalls.map((c) => c.name)).toEqual(['find_cabinets']);
-    expect(llm.requests[0]!.tools?.map((t) => t.name)).toEqual(['get_system_overview']);
+    // the street search itself is never offered to the model; after the router fetched, no tool list at all (token use)
+    expect(llm.requests[0]!.tools).toEqual([]);
     expect(llm.requests[0]!.messages.find((m) => m.role === 'tool')!.content).toContain('Lý Thường Kiệt');
   });
 
@@ -118,6 +121,113 @@ describe('a bare "không biết" although a tool answered', () => {
     const r = await runTurn({ llm, tools: [echo], ctx, system: 's', maxTokens: 100, onEvent: (e) => events.push(e), messages: [{ role: 'user', content: 'Tình hình hệ thống sao rồi?' }] });
     expect(r.text).toBe('Hệ thống có 12 khu vực.');
     expect(llm.requests).toHaveLength(2);
-    expect(events.some((e) => e.type === 'reset')).toBe(true);
+    // "Tôi không biết." never reached the screen: only the answer from the data
+    expect(events.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text).join('')).toBe('Hệ thống có 12 khu vực.');
+    expect(events.some((e) => e.type === 'reset')).toBe(false);
+  });
+});
+
+describe('what reaches the screen (user report 2026-11-20: an answer appeared, then another one replaced it)', () => {
+  const scripted = (rounds: { text: string; tool?: string }[]) => ({
+    name: 'scripted', model: 'm', requests: [] as unknown[],
+    async *stream(r: unknown) {
+      (this.requests as unknown[]).push(r);
+      const next = rounds.shift()!;
+      for (const piece of next.text.match(/.{1,5}/gs) ?? []) yield { type: 'text' as const, text: piece };
+      if (next.tool) yield { type: 'tool_use' as const, call: { id: 'c1', name: next.tool, input: {} } };
+      yield { type: 'done' as const, stopReason: (next.tool ? 'tool_use' : 'end_turn') as 'tool_use' | 'end_turn' };
+    },
+  });
+  const shownText = (events: AgentEvent[]) => events.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text).join('');
+
+  it('a long answer after the data streams in pieces, and what streams is exactly the answer', async () => {
+    const long = 'Hệ thống có 510 tủ, trong đó 19 tủ đang trực tuyến và 491 tủ mất kết nối.';
+    const llm = scripted([{ text: long }]);
+    const events: AgentEvent[] = [];
+    const r = await runTurn({ llm, tools: [echo], ctx, system: 's', maxTokens: 100, onEvent: (e) => events.push(e), messages: [{ role: 'user', content: 'Tình hình hệ thống sao rồi?' }] });
+    expect(r.text).toBe(long);
+    expect(shownText(events)).toBe(long);
+    expect(events.filter((e) => e.type === 'text').length).toBeGreaterThan(1);
+    expect(events.some((e) => e.type === 'reset')).toBe(false);
+  });
+
+  it('a draft written before a second tool call is not shown; only the last round is', async () => {
+    const llm = scripted([{ text: 'Có 491 tủ mất kết nối.', tool: 'get_system_overview' }, { text: 'Có 491 tủ đang mất kết nối.' }]);
+    const events: AgentEvent[] = [];
+    const r = await runTurn({ llm, tools: [echo], ctx, system: 's', maxTokens: 100, onEvent: (e) => events.push(e), messages: [{ role: 'user', content: 'Tình hình hệ thống sao rồi?' }] });
+    expect(r.text).toBe('Có 491 tủ đang mất kết nối.');
+    expect(shownText(events)).toBe('Có 491 tủ đang mất kết nối.');
+  });
+
+  it('small talk streams at once', async () => {
+    const llm = scripted([{ text: 'Chào bạn! Tôi là Jarvis.' }]);
+    const events: AgentEvent[] = [];
+    await runTurn({ llm, tools: [echo], ctx, system: 's', maxTokens: 100, onEvent: (e) => events.push(e), messages: [{ role: 'user', content: 'xin chào' }] });
+    expect(events.filter((e) => e.type === 'text').length).toBeGreaterThan(1);
+  });
+});
+
+describe('token use', () => {
+  it('when the router already fetched the data, the first answer is asked without the tool list', async () => {
+    const llm = new FakeLlm();
+    await runTurn({ llm, tools: [echo], ctx, system: 's', maxTokens: 100, messages: [{ role: 'user', content: 'Tình hình hệ thống sao rồi?' }] });
+    expect(llm.requests[0]!.tools).toEqual([]);
+  });
+  it('without a router match the tools are offered as before', async () => {
+    const llm = new FakeLlm();
+    await runTurn({ llm, tools: [echo], ctx, system: 's', maxTokens: 100, useRouter: false, messages: [{ role: 'user', content: 'Tình hình hệ thống sao rồi?' }] });
+    expect(llm.requests[0]!.tools?.map((t) => t.name)).toEqual(['get_system_overview']);
+  });
+});
+
+describe('a tool call the provider refused because no tool was offered (user report 2026-11-20)', () => {
+  it('the round is asked again with the tools, and the answer comes from that', async () => {
+    const requests: { tools: unknown[] }[] = [];
+    const llm = {
+      name: 'scripted', model: 'm',
+      async *stream(r: { tools: unknown[] }) {
+        requests.push(r);
+        if (requests.length === 1) {
+          yield { type: 'error' as const, message: 'groq trả lỗi 400: Tool choice is none, but model called a tool' };
+          return;
+        }
+        yield { type: 'text' as const, text: 'Hệ thống có 10 tủ, đây là câu trả lời sau khi được đưa công cụ.' };
+        yield { type: 'done' as const, stopReason: 'end_turn' as const };
+      },
+    };
+    const events: AgentEvent[] = [];
+    const r = await runTurn({ llm, tools: [echo], ctx, system: 's', maxTokens: 100, onEvent: (e) => events.push(e), messages: [{ role: 'user', content: 'Tình hình hệ thống sao rồi?' }] });
+    expect(r.stopReason).toBe('end_turn');
+    expect(r.text).toMatch(/^Hệ thống có 10 tủ/);
+    expect(requests[0]!.tools).toEqual([]);
+    expect(requests[1]!.tools).toHaveLength(1);
+    expect(events.some((e) => e.type === 'reset')).toBe(false);
+  });
+  it('any other error is still reported', () => {
+    expect(TOOL_NOT_OFFERED.test('groq báo đã dùng hết giới hạn miễn phí lúc này')).toBe(false);
+  });
+});
+
+describe('a bare "không biết" twice although a tool answered (2026-11-20)', () => {
+  it('ends in the fixed honest sentence, never "Không biết." alone, and nothing else reached the screen', async () => {
+    const llm = {
+      name: 'scripted', model: 'm', requests: [] as unknown[],
+      async *stream(r: unknown) {
+        (this.requests as unknown[]).push(r);
+        yield { type: 'text' as const, text: 'Không biết.' };
+        yield { type: 'done' as const, stopReason: 'end_turn' as const };
+      },
+    };
+    const events: AgentEvent[] = [];
+    const r = await runTurn({ llm, tools: [echo], ctx, system: 's', maxTokens: 100, onEvent: (e) => events.push(e), messages: [{ role: 'user', content: 'Tình hình hệ thống sao rồi?' }] });
+    expect(llm.requests).toHaveLength(2);
+    expect(r.text).toBe(DATA_FAIL_ANSWER);
+    expect(events.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text)).toEqual([DATA_FAIL_ANSWER]);
+  });
+  it('"bạn có thể liệt kê các tủ như nào" is answered in code', async () => {
+    const llm = new FakeLlm();
+    const r = await runTurn({ llm, tools: [echo], ctx, system: 's', maxTokens: 100, messages: [{ role: 'user', content: 'bạn có thể liệt kê các tủ như nào' }] });
+    expect(r.text).toMatch(/^Tôi liệt kê được các tủ theo trạng thái/);
+    expect(llm.requests).toHaveLength(0);
   });
 });

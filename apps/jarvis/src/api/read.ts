@@ -56,6 +56,11 @@ export class CityLightReads {
     return this.api.get<MapStats>('map/stats', undefined, o);
   }
 
+  /** Every cabinet in the user's scope with its state (the map's list; same rights as map/stats). */
+  mapCabinets(o?: RequestOptions) {
+    return this.api.get<CabinetSummary[]>('map/cabinets', undefined, o);
+  }
+
   /** Name, code or address; the API needs at least 2 characters and returns at most 10. */
   async search(q: string, o?: RequestOptions) {
     const t = q.trim();

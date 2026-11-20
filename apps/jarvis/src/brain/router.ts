@@ -56,7 +56,9 @@ export function isSwitchOrder(raw: string): boolean {
   if (/\b(xac nhan|dong y|huy)\b/.test(f) && !/\b(bat|tat)\b/.test(f)) return false;
   return !QUESTION.test(f);
 }
-export const SWITCH_ANSWER = 'Tôi chưa được phép bật hay tắt đèn. Bạn thao tác trên web CityLight giúp tôi nhé.';
+// An order the parser in guard/orders.ts did not understand reaches the agent: say how to give it, never "cannot"
+// (Jarvis switches cabinets since milestone 4; when control is off the console says why, from guard/policy.ts)
+export const SWITCH_ANSWER = 'Tôi chưa hiểu lệnh này. Bạn nói rõ tủ và việc cần làm, ví dụ "bật đèn tủ TL01.0016" hoặc "tắt nhánh 2 tủ đó", tôi sẽ hỏi lại để bạn xác nhận.';
 
 const CONTROL = /(dieu khien|bat tat|bat den|tat den|bat tu|tat tu|bat nhanh|tat nhanh|gui lenh|ra lenh)/;
 
@@ -72,8 +74,9 @@ export function isControlCapabilityQuestion(raw: string): boolean {
   const capability = /(co the|duoc (khong|chua|ko)|tinh nang|chuc nang|lam duoc|ho tro|\bbiet\b)/.test(f) || /\bco\b.*\b(chua|khong|ko)\b/.test(f);
   return aboutJarvis && capability;
 }
+/** only when the agent runs without the console (scripts): the console answers from the guard state */
 export const CONTROL_CAPABILITY_ANSWER =
-  'Chưa. Hiện tôi chỉ xem được dữ liệu: tình trạng tủ, cảnh báo, lịch bật tắt và sự cố. Muốn bật hay tắt đèn, bạn thao tác trên web CityLight giúp tôi nhé.';
+  'Tôi bật, tắt, trả về lịch, bật xung hoặc gửi lệnh tự kiểm tra cho từng tủ được phép, và chỉ gửi sau khi bạn xác nhận.';
 
 /** "tui là ai", "biết tôi là ai không": the answer is the signed-in account, never "tôi không biết" */
 export const isWhoAmI = (raw: string) => /\b(tui|toi|minh|tao)\s+la\s+ai\b|\bbiet\s+(tui|toi|minh)\s+(la ai|khong|ko)\b/.test(fold(raw));
@@ -84,6 +87,39 @@ const SEVERITY: [RegExp, string][] = [[/nghiem trong/, 'critical'], [/quan trong
 function streetQuery(raw: string): string | null {
   const m = /(?:đường|phố|duong|pho)\s+([^?.!,;]{2,60})/i.exec(raw);
   return m ? m[1]!.replace(/\s+(không|nhé|nha|với|đi|giúp tôi)\s*$/i, '').trim() || null : null;
+}
+
+/** "bạn có thể liệt kê các tủ như nào": asks HOW, not for a list (2026-11-20: the model listed the cabinets of the question before) */
+const LIST_HOW = /(nhu nao|the nao|cach nao|bang cach|lam sao|ra sao|nhung gi|kieu gi)/;
+export function isListHowQuestion(raw: string): boolean {
+  const m = wordsToDigits(fold(markCabinetWord(raw)));
+  return /(liet ke|danh sach)/.test(m) && /\btucab\b/.test(m) && LIST_HOW.test(m) && !/\d/.test(m) && !STATE_WORDS.some(([re]) => re.test(m));
+}
+export const LIST_HOW_ANSWER =
+  'Tôi liệt kê được các tủ theo trạng thái: bình thường, đang sáng, đang tắt, có lỗi hoặc mất kết nối, trên toàn hệ thống hoặc theo quận, phường. Bạn nói ví dụ "liệt kê 10 tủ mất kết nối ở quận 1".';
+
+const STATE_WORDS: [RegExp, string][] = [
+  [/binh thuong|on dinh|hoat dong (tot|on)|khong (co )?loi/, 'binh_thuong'],
+  [/mat ket noi|offline|mat song|mat lien lac/, 'mat_ket_noi'],
+  [/dang (bi )?loi|co loi|bi loi|\bhong\b/, 'co_loi'],
+  [/dang sang|dang bat|bat den|den sang/, 'dang_sang'],
+  [/dang tat|tat den/, 'dang_tat'],
+];
+
+/**
+ * "liệt kê 10 mã tủ đang hoạt động bình thường", "tủ nào mất kết nối": a list of cabinets over the whole system,
+ * optionally by state. The model used to ask which area first (user report 2026-11-20). Counts ("bao nhiêu") stay
+ * with the overview; a named area is left to the model, which passes it.
+ */
+function cabinetList(m: string): { state?: string; limit?: number } | null {
+  if (/bao nhieu|\b(quan|phuong|khu vuc|huyen)\b/.test(m) || LIST_HOW.test(m)) return null;
+  const state = STATE_WORDS.find(([re]) => re.test(m))?.[1];
+  const strong = /(liet ke|danh sach)/.test(m) && /\btucab\b/.test(m);
+  const weak = /(\btucab nao\b|nhung tucab|cac tucab|ma tucab|\d+ (ma )?tucab)/.test(m);
+  if (!strong && !(weak && state)) return null;
+  const n = /\b(\d+) (ma )?tucab\b/.exec(m)?.[1];
+  const limit = n ? Math.min(30, Math.max(1, Number(n))) : undefined;
+  return { ...(state ? { state } : {}), ...(limit ? { limit } : {}) };
 }
 
 export function route(raw: string, focus: Focus = {}): Routed | null {
@@ -114,7 +150,12 @@ export function route(raw: string, focus: Focus = {}): Routed | null {
     const street = streetQuery(raw);
     if (street && /\btucab\b|\btim\b/.test(wordsToDigits(fold(markCabinetWord(raw))))) return { name: 'find_cabinets', input: { query: street } };
   }
-  if (/(nhung|cac|danh sach|bao nhieu|may) (khu vuc|quan|phuong)\b|\b(khu vuc|quan|phuong) nao\b/.test(f) && !cab) return { name: 'list_areas', input: {} };
+  if (!cab) {
+    const listed = cabinetList(wordsToDigits(fold(markCabinetWord(raw))));
+    if (listed) return { name: 'get_area_cabinets', input: listed };
+  }
+  // "khu vực nào cũng được" answers a question, it does not ask for the list of areas
+  if (/(nhung|cac|danh sach|bao nhieu|may) (khu vuc|quan|phuong)\b|\b(khu vuc|quan|phuong) nao\b/.test(f) && !/\bnao cung\b/.test(f) && !cab) return { name: 'list_areas', input: {} };
   if (/(he thong|tinh hinh|tong quan|bao cao|toan bo|tat ca cac tu)/.test(f) && !cab) return { name: 'get_system_overview', input: {} };
   return null;
 }

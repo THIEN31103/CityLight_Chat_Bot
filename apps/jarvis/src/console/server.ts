@@ -17,7 +17,7 @@ import type { Config } from '../config';
 import { sanitizeText } from '../sanitize/llm';
 import { bootstrapAdmin, canEditSettings, canGrant, canViewChatsOf, getAccess, listAccess, rememberUser, rights, setAccess, type Actor, type Flag } from '../store/access';
 import { addTokenUsage, tokensToday, type Db } from '../store/db';
-import { addMessage, createConversation, deleteOwn, getConversation, getMessages, listAll, listOwn, tokenReport } from '../store/history';
+import { addMessage, createConversation, deleteAllOwn, deleteOwn, getConversation, getMessages, listAll, listOwn, renameOwn, TITLE_MAX, tokenReport } from '../store/history';
 import { SettingsError, effectiveTokenCap, getSettings, updateSettings } from '../store/settings';
 import { READ_TOOLS, SPARE_TOOLS } from '../tools/read';
 import type { ToolDef } from '../tools/registry';
@@ -28,7 +28,7 @@ import { ConsoleSession, RateLimiter, SessionStore } from './session';
 import { FILLER, Speaker } from './speaker';
 import { isControlCapabilityQuestion } from '../brain/router';
 import { classifyReply } from '../guard/confirm-words';
-import { parseOrder } from '../guard/orders';
+import { isAllowedCabinetsQuestion, parseOrder } from '../guard/orders';
 import { sendAndFollow, type PendingAction, type Via } from '../guard/pending';
 import { CommandRate, controlUnavailable, type GuardState } from '../guard/policy';
 import { outcomeText, propose, STATUS_VI } from '../guard/propose';
@@ -317,7 +317,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       const result = await runTurn({
         llm, tools, routerTools: deps.tools ? undefined : ROUTER_TOOLS, maxTokens: cfg.llm.maxTokens, signal: ac.signal,
         ctx: { reads: s.reads, user, focus: s.ctx.focus, userText: text },
-        system: systemPrompt(user, s.ctx.focus, new Date(), { voice: !!speaker }),
+        system: systemPrompt(user, s.ctx.focus, new Date(), { voice: !!speaker, allowlist: cfg.cabinetAllowlist }),
         messages: s.ctx.messagesFor(text, cfg.contextMessages),
         onEvent: (ev) => {
           if (ev.type === 'reset') {
@@ -403,6 +403,14 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       if (gone) send('pending_closed', { id: gone.id, state: 'expired' });
       return fixedTurn(s, user, text, gone ? `Lệnh "${gone.summary}" đã hết hạn 60 giây, bạn ra lệnh lại nếu vẫn cần.` : 'Không có lệnh nào đang chờ xác nhận.', send, speaker, extra);
     }
+    if (isAllowedCabinetsQuestion(text)) {
+      const g = guardState();
+      const off = controlUnavailable(g, user.role);
+      const list = g.allowlist.length > 15 ? `${g.allowlist.slice(0, 15).join(', ')} và ${g.allowlist.length - 15} tủ khác` : g.allowlist.join(', ');
+      return fixedTurn(s, user, text, off
+        ? `Hiện chưa điều khiển được tủ nào qua Jarvis: ${off}`
+        : `Các tủ được phép điều khiển qua Jarvis: ${list}. Bạn nói ví dụ "bật đèn tủ ${g.allowlist[0]}" là tôi hỏi lại để bạn xác nhận.`, send, speaker, extra);
+    }
     if (isControlCapabilityQuestion(text)) {
       const off = controlUnavailable(guardState(), user.role);
       return fixedTurn(s, user, text, off
@@ -429,7 +437,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     if (llm.name === 'fake' && text.startsWith('[[fake:')) return false;
     if (classifyReply(text) && text.trim().split(/\s+/).length <= 4) return true;
     if (s.pending.active() && text.trim().split(/\s+/).length <= 2) return true;
-    return isControlCapabilityQuestion(text) || !!parseOrder(text, s.ctx.focus);
+    return isControlCapabilityQuestion(text) || isAllowedCabinetsQuestion(text) || !!parseOrder(text, s.ctx.focus);
   }
 
   /** A turn whose answer is a fixed sentence: same history, audit and events as a model turn, no tokens. */
@@ -660,6 +668,26 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     if (key === 'GET /api/conversations') {
       const { user } = requireUser(s);
       return sendJson(res, 200, listOwn(db, user.id));
+    }
+    if (key === 'DELETE /api/conversations') {
+      // "xóa tất cả đoạn chat": only the user's own; the live conversation starts over
+      const { user } = requireUser(s);
+      if (s.busy) throw new HttpError(409, 'busy', 'Jarvis đang trả lời, đợi xong rồi xóa');
+      const count = deleteAllOwn(db, user.id);
+      s.newConversation();
+      audit.write({ kind: 'delete_all_chats', userId: user.id, count });
+      return sendJson(res, 200, { deleted: count });
+    }
+    if (method === 'PATCH' && url.pathname.startsWith('/api/conversations/')) {
+      const { user } = requireUser(s);
+      const id = idOf('/api/conversations/');
+      const body = (await readJson(req)) as { title?: unknown };
+      const title = typeof body?.title === 'string' ? body.title.replace(/\s+/g, ' ').trim() : '';
+      if (!title) throw new HttpError(400, 'bad_title', 'Tên đoạn chat không được để trống');
+      if (title.length > TITLE_MAX) throw new HttpError(400, 'bad_title', `Tên đoạn chat tối đa ${TITLE_MAX} ký tự`);
+      if (!renameOwn(db, user.id, id, title)) throw new HttpError(404, 'not_found', 'Không tìm thấy cuộc chat của bạn');
+      audit.write({ kind: 'rename_chat', userId: user.id, conversationId: id });
+      return sendJson(res, 200, { id, title: getConversation(db, id)?.title ?? title });
     }
     if (method === 'GET' && url.pathname.startsWith('/api/conversations/')) return sendJson(res, 200, openConversation(s, idOf('/api/conversations/')));
     if (method === 'DELETE' && url.pathname.startsWith('/api/conversations/')) {

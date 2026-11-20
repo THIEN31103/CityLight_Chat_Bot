@@ -90,6 +90,18 @@ export function deleteOwn(db: Db, userId: string, id: string): boolean {
   return Number(db.prepare('DELETE FROM conversations WHERE id = ? AND user_id = ?').run(id, userId).changes) === 1;
 }
 
+/** Deletes every conversation of the user (their messages go with them); returns how many. */
+export function deleteAllOwn(db: Db, userId: string): number {
+  return Number(db.prepare('DELETE FROM conversations WHERE user_id = ?').run(userId).changes);
+}
+
+export const TITLE_MAX = 80;
+
+/** Renames one of the user's own conversations; false when it is not theirs. The title is sanitized like messages. */
+export function renameOwn(db: Db, userId: string, id: string, title: string): boolean {
+  return Number(db.prepare('UPDATE conversations SET title = ? WHERE id = ? AND user_id = ?').run(sanitizeText(title).slice(0, TITLE_MAX), id, userId).changes) === 1;
+}
+
 /** Tokens per user per Vietnam day, newest day first. */
 export function tokenReport(db: Db, days: number) {
   return db.prepare(

@@ -138,7 +138,9 @@ describe('console', () => {
     const done = events.find((e) => e.event === 'done')!;
     expect(done.data.text).toBe('Tủ DM0010 đang mất kết nối PLC.');
     expect(done.data.tools).toEqual(['get_cabinet']);
-    expect(events.filter((e) => e.event === 'text')).toHaveLength(3);
+    // a short answer is held until code accepts it, then sent in one piece (no draft on screen)
+    expect(events.filter((e) => e.event === 'text').map((e) => e.data.text).join('')).toBe('Tủ DM0010 đang mất kết nối PLC.');
+    expect(events.some((e) => e.event === 'reset')).toBe(false);
     expect(events.some((e) => e.event === 'status' && e.data.state === 'tool')).toBe(true);
 
     // what the model received for the tool result
@@ -203,5 +205,36 @@ describe('console', () => {
     const own = ((await op.call('GET', '/api/conversations')).data as { id: string }[])[0]!;
     expect((await mgr.call('DELETE', `/api/conversations/${own.id}`)).status).toBe(404);
     expect((await op.call('DELETE', `/api/conversations/${own.id}`)).status).toBe(200);
+  });
+
+  it('renaming a conversation: own only, not empty, at most 80 characters', async () => {
+    await op.call('POST', '/api/chat/new');
+    expect((await op.chat('xin chào')).status).toBe(200);
+    const own = ((await op.call('GET', '/api/conversations')).data as { id: string; title: string }[])[0]!;
+    expect((await mgr.call('PATCH', `/api/conversations/${own.id}`, { title: 'của người khác' })).status).toBe(404);
+    expect((await op.call('PATCH', `/api/conversations/${own.id}`, { title: '   ' })).status).toBe(400);
+    expect((await op.call('PATCH', `/api/conversations/${own.id}`, { title: 'x'.repeat(81) })).status).toBe(400);
+    const r = await op.call('PATCH', `/api/conversations/${own.id}`, { title: '  Kiểm tra   quận 1 ' });
+    expect(r.status).toBe(200);
+    expect(r.data).toEqual({ id: own.id, title: 'Kiểm tra quận 1' });
+    const after = ((await op.call('GET', '/api/conversations')).data as { id: string; title: string }[]).find((c) => c.id === own.id);
+    expect(after?.title).toBe('Kiểm tra quận 1');
+  });
+
+  it("deleting all conversations: every one of the user, nobody else's, and chatting goes on in a new one", async () => {
+    await op.call('POST', '/api/chat/new');
+    await op.chat('chào lần hai');
+    await mgr.call('POST', '/api/chat/new');
+    await mgr.chat('chào từ quản lý');
+    const mine = ((await op.call('GET', '/api/conversations')).data as unknown[]).length;
+    const theirs = ((await mgr.call('GET', '/api/conversations')).data as unknown[]).length;
+    expect(mine).toBeGreaterThanOrEqual(2);
+    const r = await op.call('DELETE', '/api/conversations');
+    expect(r.status).toBe(200);
+    expect(r.data).toEqual({ deleted: mine });
+    expect((await op.call('GET', '/api/conversations')).data).toEqual([]);
+    expect(((await mgr.call('GET', '/api/conversations')).data as unknown[]).length).toBe(theirs);
+    expect((await op.chat('còn đó không')).status).toBe(200);
+    expect(((await op.call('GET', '/api/conversations')).data as unknown[]).length).toBe(1);
   });
 });

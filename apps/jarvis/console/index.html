@@ -50,12 +50,14 @@
         <button id="new-chat" class="primary block">+ Cuộc chat mới</button>
         <h3>Cuộc chat của bạn</h3>
         <ul id="conversations" class="conv-list"></ul>
+        <button id="delete-all" type="button" class="ghost small-btn danger block delete-all" hidden title="Xóa hẳn mọi đoạn chat của bạn">🗑 Xóa tất cả đoạn chat</button>
       </aside>
       <div class="chat">
         <div class="chat-tools">
           <button id="history-btn" type="button" class="ghost small-btn history-btn" aria-expanded="false" aria-controls="conversations">☰ Lịch sử</button>
           <span id="chat-title" class="chat-title">Cuộc chat mới</span>
           <button id="new-chat-top" type="button" class="ghost small-btn">+ Chat mới</button>
+          <button id="rename-chat" type="button" class="ghost small-btn" hidden title="Đặt tên khác cho đoạn chat này">✎ Đổi tên</button>
           <button id="delete-chat" type="button" class="ghost small-btn danger" hidden title="Xóa hẳn đoạn chat này khỏi lịch sử">🗑 Xóa đoạn chat</button>
         </div>
         <div id="messages" class="messages" aria-live="polite">

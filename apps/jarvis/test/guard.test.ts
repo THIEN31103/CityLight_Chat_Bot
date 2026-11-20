@@ -66,7 +66,7 @@ describe('policy (spec 6.1, 6.3, 6.7, 6.8)', () => {
   });
   it('allowlist: in / out', () => {
     expect(cabinetRefused(g, 'tl01.0009')).toBeNull();
-    expect(cabinetRefused(g, 'TL01.0016')).toMatch(/không nằm trong danh sách/);
+    expect(cabinetRefused(g, 'TL01.0016')).toMatch(/không nằm trong danh sách được phép điều khiển qua Jarvis \(.+\)\. Danh sách này do quản trị viên đặt; tủ khác bạn điều khiển trên web CityLight\.$/);
   });
   it(`at most ${MAX_COMMANDS_PER_MIN} commands per user and minute`, () => {
     const r = new CommandRate();
@@ -169,4 +169,15 @@ describe('following a sent command', () => {
   it('switching waits for "confirmed": "acked" alone runs into the time limit', async () => {
     expect((await sendAndFollow(api('acked'), p('MANUAL_ALL'), { pollMs: 1, followMs: 30 })).status).toBe('timeout');
   });
+});
+
+import { isAllowedCabinetsQuestion } from '../src/guard/orders';
+
+describe('"which cabinets can I control" is answered from the allowlist', () => {
+  it.each(['cho tui một mã tủ để điều khiển đi', 'tủ nào điều khiển được?', 'bạn bật tắt được những tủ nào', 'danh sách tủ được phép điều khiển', 'mấy tủ ra lệnh được'])(
+    'yes: %s', (q) => expect(isAllowedCabinetsQuestion(q)).toBe(true),
+  );
+  it.each(['Bật đèn tủ TL01.0016', 'tủ nào đang mất kết nối', 'tủ nào đang bật đèn?', 'những tủ nào tắt rồi', 'bạn có thể điều khiển đèn chưa', 'Tủ TL01.0009 đã bật đèn chưa?', 'lịch bật tắt tủ đó'])(
+    'no: %s', (q) => expect(isAllowedCabinetsQuestion(q)).toBe(false),
+  );
 });

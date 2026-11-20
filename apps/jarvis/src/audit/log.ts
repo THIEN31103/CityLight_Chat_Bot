@@ -9,7 +9,9 @@ import { vnDay } from '../store/db';
 export type AuditKind =
   | 'login' | 'login_failed' | 'logout' | 'access_denied' | 'bootstrap_admin'
   | 'user_text' | 'assistant_text' | 'tool_call'
-  | 'access_change' | 'settings_change' | 'view_chat' | 'delete_chat' | 'token_cap_hit'
+  | 'access_change' | 'settings_change' | 'view_chat' | 'delete_chat'
+  | 'delete_all_chats'
+  | 'rename_chat' | 'token_cap_hit'
   // milestone 4: every pending action, who confirmed it how, and what the command did
   | 'pending_created' | 'pending_confirmed' | 'pending_cancelled' | 'pending_refused' | 'action_refused' | 'command_result';
 

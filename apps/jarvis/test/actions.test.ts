@@ -186,3 +186,11 @@ describe('the per-minute question limit', () => {
     }
   });
 });
+
+describe('which cabinets can be controlled', () => {
+  it('answers with the allowlist, in code, and sends nothing', async () => {
+    const r = await op.say('cho tui một mã tủ để điều khiển đi');
+    expect(r.text).toMatch(/^Các tủ được phép điều khiển qua Jarvis: DM0001, DM0002/);
+    expect(r.pending).toBeUndefined();
+  });
+});

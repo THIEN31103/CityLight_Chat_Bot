@@ -50,7 +50,10 @@ export function controlUnavailable(g: GuardState, role: RoleKey): string | null 
 
 /** Why this cabinet cannot be controlled through Jarvis; null = allowed. */
 export function cabinetRefused(g: GuardState, code: string): string | null {
-  return g.allowlist.includes(code.toUpperCase()) ? null : `Tủ ${code} không nằm trong danh sách được phép điều khiển qua Jarvis.`;
+  if (g.allowlist.includes(code.toUpperCase())) return null;
+  // the user asked next "tủ nào mới được điều khiển" and "tại sao" (2026-11-20): say both at once
+  const list = g.allowlist.length > 5 ? `${g.allowlist.slice(0, 5).join(', ')}…` : g.allowlist.join(', ');
+  return `Tủ ${code} không nằm trong danh sách được phép điều khiển qua Jarvis (${list}). Danh sách này do quản trị viên đặt; tủ khác bạn điều khiển trên web CityLight.`;
 }
 
 /** Sliding one-minute window of commands sent per user. */

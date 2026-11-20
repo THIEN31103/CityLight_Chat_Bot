@@ -49,3 +49,58 @@ describe('viText', () => {
     ['Lỗi PLC_KEY', 'Lỗi PLC_KEY'],
   ])('%s -> %s', (a, b) => expect(viText(a)).toBe(b));
 });
+
+describe('get_area_cabinets', () => {
+  const cab = (i: number, status: string) => ({ id: `c${i}`, code: `TL01.${String(i).padStart(4, '0')}`, name: `Tủ ${i}`, status });
+  const all = [cab(1, 'offline'), cab(2, 'on'), cab(3, 'fault'), cab(4, 'off'), cab(5, 'on'), cab(6, 'dimming')];
+  const tool = () => READ_TOOLS.find((t) => t.name === 'get_area_cabinets')!;
+  const ctx = () => ({ reads: { mapCabinets: async () => all }, user: {}, focus: {} }) as unknown as ToolContext;
+
+  it('with no area: the whole system, from the map list, without asking which area', async () => {
+    const out = (await tool().run(ctx(), {})) as Record<string, any>;
+    expect(out.khu_vuc).toBe('toàn hệ thống');
+    expect(out.tong_so_tu).toBe(6);
+    expect(out.danh_sach[0]).toEqual({ code: 'TL01.0003', name: 'Tủ 3', status: 'có lỗi' });
+  });
+  it('"bình thường" = connected and without fault, and the limit holds', async () => {
+    const out = (await tool().run(ctx(), { state: 'binh_thuong', limit: 3 })) as Record<string, any>;
+    expect(out.so_tu_khop).toBe(4);
+    expect(out.danh_sach.map((c: { code: string }) => c.code)).toEqual(['TL01.0002', 'TL01.0004', 'TL01.0005']);
+  });
+  it('the model may leave area empty: area is optional in the schema', () => {
+    expect((tool().schema as { required: string[] }).required).toEqual([]);
+    expect(tool().input.safeParse({}).success).toBe(true);
+  });
+  it('"quận 1" is the district, not "Phường 1" nor "Quận 10"', async () => {
+    const areas = [
+      { id: 'd1', name: 'Quận 1', kind: 'district', parentId: null }, { id: 'd10', name: 'Quận 10', kind: 'district', parentId: null },
+      { id: 'w1', name: 'Phường 1', kind: 'ward', parentId: 'd10' }, { id: 'w2', name: 'Phường Bến Nghé', kind: 'ward', parentId: 'd1' },
+    ];
+    const asked: string[] = [];
+    const reads = { areaTree: async () => ({ areas, unassigned: 0 }), areaCabinets: async (id: string) => (asked.push(id), [cab(1, 'offline')]) };
+    const run = (area: string) => tool().run({ reads, user: {}, focus: {} } as unknown as ToolContext, { area, state: 'mat_ket_noi' }) as Promise<Record<string, any>>;
+    expect((await run('quận 1')).khu_vuc).toBe('Quận 1');
+    expect(asked).toEqual(['w2']);
+    expect((await run('phường 1')).khu_vuc).toBe('Phường 1');
+  });
+  it('a state with no cabinet says so, with the counts (no "Không biết.")', async () => {
+    const out = (await tool().run(ctx(), { state: 'binh_thuong' })) as Record<string, any>;
+    expect(out.ghi_chu).toBeUndefined();
+    const none = { reads: { mapCabinets: async () => [cab(1, 'offline'), cab(2, 'offline')] }, user: {}, focus: {} } as unknown as ToolContext;
+    const empty = (await tool().run(none, { state: 'co_loi' })) as Record<string, any>;
+    expect(empty.so_tu_khop).toBe(0);
+    expect(empty.ghi_chu).toBe('Không có tủ nào có lỗi. Hiện có: 2 tủ mất kết nối. Nói cả hai ý này.');
+    expect(empty.theo_trang_thai).toEqual({ 'mất kết nối': 2 });
+  });
+});
+
+describe('system prompt: which cabinets Jarvis may switch', () => {
+  it('names the allowlist and says the others go through the web', async () => {
+    const { systemPrompt } = await import('../src/brain/system-prompt');
+    const user = { fullName: 'U', role: 'admin', scopeAll: true } as never;
+    const p = systemPrompt(user, {}, new Date(), { allowlist: ['TL01.0009', 'TL01.0016'] });
+    expect(p).toContain('Jarvis may switch ONLY these cabinets: TL01.0009, TL01.0016.');
+    expect(p).toContain('CityLight web');
+    expect(systemPrompt(user, {}, new Date())).not.toContain('switch ONLY');
+  });
+});

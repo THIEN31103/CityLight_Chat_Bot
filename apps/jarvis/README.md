@@ -2,6 +2,8 @@
 
 Trợ lý tiếng Việt (chữ, sau này cả giọng nói) cho phòng điều hành. App riêng `apps/jarvis`, **không sửa** `apps/api`, `apps/workers`, `apps/web`, `packages/db`, `infra/`; chỉ nói chuyện với server qua `/api/v1` (và socket.io từ milestone 2) bằng phiên đăng nhập của chính người điều hành.
 
+Hướng dẫn cho người dùng (Jarvis làm được gì, cách hỏi, cách ra lệnh): [KHA_NANG.md](KHA_NANG.md).
+
 Đặc tả: `E:\CITY_LIGHT\chat_box\PROMPT_JARVIS_GOP.md`. Tài liệu này ghi những gì **đã đối chiếu với code** (`main` 018b276) và chỗ lệch với đặc tả. Code thắng.
 
 ## Trạng thái
@@ -343,6 +345,24 @@ Sidecar chỉ đọc: chạy như cũ nhưng `STT_MODEL=none` (không cần `STT
 - Nghe giọng `whisper-large-v3-turbo`: 0,4 – 2,7 s mỗi câu, nghe "Mã E201 là gì?" đúng từng chữ; mạng chập chờn 2 / 8 lần lúc đầu → thử lại 1 lần khi lỗi mạng.
 - Bộ nhớ khi chạy: Piper ~176 MB, Jarvis + API + worker + giả lập (node) ~250 MB, Docker trong WSL ~350 MB. Trước đây riêng Ollama ~3,5 GB và Whisper trên GPU ~1 GB.
 - Sửa theo model mới: tên trường tiếng Việt trong kết quả công cụ (model chép chữ "offline", không hiểu "districts"), chỉ giữ câu của lượt cuối (một lần bị lặp câu), "Tôi không biết." trống trong khi công cụ có dữ liệu → hỏi lại model một lần (`DATA_NUDGE`).
+
+## Sửa 2026-11-20: câu trả lời bị "đè", luật lẫn nhau
+
+Bạn báo: AI trả lời, rồi một luật trong code xen vào, câu khác đè lên câu vừa hiện ("cho tui một mã tủ để điều khiển đi", 17/11 15:11).
+
+| # | Nguyên nhân | Sửa |
+|---|---|---|
+| D19 | Chữ của model hiện ra ngay, code chỉ quyết định giữ / bỏ khi model viết xong (luật "câu hỏi dữ liệu mà chưa tra", "không biết" cụt, câu viết trước khi gọi công cụ) | `agent.ts`: câu hỏi cần dữ liệu mà chưa có dữ liệu thì **không hiện** gì của model; có dữ liệu rồi thì giữ 40 ký tự đầu (`SHOW_AFTER`) rồi mới chạy chữ; chào hỏi chạy chữ ngay. Bản nháp bị bỏ không bao giờ lên màn hình |
+| D20 | Hướng dẫn model còn câu cũ "chỉ đọc được dữ liệu, muốn bật / tắt thì làm trên web" — trái với code (milestone 4) | Hướng dẫn mới: bật / tắt do code Jarvis lo và luôn hỏi xác nhận; model chỉ chỉ cách ra lệnh, không bao giờ nói đã bật hay không bật được. Câu cố định dự phòng sửa theo |
+| D21 | "Tủ nào điều khiển được?" không có công cụ nào trả lời | `isAllowedCabinetsQuestion` → câu cố định liệt kê danh sách tủ được phép (hoặc lý do đang tắt điều khiển) |
+| D22 | Gói miễn phí Groq 8.000 token / phút / model, mỗi câu ~2.000 token, 65 % là mô tả 8 công cụ | Router đã tra dữ liệu thì lượt đầu **không gửi danh sách công cụ**: còn ~900 – 1.300 token / câu, trả lời 0,8 – 1,2 s |
+| D23 | Sau D22, model muốn gọi công cụ trong lượt không có danh sách công cụ → Groq từ chối cả câu: "Tool choice is none, but model called a tool" (người dùng báo, "khu vực nào cũng được đi") | Gặp lỗi đó thì hỏi lại đúng lượt ấy kèm công cụ (`TOOL_NOT_OFFERED`); lỗi khác vẫn báo như cũ |
+| D24 | "Liệt kê 10 tủ đang hoạt động bình thường" → model hỏi lại khu vực vì `get_area_cabinets` bắt buộc khu vực | `get_area_cabinets`: khu vực không bắt buộc (bỏ trống = toàn hệ thống, lấy từ `map/cabinets`), thêm lọc `state` (binh_thuong = có kết nối, không lỗi; dang_sang; dang_tat; co_loi; mat_ket_noi) và `limit`. Router tự tra cho câu "liệt kê / danh sách / tủ nào / N tủ" + trạng thái, trừ câu "bao nhiêu" và câu có tên khu vực. "khu vực nào cũng được" không còn bị hiểu là hỏi danh sách khu vực |
+| D25 | "quận 1" khớp cả Quận 1, Quận 10, Phường 1 → hỏi lại | Người dùng nói "quận / huyện" hay "phường / xã" thì chọn đúng loại khu vực |
+| D26 | "Tại sao tủ TL12.0006 không điều khiển được" → model đọc `capabilities` của tủ và nói tủ đó "thực tế cũng điều khiển được" | Bỏ `capabilities` khỏi kết quả `get_cabinet`; hướng dẫn model có danh sách tủ được phép (do quản trị đặt, tủ khác điều khiển trên web). Câu từ chối của code nêu luôn danh sách và lý do |
+| D27 | "10 tủ đang bị lỗi" khi không có tủ lỗi → "Không biết." (cả sau DATA_NUDGE) | Lọc trạng thái không ra tủ nào thì kết quả ghi rõ "Không có tủ nào có lỗi. Hiện có: …"; "không biết" trần lần hai → câu cố định `DATA_FAIL_ANSWER` |
+| D28 | "TL07.0013 mất kết nối từ khi nào" → "Không biết thời điểm" (tủ chưa từng kết nối, lastSeen null); model viết chữ "online" | `lastSeen` null → "chưa từng gửi dữ liệu lên hệ thống"; khóa trạng thái đổi sang tiếng Việt (`ket_noi`, `plc`, `dong_ho_dien`, `cua_tu`) |
+| D29 | "Bạn có thể liệt kê các tủ như nào" → model liệt kê lại tủ của câu trước | `isListHowQuestion` → câu cố định nói cách hỏi; router không tra danh sách cho câu hỏi "như nào / thế nào" |
 
 ## Còn thiếu (cần máy / quyết định)
 

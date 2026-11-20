@@ -2,12 +2,14 @@
 // cancelled (stop button, barge-in later, console closed). Read tools only in milestone 2; action tools will only
 // create a PendingAction (milestone 4), never call a command endpoint from here.
 import type { LlmMessage, LlmProvider, LlmToolCall } from './llm';
-import { CONTROL_CAPABILITY_ANSWER, isControlCapabilityQuestion, isSwitchOrder, isWhoAmI, route, SWITCH_ANSWER } from './router';
+import { CONTROL_CAPABILITY_ANSWER, isControlCapabilityQuestion, isListHowQuestion, isSwitchOrder, isWhoAmI, LIST_HOW_ANSWER, route, SWITCH_ANSWER } from './router';
 import { ROLE_LABELS } from '@citylight/shared';
 import { fold } from '../tools/names';
 import { asLlmTools, runTool, type ToolContext, type ToolDef } from '../tools/registry';
 
 export const MAX_TOOL_ROUNDS = 5;
+/** characters of an answer held back once data is in: longer than any bare "không biết" */
+export const SHOW_AFTER = 40;
 
 // Words that make a question about the lighting system (folded, no diacritics). A question without any of them —
 // greetings, "giới thiệu về bạn", "bạn làm được gì" — is answered by the model without data and never nudged.
@@ -33,6 +35,12 @@ export const TOOL_NUDGE =
   '(System reminder, do not mention it) You did not call any tool and you know nothing about the system without one. Call the right tool now, then answer from its result in Vietnamese.';
 
 /** Said instead of a second answer that still used no data: honest, and never a made-up number. */
+/** the provider's refusal when the model calls a tool in a request that offered none */
+export const TOOL_NOT_OFFERED = /tool choice is none|tool_use_failed|called a tool/i;
+
+/** a bare "không biết" twice although a tool answered (2026-11-20: "10 tủ đang bị lỗi" -> "Không biết.") */
+export const DATA_FAIL_ANSWER = 'Tôi đã tra dữ liệu nhưng chưa trả lời được câu này. Bạn hỏi lại cụ thể hơn giúp tôi, ví dụ trạng thái nào hay khu vực nào.';
+
 export const NO_DATA_ANSWER = 'Tôi chưa tra được dữ liệu cho câu này. Bạn hỏi cụ thể hơn giúp tôi, ví dụ tủ nào, khu vực nào hay mã lỗi nào.';
 
 export type AgentEvent =
@@ -80,6 +88,8 @@ export async function runTurn(t: TurnInput): Promise<TurnResult> {
   let finalText = '';
   let nudged = false;
   let redone = false;
+  /** the model asked for a tool while none was offered: the round is asked again with the tools */
+  let needTools = false;
   const lastUser = [...t.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
   const needsData = !looksLikeSmallTalk(lastUser);
   const out = (r: Omit<TurnResult, 'produced' | 'usage' | 'toolCalls' | 'nudged'>): TurnResult => ({ ...r, produced, usage, toolCalls, nudged });
@@ -108,6 +118,7 @@ export async function runTurn(t: TurnInput): Promise<TurnResult> {
   const fixed = t.useRouter === false ? null
     : isControlCapabilityQuestion(lastUser) ? CONTROL_CAPABILITY_ANSWER
     : isSwitchOrder(lastUser) ? SWITCH_ANSWER
+    : isListHowQuestion(lastUser) ? LIST_HOW_ANSWER
     : isWhoAmI(lastUser) ? `Bạn là ${t.ctx.user.fullName}, đăng nhập với vai trò ${ROLE_LABELS[t.ctx.user.role] ?? t.ctx.user.role}.`
     : null;
   if (fixed) {
@@ -118,46 +129,89 @@ export async function runTurn(t: TurnInput): Promise<TurnResult> {
 
   // plain intents: fetch first, so the model starts from real data
   const routed = t.useRouter === false || !needsData ? null : route(lastUser, t.ctx.focus);
-  if (routed && byName.has(routed.name)) await runCalls([{ id: 'route_1', name: routed.name, input: routed.input }], '');
+  const prefetched = !!routed && byName.has(routed.name);
+  if (prefetched) await runCalls([{ id: 'route_1', name: routed!.name, input: routed!.input }], '');
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
     if (t.signal?.aborted) return out({ text: finalText, stopReason: 'aborted' });
     let text = '';
     const calls: LlmToolCall[] = [];
     let stop: string | null = null;
-    // tools are offered until the last round, which must answer in words
-    const offer = round < MAX_TOOL_ROUNDS ? llmTools : [];
+    // What the user sees is only what code keeps (user report 2026-11-17: an answer appeared, then a rule threw it
+    // away and another sentence replaced it). A data question with no data yet is never shown: code always asks
+    // again. Once data is in, the first SHOW_AFTER characters wait (a bare "không biết" is shorter), then the text
+    // streams. Small talk streams at once.
+    const live = !needsData || toolCalls.length > 0;
+    let shown = '';
+    let held = '';
+    const show = (s: string) => {
+      if (!s) return;
+      shown += s;
+      t.onEvent?.({ type: 'text', text: s });
+    };
+    // tools are offered until the last round, which must answer in words. When the router already fetched the data,
+    // the first answer is written without the tool list: the 8 schemas are ~1,300 of the ~2,000 tokens of a question,
+    // and Groq's free tier allows 8,000 tokens a minute (2026-11-20). A bare "không biết" still gets DATA_NUDGE with tools.
+    const offer = round >= MAX_TOOL_ROUNDS || (prefetched && round === 0 && !needTools) ? [] : llmTools;
+    let retry = false;
     for await (const ev of t.llm.stream({ system: t.system, messages, tools: offer, maxTokens: t.maxTokens, signal: t.signal })) {
       if (ev.type === 'text') {
         text += ev.text;
-        t.onEvent?.({ type: 'text', text: ev.text });
+        if (!live) continue;
+        if (shown) show(ev.text);
+        else {
+          held += ev.text;
+          if (!needsData || held.length > SHOW_AFTER) {
+            show(held);
+            held = '';
+          }
+        }
       } else if (ev.type === 'tool_use') calls.push(ev.call);
       else if (ev.type === 'usage') {
         usage.inputTokens += ev.inputTokens;
         usage.outputTokens += ev.outputTokens;
         t.onEvent?.({ type: 'usage', inputTokens: ev.inputTokens, outputTokens: ev.outputTokens });
       } else if (ev.type === 'done') stop = ev.stopReason;
-      else return out({ text: finalText + text, stopReason: 'error', error: ev.message });
+      else if (!offer.length && !needTools && round < MAX_TOOL_ROUNDS && TOOL_NOT_OFFERED.test(ev.message)) {
+        // Groq refuses the whole answer when the model calls a tool that was not offered ("Tool choice is none, but
+        // model called a tool", user report 2026-11-20: the router fetched the areas, the model wanted the cabinets)
+        needTools = true;
+        retry = true;
+        break;
+      } else return out({ text: finalText + text, stopReason: 'error', error: ev.message });
+    }
+    if (retry) {
+      if (shown) t.onEvent?.({ type: 'reset' });
+      continue;
     }
     if (stop === 'aborted' || t.signal?.aborted) return out({ text: finalText + text, stopReason: 'aborted' });
+    // text that reached the screen and is now dropped (rare: a long draft followed by a tool call) is taken back
+    const drop = () => shown && t.onEvent?.({ type: 'reset' });
 
     // a data question answered without any tool: drop that draft and ask once more (code decides, not the model)
     if (!calls.length && needsData && !toolCalls.length && !nudged && round < MAX_TOOL_ROUNDS) {
       nudged = true;
-      t.onEvent?.({ type: 'reset' });
+      drop();
       messages.push({ role: 'assistant', content: text }, { role: 'user', content: TOOL_NUDGE });
       continue;
     }
     // a bare "không biết" although a tool answered: ask once to answer from the data (code decides, not the model)
     if (!calls.length && toolCalls.length && !redone && BARE_DONT_KNOW.test(text) && round < MAX_TOOL_ROUNDS) {
       redone = true;
-      t.onEvent?.({ type: 'reset' });
+      drop();
       messages.push({ role: 'assistant', content: text }, { role: 'user', content: DATA_NUDGE });
       continue;
     }
+    // asked to answer from the data and still a bare "không biết": a fixed honest sentence, never "Không biết." alone
+    if (!calls.length && redone && BARE_DONT_KNOW.test(text)) {
+      drop();
+      t.onEvent?.({ type: 'text', text: DATA_FAIL_ANSWER });
+      produced.push({ role: 'assistant', content: DATA_FAIL_ANSWER });
+      return out({ text: DATA_FAIL_ANSWER, stopReason: 'end_turn' });
+    }
     // asked again and still no data: an honest fixed sentence instead of a guess (or the model talking about tools)
     if (!calls.length && nudged && !toolCalls.length) {
-      t.onEvent?.({ type: 'reset' });
+      drop();
       t.onEvent?.({ type: 'text', text: NO_DATA_ANSWER });
       produced.push({ role: 'assistant', content: NO_DATA_ANSWER });
       return out({ text: NO_DATA_ANSWER, stopReason: 'end_turn' });
@@ -165,10 +219,14 @@ export async function runTurn(t: TurnInput): Promise<TurnResult> {
     if (!calls.length) {
       const answer: LlmMessage = { role: 'assistant', content: text };
       produced.push(answer);
+      // kept: what was still waiting goes out now
+      if (shown) show(held);
+      else show(text.trim() ? text : finalText);
       // the answer is the last round's text; what came before a tool call is kept only when nothing follows
       // (a cloud model wrote the answer, called a tool again and wrote it twice: "…kết nối.491 tủ…", 2026-11-17)
       return out({ text: text.trim() ? text : finalText, stopReason: stop === 'max_tokens' ? 'max_tokens' : 'end_turn' });
     }
+    drop();
     finalText = text.trim() ? text : finalText;
 
     await runCalls(calls, text);
