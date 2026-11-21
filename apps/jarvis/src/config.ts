@@ -89,6 +89,9 @@ const Env = z.object({
   JARVIS_CONSOLE_HOST: z.string().min(1).default('127.0.0.1'),
   JARVIS_CONSOLE_PORT: int(8790, 1, 65_535),
   JARVIS_CONSOLE_TOKEN: z.string().optional(),
+  // pages that may send requests besides the console's own address: the HTTPS address a proxy in front of the
+  // loopback console shows (GitHub Codespaces port forwarding, 2026-11-21); comma separated, https:// only
+  JARVIS_EXTRA_ORIGINS: z.string().optional(),
   JARVIS_DATA_DIR: z.string().optional(),
   // keep each spoken sentence as data/voice-debug/*.wav + what was heard, to tune speech recognition; off by default,
   // the folder is gitignored and should be emptied after the test (it holds the user's voice)
@@ -135,7 +138,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     dailyTokenCap: e.JARVIS_DAILY_TOKEN_CAP,
     perUserPerMin: e.JARVIS_PER_USER_PER_MIN,
     historyDays: e.JARVIS_HISTORY_DAYS,
-    console: { host: e.JARVIS_CONSOLE_HOST, port: e.JARVIS_CONSOLE_PORT, token: consoleToken },
+    console: {
+      host: e.JARVIS_CONSOLE_HOST, port: e.JARVIS_CONSOLE_PORT, token: consoleToken,
+      extraOrigins: (e.JARVIS_EXTRA_ORIGINS ?? '').split(',').map((o) => o.trim().replace(/\/+$/, '')).filter((o) => /^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(o)),
+    },
     dataDir: path.resolve(APP_DIR, e.JARVIS_DATA_DIR ?? 'data'),
     debugAudio: e.JARVIS_DEBUG_AUDIO,
   };

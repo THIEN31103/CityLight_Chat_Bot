@@ -1,0 +1,32 @@
+{
+  // GitHub Codespaces for this repo (THIEN31103/CityLight_Chat_Bot): the whole test system in one machine, so the
+  // owner's PC does not have to run it. See .devcontainer/README.md (Vietnamese) for the steps on GitHub.
+  // Branch dthien_jarvis (Jarvis) is opened here; branch dthien_jarvis_web (CityLight server + web) of the same
+  // repo is checked out to /workspaces/citylight by setup.sh. Test data only (simulated cabinets).
+  "name": "CityLight + Jarvis (thử nghiệm)",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22-bookworm",
+  "features": {
+    // Postgres/TimescaleDB, EMQX and Redis run as Docker containers inside the codespace
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "hostRequirements": { "cpus": 2, "memory": "8gb" },
+  // asked for when the codespace is created (Codespaces "recommended secrets"); kept as environment variables,
+  // never written to the repository
+  "secrets": {
+    "GROQ_API_KEY": { "description": "Khóa Groq (console.groq.com) cho bộ não AI và nghe giọng của Jarvis" },
+    "CITYLIGHT_ADMIN_PASSWORD": { "description": "Mật khẩu tài khoản quản trị thử admin@citylight.test (ít nhất 12 ký tự)" }
+  },
+  "forwardPorts": [5173, 8790, 3000],
+  "portsAttributes": {
+    "5173": { "label": "Web CityLight", "onAutoForward": "notify" },
+    "8790": { "label": "Jarvis", "onAutoForward": "notify" },
+    "3000": { "label": "API CityLight", "onAutoForward": "silent" }
+  },
+  // once, when the codespace is created: install, containers, database, 1,000 cabinets, Piper voice
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  // every time the codespace starts (also after it slept): start everything in the background
+  "postStartCommand": "bash .devcontainer/start.sh",
+  "customizations": {
+    "codespaces": { "openFiles": [".devcontainer/README.md"] }
+  }
+}

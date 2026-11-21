@@ -66,3 +66,12 @@ describe('config', () => {
     expect(loadConfig({ JARVIS_ACTIONS_ENABLED: 'false' }).actionsEnabled).toBe(false);
   });
 });
+
+describe('JARVIS_EXTRA_ORIGINS (GitHub Codespaces, 2026-11-21)', () => {
+  it('keeps only https origins, without a trailing slash', async () => {
+    const { loadConfig } = await import('../src/config');
+    const cfg = loadConfig({ LLM_PROVIDER: 'fake', JARVIS_EXTRA_ORIGINS: 'https://abc-8790.app.github.dev/, http://evil.test, javascript:alert(1)' });
+    expect(cfg.console.extraOrigins).toEqual(['https://abc-8790.app.github.dev']);
+    expect(loadConfig({ LLM_PROVIDER: 'fake' }).console.extraOrigins).toEqual([]);
+  });
+});

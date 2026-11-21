@@ -384,6 +384,7 @@ Bạn báo: AI trả lời, rồi một luật trong code xen vào, câu khác �
 | D48 | AI đoán "TL12" là "Quận 12" (không có quận này; TL12 là TP Thủ Đức) và dẫn người dùng tới đó | Hướng dẫn AI ghi tủ được phép **theo tên khu vực** (đọc từ bản đồ, lưu 1 phút / phiên) và câu "mã tủ không cho biết quận"; câu "chưa tủ nào được phép" của bộ tìm tủ nói "Tủ được phép ở: TP Thủ Đức (42 tủ), Quận 1 (3 tủ)" |
 | D49 | "Ngoài khu vực Thủ Đức" bị hiểu là "ở Thủ Đức" | Bộ tìm tủ hiểu "ngoài / trừ / không phải" + khu vực: bỏ khu vực đó (và khu vực hỏi trước) |
 | D50 | Thử thêm 3 câu gợi ý cho Groq trên 49 bản ghi 21/11: có tên quận; ghép; có tên quận nhưng không mã tủ | **Giữ câu gợi ý cũ.** Có tên quận thì nghe đúng "Thủ Đức", "điều khiển" hơn, nhưng mã tủ mẫu trong gợi ý làm Groq **ghi nhầm mã** (nói TL01.0009 ra "TLA1.0016"), "Hủy lệnh" thành "Quý lệnh"; bỏ mã tủ thì Groq bịa câu quảng cáo YouTube cho cả câu rõ. Nghe sai còn lại xử lý trong code (D30, D37, D40, D44) |
+| D51 | Máy cá nhân quá nặng; Cloudflare miễn phí không chạy được Postgres / MQTT / worker chạy liên tục | **GitHub Codespaces** trên repo của bạn (`.devcontainer/`): máy 2 lõi / 8 GB, Docker trong codespace, tự dựng cả hệ thống thử. Jarvis thêm `JARVIS_EXTRA_ORIGINS` (chỉ `https://`) để nhận yêu cầu qua địa chỉ chuyển tiếp của Codespaces; console vẫn chỉ nghe 127.0.0.1 |
 
 ## Còn thiếu (cần máy / quyết định)
 

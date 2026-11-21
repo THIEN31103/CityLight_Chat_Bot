@@ -725,7 +725,8 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     let s = sessions.get(jar.jv_sid);
     if (method !== 'GET') {
       const origin = req.headers.origin;
-      if (origin && origin !== `http://${req.headers.host}` && origin !== `https://${req.headers.host}`) throw new HttpError(403, 'origin', 'Sai nguồn gốc yêu cầu');
+      if (origin && origin !== `http://${req.headers.host}` && origin !== `https://${req.headers.host}` && !cfg.console.extraOrigins.includes(origin))
+        throw new HttpError(403, 'origin', 'Sai nguồn gốc yêu cầu');
       if (!s || req.headers['x-jarvis-csrf'] !== s.csrf) throw new HttpError(403, 'csrf', 'Phiên console không hợp lệ, hãy tải lại trang');
     }
 
