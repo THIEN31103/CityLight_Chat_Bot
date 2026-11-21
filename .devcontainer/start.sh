@@ -26,7 +26,7 @@ done
 run() {
   local name=$1 dir=$2; shift 2
   if [ -f "$RUN/$name.pid" ] && kill -0 "$(cat "$RUN/$name.pid")" 2>/dev/null; then echo "[start] $name đang chạy"; return; fi
-  (cd "$dir" && nohup setsid "$@" >"$LOGS/$name.log" 2>&1 & echo $! >"$RUN/$name.pid")
+  (cd "$dir" && nohup setsid "$@" </dev/null >"$LOGS/$name.log" 2>&1 & echo $! >"$RUN/$name.pid")
   echo "[start] $name (log: $LOGS/$name.log)"
 }
 
@@ -40,6 +40,14 @@ run sim      "$STACK/apps/simulator" node --env-file=../../infra/.env --import t
 run web      "$STACK"                env __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=.app.github.dev npm run dev:web:hybrid
 run voice    "$ROOT/apps/jarvis"     env PYTHONIOENCODING=utf-8 STT_MODEL=none TTS_ENGINE=piper PIPER_VOICE="$VOICE/piper/vi_VN-vais1000-medium.onnx" "$VOICE/venv/bin/python" -u voice/sidecar.py
 run jarvis   "$ROOT/apps/jarvis"     node --env-file-if-exists=.env --disable-warning=ExperimentalWarning --import tsx src/main.ts
+
+# Wait until the services answer before this script ends: Codespaces cleans up after postStartCommand, and a
+# service launched in its last second was gone with it (Jarvis on 2026-11-21, empty log, port 8790 = 502)
+up() { for _ in $(seq 1 45); do curl -s -o /dev/null "$1" && return 0; sleep 2; done; return 1; }
+for s in "api http://127.0.0.1:3000/api/v1/health" "web http://127.0.0.1:5173/" "jarvis http://127.0.0.1:8790/health"; do
+  set -- $s
+  if up "$2"; then echo "[start] $1: chạy"; else echo "[start] $1: CHƯA CHẠY, xem $LOGS/$1.log"; fi
+done
 
 echo
 echo "[start] Web CityLight: cổng 5173 · Jarvis: cổng 8790 (tab PORTS của Codespaces). Đăng nhập: admin@citylight.test"
