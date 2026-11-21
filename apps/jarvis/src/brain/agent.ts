@@ -36,7 +36,9 @@ export const TOOL_NUDGE =
 
 /** Said instead of a second answer that still used no data: honest, and never a made-up number. */
 /** the provider's refusal when the model calls a tool in a request that offered none */
-export const TOOL_NOT_OFFERED = /tool choice is none|tool_use_failed|called a tool/i;
+export const TOOL_NOT_OFFERED = /tool choice is none|called a tool/i;
+/** the provider's refusal of a tool call whose arguments do not fit the schema */
+export const TOOL_ARGS_REFUSED = /tool call validation failed|did not match schema/i;
 
 /** a bare "không biết" twice although a tool answered (2026-11-20: "10 tủ đang bị lỗi" -> "Không biết.") */
 export const DATA_FAIL_ANSWER = 'Tôi đã tra dữ liệu nhưng chưa trả lời được câu này. Bạn hỏi lại cụ thể hơn giúp tôi, ví dụ trạng thái nào hay khu vực nào.';
@@ -90,6 +92,8 @@ export async function runTurn(t: TurnInput): Promise<TurnResult> {
   let redone = false;
   /** the model asked for a tool while none was offered: the round is asked again with the tools */
   let needTools = false;
+  /** a tool call refused for its arguments was reported back to the model once */
+  let argsRetried = false;
   const lastUser = [...t.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
   const needsData = !looksLikeSmallTalk(lastUser);
   const out = (r: Omit<TurnResult, 'produced' | 'usage' | 'toolCalls' | 'nudged'>): TurnResult => ({ ...r, produced, usage, toolCalls, nudged });
@@ -177,6 +181,13 @@ export async function runTurn(t: TurnInput): Promise<TurnResult> {
         // model called a tool", user report 2026-11-20: the router fetched the areas, the model wanted the cabinets)
         needTools = true;
         retry = true;
+        break;
+      } else if (!argsRetried && round < MAX_TOOL_ROUNDS && TOOL_ARGS_REFUSED.test(ev.message)) {
+        // Groq checks the arguments against the schema and refuses the whole answer ("limit: maximum 30, got 39",
+        // 2026-11-21): tell the model once and let it call again
+        argsRetried = true;
+        retry = true;
+        messages.push({ role: 'user', content: `(System reminder, do not mention it) Your tool call was refused: ${ev.message.slice(0, 300)}. Call the tool again with arguments that fit.` });
         break;
       } else return out({ text: finalText + text, stopReason: 'error', error: ev.message });
     }

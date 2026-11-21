@@ -104,3 +104,37 @@ describe('system prompt: which cabinets Jarvis may switch', () => {
     expect(systemPrompt(user, {}, new Date())).not.toContain('switch ONLY');
   });
 });
+
+describe('get_area_cabinets: user voice test 2 (2026-11-21)', () => {
+  const tool = () => READ_TOOLS.find((t) => t.name === 'get_area_cabinets')!;
+  const areas = [
+    { id: 'td', name: 'TP Thủ Đức', kind: 'district', parentId: null }, { id: 'w', name: 'Phường An Khánh', kind: 'ward', parentId: 'td' },
+    { id: 'q1', name: 'Quận 1', kind: 'district', parentId: null },
+  ];
+  const ctx = () => ({ reads: { areaTree: async () => ({ areas, unassigned: 0 }), areaCabinets: async () => [], mapCabinets: async () => Array.from({ length: 60 }, (_, i) => ({ id: `c${i}`, code: `TL01.${i}`, name: 'x', status: 'offline' })) }, user: { id: `u${Math.random()}` }, focus: {} }) as unknown as ToolContext;
+  it('"khu đức" (misheard) is understood as TP Thủ Đức, and the answer says so', async () => {
+    const out = (await tool().run(ctx(), { area: 'khu đức' })) as Record<string, any>;
+    expect(out.khu_vuc).toBe('TP Thủ Đức');
+    expect(out.ghi_chu_ten).toMatch(/hiểu là TP Thủ Đức/);
+  });
+  it('a name far from every area lists the districts', async () => {
+    const out = (await tool().run(ctx(), { area: 'Hà Nội xa lắm' })) as Record<string, any>;
+    expect(out.error).toBe('not_found');
+    expect(out.cac_quan).toEqual(['TP Thủ Đức', 'Quận 1']);
+  });
+  it('39 cabinets asked: no schema maximum for Groq to refuse, at most 50 in code', async () => {
+    expect(JSON.stringify(tool().schema)).not.toContain('maximum');
+    const out = (await tool().run(ctx(), tool().input.parse({ state: 'mat_ket_noi', limit: 80 }) as never)) as Record<string, any>;
+    expect(out.danh_sach).toHaveLength(50);
+  });
+});
+
+describe('system prompt: allowed cabinets by area (2026-11-21: the model read "TL12" as "Quận 12")', () => {
+  it('names the areas and warns that a code is not a district', async () => {
+    const { systemPrompt } = await import('../src/brain/system-prompt');
+    const user = { fullName: 'U', role: 'admin', scopeAll: true } as never;
+    const p = systemPrompt(user, {}, new Date(), { allowlist: ['TL01.0009', 'TL12.0006'], allowedByArea: 'Quận 1: TL01.0009; TP Thủ Đức: 42 tủ, 3 đang kết nối' });
+    expect(p).toContain('Jarvis may switch ONLY these cabinets: Quận 1: TL01.0009; TP Thủ Đức: 42 tủ, 3 đang kết nối.');
+    expect(p).toContain('TL12 is not Quận 12');
+  });
+});

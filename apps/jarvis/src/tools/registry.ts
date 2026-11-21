@@ -16,6 +16,8 @@ export interface Focus {
   cabinet?: { id: string; code: string; name: string };
   area?: { id: string; name: string };
   alarmCode?: string;
+  /** cabinets the last list showed (not sent to the model): the one the answer names becomes the cabinet in focus */
+  listed?: { id: string; code: string; name: string }[];
 }
 
 export interface ToolContext {

@@ -3,7 +3,7 @@
 // ("E201 là gì" -> list_alarms). The router runs the tool first; the model only has to put the result into words.
 // Only read tools; returns null when the intent is not clear, and the model decides as usual.
 import type { Focus } from '../tools/registry';
-import { fold, wordsToDigits } from '../tools/names';
+import { fold, markCabinetWord, normalizeCodes, wordsToDigits } from '../tools/names';
 
 export interface Routed {
   name: string;
@@ -12,20 +12,20 @@ export interface Routed {
 
 const CODE = /\b(e\d{3})\b/;
 // "tủ" (cabinet) and "từ" (from) both fold to "tu": the cabinet word is marked as "tucab" before folding
-const CABINET_REF = /\b([a-z]{2,4}\d{2}\.\d{1,4}|[a-z]{2}\d{4}|dm\s?\d{1,4}|demo\s?(so\s)?\d{1,4})\b|\btucab\s(so\s)?\d{1,4}\b|\btucab (do|nay)\b/;
-const markCabinetWord = (raw: string) => raw.replace(/(^|[^\p{L}])[tT][ủỦ](?=[^\p{L}]|$)/gu, '$1tucab');
+const CABINET_REF = /\b([a-z]{2,4}\d{2}\.\d{1,4}|[a-z]{2}\d{4}|dm\s?\d{1,4}|demo\s?(so\s)?\d{1,4})\b|\btucab\s(so\s)?\d{1,4}\b|\btucab (do|nay|ay|kia|vua|luc nay)\b/;
+// "tủ vừa mới bật", "tủ lúc nãy" (2026-11-21) mean the cabinet in focus too
 
 /** The cabinet words of the question, for the cabinet argument ("" = the cabinet in focus). */
 function cabinetArg(raw: string, marked: string, focus: Focus): string | null {
   const m = CABINET_REF.exec(marked);
   if (!m) return null;
-  if (/\btucab (do|nay)\b/.test(m[0])) return focus.cabinet ? 'tủ đó' : null;
+  if (/\btucab (do|nay|ay|kia|vua|luc nay)\b/.test(m[0])) return focus.cabinet ? 'tủ đó' : null;
   // keep the user's own words around the match so the resolver can still use names
   return m[0].startsWith('tucab ') ? raw : m[0];
 }
 
 /** The cabinet a sentence names, as words for the resolver ("tủ đó" = the one in focus); null = none named. */
-export const cabinetRefOf = (raw: string, focus: Focus): string | null => cabinetArg(raw, wordsToDigits(fold(markCabinetWord(raw))), focus);
+export const cabinetRefOf = (raw: string, focus: Focus): string | null => cabinetArg(raw, normalizeCodes(wordsToDigits(fold(markCabinetWord(raw)))), focus);
 
 /** switching words: these are requests to act, never routed to a read tool (actions come in milestone 4) */
 const ACTION = /\b(bat tay|bat nhanh|bat tu|bat den|bat het|tat tay|tat nhanh|tat tu|tat den|tat het|tra (tu|ve)|chay theo lich|xung bat|xac nhan|dong y|huy)\b/;
@@ -98,7 +98,7 @@ export function isListHowQuestion(raw: string): boolean {
 export const LIST_HOW_ANSWER =
   'Tôi liệt kê được các tủ theo trạng thái: bình thường, đang sáng, đang tắt, có lỗi hoặc mất kết nối, trên toàn hệ thống hoặc theo quận, phường. Bạn nói ví dụ "liệt kê 10 tủ mất kết nối ở quận 1".';
 
-const STATE_WORDS: [RegExp, string][] = [
+export const STATE_WORDS: [RegExp, string][] = [
   [/binh thuong|on dinh|hoat dong (tot|on)|khong (co )?loi/, 'binh_thuong'],
   [/mat ket noi|offline|mat song|mat lien lac/, 'mat_ket_noi'],
   [/dang (bi )?loi|co loi|bi loi|\bhong\b/, 'co_loi'],
@@ -133,7 +133,7 @@ export function route(raw: string, focus: Focus = {}): Routed | null {
   const code = CODE.exec(f)?.[1]?.toUpperCase() ?? spokenCode;
   if (code && /(nghia|la gi|la loi gi|ma |giai thich|y nghia)/.test(f)) return { name: 'explain_alarm_code', input: { code } };
 
-  const cab = cabinetArg(raw, wordsToDigits(fold(markCabinetWord(raw))), focus);
+  const cab = cabinetArg(raw, normalizeCodes(wordsToDigits(fold(markCabinetWord(raw)))), focus);
   if (cab) {
     if (/(toi qua|hom qua|dem qua|sang nay|luc may gio|may gio bat|may gio tat|\d+\s?(gio|h) qua|lich su|bat thuong|ro .*qua)/.test(f))
       return { name: 'get_cabinet_history', input: { cabinet: cab, hours: /tuan/.test(f) ? 168 : 24 } };
@@ -156,6 +156,25 @@ export function route(raw: string, focus: Focus = {}): Routed | null {
   }
   // "khu vực nào cũng được" answers a question, it does not ask for the list of areas
   if (/(nhung|cac|danh sach|bao nhieu|may) (khu vuc|quan|phuong)\b|\b(khu vuc|quan|phuong) nao\b/.test(f) && !/\bnao cung\b/.test(f) && !cab) return { name: 'list_areas', input: {} };
+  // "hệ thống khu vực Thủ Đức thế nào" is that area, not the whole system (2026-11-21: the overview was answered)
+  const area = !cab ? areaWords(f) : null;
+  if (area && /(the nao|tinh hinh|sao roi|ra sao|tong hop|bao cao|tinh trang|bao nhieu tu|co gi|ntn)/.test(f)) return { name: 'get_area_cabinets', input: { area } };
   if (/(he thong|tinh hinh|tong quan|bao cao|toan bo|tat ca cac tu)/.test(f) && !cab) return { name: 'get_system_overview', input: {} };
   return null;
+}
+
+const AREA_STOP = new Set(['the', 'nao', 'sao', 'ra', 'co', 'thi', 'nhu', 'bao', 'dang', 'hom', 'bi', 'gi', 'ntn', 'roi', 'nhieu', 'it', 'khong', 'va', 'voi', 'cua', 'tinh', 'tong', 'hien', 'luc', 'nay', 'oi', 'nhe', 'a', 'cung', 'thoi']);
+
+/** the area words after "khu vực", "quận", "phường", "TP" ("khu vuc thu dich the nao" -> "thu dich"); null when none */
+function areaWords(f: string): string | null {
+  const m = /\b(khu vuc|quan|phuong|huyen|thanh pho|tp)\s+(.+)$/.exec(f.replace(/[?.!,]/g, ' ').replace(/\s+/g, ' ').trim());
+  if (!m) return null;
+  const words: string[] = [];
+  for (const w of m[2]!.split(' ')) {
+    if (AREA_STOP.has(w) || words.length === 3) break;
+    words.push(w);
+  }
+  if (!words.length) return null;
+  // "quận 1", "phường 5": the number needs its word
+  return /^\d+$/.test(words[0]!) && m[1] !== 'khu vuc' ? `${m[1]} ${words.join(' ')}` : words.join(' ');
 }

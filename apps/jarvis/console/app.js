@@ -7,6 +7,8 @@ const $$ = (sel) => [...document.querySelectorAll(sel)];
 
 let session = null;
 let busy = false;
+/** a confirmed command is being sent and followed: talking over Jarvis then only stops its voice (2026-11-21) */
+let following = false;
 let currentCancel = null;
 
 // ------------------------------------------------------------------ api
@@ -310,9 +312,11 @@ async function turn({ text, pcm, confirmId }) {
         player.enqueue(data.data, data.mime, data.filler ? undefined : () => reveal(data.text));
         setStatus(STATUS_TEXT.speaking, true);
       } else if (event === 'status') {
+        following = data.state === 'command';
         if (data.state === 'command') setStatus(data.label, true);
         else if (data.state !== 'speaking' || player.playing) setStatus(data.state === 'tool' ? `Đang tra cứu: ${data.label}…` : STATUS_TEXT[data.state] ?? 'Đang nghĩ…', true);
       } else if (event === 'done') {
+        following = false;
         if (data.heard === false) {
           bubble.remove();
           return;
@@ -444,7 +448,8 @@ function stopVoice() {
 function bargeIn() {
   if (!busy && !player.playing) return;
   stopVoice();
-  if (busy) {
+  // the command is already sent: keep following it, or its real result is lost (it was "quá giờ" 4 s after sending)
+  if (busy && !following) {
     currentCancel?.abort();
     api('POST', '/api/chat/stop').catch(() => undefined);
   }

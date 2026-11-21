@@ -39,7 +39,7 @@ Mọi con số đều lấy từ dữ liệu thật lúc bạn hỏi. Không có
 
 **Nói tiếp câu trước:** Jarvis nhớ tủ, khu vực hay mã lỗi vừa nói tới. Sau khi hỏi về TL01.0016, bạn chỉ cần nói "tủ đó", "lịch của nó", "tắt nó đi".
 
-**Mã tủ:** gõ hoặc nói như trên web, ví dụ TL01.0016 hay DM0010. Tên gọi kiểu "tủ demo số mười" cũng được. Nếu nhiều tủ khớp, Jarvis hỏi lại bạn muốn tủ nào.
+**Mã tủ:** gõ hoặc nói như trên web, ví dụ TL01.0016 hay DM0010. Nói tắt cũng được: "TL1 số 16" là TL01.0016. Tên gọi kiểu "tủ demo số mười" cũng được. Nếu nhiều tủ khớp, Jarvis hỏi lại bạn muốn tủ nào.
 
 ---
 
@@ -60,6 +60,25 @@ Jarvis gửi lệnh cho **từng tủ một** và **chỉ gửi sau khi bạn x�
 
 Chế độ chạy tay giữ đến mốc lịch kế tiếp, sau đó tủ tự chạy lại theo lịch. Khi báo kết quả, Jarvis nói luôn chuyện gì xảy ra sau đó, ví dụ "đèn sẽ tự bật lại theo lịch lúc 18:00".
 
+### Không nhớ mã tủ
+
+Cứ nói những gì bạn nhớ: khu vực, tên đường (nhớ một phần cũng được), số nhà, tủ đang sáng hay đang tắt. Jarvis lọc trong các tủ được phép điều khiển rồi:
+
+- còn **một tủ** → hiện khung xác nhận luôn;
+- còn **2 đến 5 tủ** → đọc có số: "số 1: Võ Văn Kiệt 6, Phường 6 (TL12.0006); số 2: …". Bạn nói **"số 2"**, "cái thứ hai" hoặc "cái cuối";
+- còn **nhiều hơn** → Jarvis hỏi thêm tên đường hoặc trạng thái. Nếu trong đó chỉ vài tủ đang kết nối, Jarvis đọc luôn các tủ đó (tủ mất kết nối không nhận lệnh).
+
+Ví dụ:
+
+> **Bạn:** Tắt đèn một tủ ở Thủ Đức
+> **Jarvis:** Có 42 tủ ở TP Thủ Đức, chỉ 3 tủ đang kết nối: số 1: Võ Văn Kiệt 6, Phường 6 (TL12.0006); số 2: … Bạn chọn số mấy?
+> **Bạn:** Số 1
+> **Jarvis:** *(khung xác nhận)* Tắt tay cả hai nhánh đèn tủ TL12.0006 (Võ Văn Kiệt 6)…
+
+Chưa biết muốn làm gì cũng được: "tôi muốn điều khiển tủ ở quận 1" → Jarvis đọc các tủ có số → bạn chọn "số 1" → Jarvis hỏi "bật đèn, tắt đèn…?" → bạn nói "bật đèn".
+
+Nói "tắt đèn **quận 1**" (không có chữ "tủ") là lệnh cho cả quận, phải làm trên web. Nói "tắt đèn **một tủ ở** quận 1" là tìm một tủ.
+
 ### Xác nhận
 
 Sau câu lệnh, Jarvis hiện **khung xác nhận** ghi rõ tủ nào, làm gì. Khung chờ **60 giây**, hết giờ thì tự hủy.
@@ -67,8 +86,8 @@ Sau câu lệnh, Jarvis hiện **khung xác nhận** ghi rõ tủ nào, làm gì
 | Loại lệnh | Cách xác nhận |
 |---|---|
 | Bật, bật nhánh, về lịch, xung, tự kiểm tra | Nói hoặc gõ "xác nhận", "đồng ý", "ok", "làm đi"… hoặc bấm nút |
-| **Tắt** (cả tủ hoặc một nhánh) | **Chỉ bấm nút** trên khung. Gõ hay nói "xác nhận" không được |
-| Lệnh đưa ra khi bạn đã không dùng Jarvis hơn 10 phút | Chỉ bấm nút |
+| **Tắt** (cả tủ hoặc một nhánh) | Nói hoặc gõ **đúng chữ** "xác nhận" (hoặc "đồng ý"), hoặc bấm nút. "Ok", "có", "được" không dùng được cho lệnh tắt |
+| Lệnh đưa ra khi bạn đã không dùng Jarvis hơn 10 phút | Như lệnh tắt: đúng chữ "xác nhận" hoặc bấm nút |
 
 **Hủy:** nói hoặc gõ "hủy", "thôi", "không", "đừng", hoặc bấm nút Hủy. "Không xác nhận", "đừng làm" cũng là hủy. Nếu câu trả lời không rõ, Jarvis hỏi lại và chưa gửi gì.
 
@@ -76,7 +95,7 @@ Sau khi gửi, Jarvis theo dõi lệnh rồi báo kết quả: tủ đã nhận,
 
 ### Tủ nào điều khiển được
 
-Chỉ những tủ quản trị viên cho phép trong cấu hình Jarvis. Bản chạy thử hiện cho phép **TL01.0009, TL01.0016, TL01.0017**. Hỏi "tủ nào điều khiển được?" để Jarvis đọc danh sách đang áp dụng. Tủ khác bạn điều khiển trên web CityLight.
+Chỉ những tủ quản trị viên cho phép trong cấu hình Jarvis. Bản chạy thử trên máy local hiện cho phép **TL01.0009, TL01.0016, TL01.0017** và **42 tủ ở TP Thủ Đức** (TL12.…). Hỏi "tủ nào điều khiển được?" để Jarvis đọc danh sách đang áp dụng. Tủ khác bạn điều khiển trên web CityLight.
 
 ### Những trường hợp Jarvis không gửi lệnh
 
@@ -86,6 +105,8 @@ Chỉ những tủ quản trị viên cho phép trong cấu hình Jarvis. Bản 
 - Lệnh cho nhiều tủ cùng lúc ("tắt hết đèn quận 1"). Việc này cần mã OTP nên phải làm trên web.
 - Đã gửi quá **6 lệnh trong một phút**.
 - Câu lệnh không nói tủ nào. Jarvis sẽ hỏi lại tủ nào.
+
+Nếu Jarvis hỏi "ở tủ nào?", bạn chỉ cần nói mã tủ trong vòng 60 giây, có thể kèm nhánh ("nhánh một, tủ TL1 số 16"). Jarvis ghép với lệnh vừa nói rồi hiện khung xác nhận.
 
 Câu hỏi về trạng thái ("tủ đó đã bật đèn chưa?") chỉ là câu hỏi, không phải lệnh.
 
@@ -104,7 +125,7 @@ Mẹo để nghe đúng:
 - Nói gần micro, ít tiếng ồn.
 - Đọc mã tủ chậm, rõ. Nếu Jarvis nghe sai mã, gõ mã vào ô chat.
 - Mã lỗi đọc từng số được: "E hai không một".
-- Lệnh tắt vẫn phải bấm nút, kể cả khi đang nói.
+- Lệnh tắt xác nhận bằng cách nói rõ "xác nhận".
 
 ---
 

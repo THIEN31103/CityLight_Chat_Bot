@@ -107,11 +107,14 @@ describe('actions (milestone 4)', () => {
     expect(posts()).toHaveLength(1);
   });
 
-  it('switching off is T2: typed "xác nhận" is refused and sends nothing; the button sends it, a second click does not', async () => {
+  it('switching off is T2: "ok" / "có" are refused and send nothing; the button sends it, a second click does not', async () => {
     const r = await op.say('tắt tủ đó đi');
     expect(r.pending).toMatchObject({ tier: 'T2' });
-    const refused = await op.say('xác nhận');
-    expect(refused.text).toMatch(/phải bấm nút/);
+    expect(r.text).toMatch(/nói hoặc gõ đúng chữ "xác nhận"/);
+    for (const loose of ['ok', 'có']) {
+      const refused = await op.say(loose);
+      expect(refused.text).toMatch(/cần nói hoặc gõ đúng chữ "xác nhận"/);
+    }
     expect(posts()).toHaveLength(1);
     const click = await op.call('POST', `/api/pending/${r.pending!.id}/confirm`, {});
     expect(click.events.find((e) => e.event === 'done')?.data.text).toMatch(/Đã xác nhận: tủ DM0010 đã tắt cả hai nhánh/);
@@ -121,13 +124,22 @@ describe('actions (milestone 4)', () => {
     expect(posts()).toHaveLength(2);
   });
 
+  it('switching off: the exact words "xác nhận" confirm it too (user request 2026-11-21)', async () => {
+    const r = await op.say('tắt nhánh 2 tủ DM0010');
+    expect(r.pending).toMatchObject({ tier: 'T2' });
+    const ok = await op.say('Xác nhận.');
+    expect(ok.text).toMatch(/Đã xác nhận: tủ DM0010 đã tắt nhánh 2/);
+    expect(posts()).toHaveLength(3);
+    expect(audit().filter((a) => a.kind === 'pending_confirmed').at(-1)).toMatchObject({ via: 'text' });
+  });
+
   it('"hủy" and the cancel button drop the action without sending', async () => {
     await op.say('trả tủ DM0010 về chạy theo lịch');
     expect((await op.say('hủy')).text).toMatch(/^Đã hủy lệnh: Trả tủ DM0010 \(Tủ demo 10\) về chạy theo lịch/);
     const p = (await op.say('bật xung tủ DM0010')).pending!;
     expect((await op.call('POST', `/api/pending/${p.id}/cancel`)).data).toMatchObject({ cancelled: true });
     expect((await op.call('POST', `/api/pending/${p.id}/confirm`, {})).events.find((e) => e.event === 'done')?.data.text).toBe('Lệnh này đã được xử lý rồi.');
-    expect(posts()).toHaveLength(2);
+    expect(posts()).toHaveLength(3);
   });
 
   it('a cabinet outside the allowlist, an unknown cabinet, several cabinets, no cabinet: refused, nothing pending', async () => {
@@ -150,7 +162,7 @@ describe('actions (milestone 4)', () => {
     const r = await op.say('[[fake:{"tools":[{"name":"get_cabinet","input":{"cabinet":"DM0010"}}],"text":"Tủ có ghi chú lạ."}]] tủ DM0010 thế nào');
     expect(r.pending).toBeUndefined();
     expect((await op.call('GET', '/api/session')).data.pending).toBeNull();
-    expect(posts()).toHaveLength(2);
+    expect(posts()).toHaveLength(3);
   });
 
   it('the audit holds every step and no secret', () => {
@@ -168,7 +180,7 @@ describe('unclear replies while an action waits', () => {
     expect(r.text).toMatch(/^Tôi chưa nghe rõ\. Bạn muốn xác nhận hay hủy lệnh/);
     expect((await op.call('GET', '/api/session')).data.pending.id).toBe(p.id);
     expect((await op.say('Hồi.')).text).toMatch(/^Đã hủy lệnh/);
-    expect(posts()).toHaveLength(2);
+    expect(posts()).toHaveLength(3);
   });
 });
 
@@ -190,7 +202,123 @@ describe('the per-minute question limit', () => {
 describe('which cabinets can be controlled', () => {
   it('answers with the allowlist, in code, and sends nothing', async () => {
     const r = await op.say('cho tui một mã tủ để điều khiển đi');
-    expect(r.text).toMatch(/^Các tủ được phép điều khiển qua Jarvis: DM0001, DM0002/);
+    // more than 5 allowed (DM0001..DM0010): said by area, as the map shows them
+    expect(r.text).toMatch(/^Các tủ được phép điều khiển qua Jarvis: Quận 1: DM0010, DM0001\. Bạn nói ví dụ "tắt đèn một tủ ở Quận 1"/);
     expect(r.pending).toBeUndefined();
+  });
+});
+
+describe('"tủ nào?" answered with only the code (user voice test 2026-11-21)', () => {
+  it('the order asked about is completed by the reply, and a branch named in the reply wins', async () => {
+    await op.call('POST', '/api/chat/new');
+    expect((await op.say('tắt đèn đi')).text).toMatch(/ở tủ nào\? Nói mã tủ, tên đường hoặc khu vực giúp tôi\.$/);
+    const r = await op.say('DM0010');
+    expect(r.pending).toMatchObject({ tier: 'T2', summary: expect.stringMatching(/^Tắt tay cả hai nhánh đèn .*DM0010/) });
+    expect((await op.say('hủy')).text).toMatch(/^Đã hủy lệnh/);
+    await op.say('tắt đèn đi');
+    const b = await op.say('nhánh hai, tủ DM0010');
+    expect(b.pending?.summary).toMatch(/^Tắt tay nhánh 2 của tủ DM0010/);
+    await op.say('hủy');
+  });
+  it('only once: a code said later is a question again, not an order', async () => {
+    await op.call('POST', '/api/chat/new');
+    await op.say('bật đèn lên');
+    await op.say('DM0010');
+    await op.say('hủy');
+    const r = await op.say('DM0010');
+    expect(r.pending).toBeUndefined();
+  });
+});
+
+describe('"H1 tủ …" after "tủ nào?"', () => {
+  it('is branch 1 of that cabinet', async () => {
+    await op.call('POST', '/api/chat/new');
+    await op.say('tắt đèn đi');
+    expect((await op.say('H1 tủ DM0010')).pending?.summary).toMatch(/^Tắt tay nhánh 1 của tủ DM0010/);
+    await op.say('hủy');
+  });
+});
+
+describe('a code misheard by a digit or two (2026-11-21: "TL16.0009" for TL01.0009)', () => {
+  it('becomes the one allowed cabinet that close, said before the confirmation', async () => {
+    await op.call('POST', '/api/chat/new');
+    const r = await op.say('bật đèn tủ DX0010');
+    expect(r.text).toMatch(/^Không có tủ DX0010, tôi hiểu là tủ DM0010\. Bật tay cả hai nhánh đèn tủ DM0010/);
+    expect(r.pending).toBeDefined();
+    await op.say('hủy');
+  });
+  it('an unreadable code is said back and nothing is pending', async () => {
+    const r = await op.say('bật đèn tủ TL166');
+    expect(r.text).toMatch(/^Tôi nghe mã TL166 nhưng không có tủ nào như vậy/);
+    expect(r.pending).toBeUndefined();
+  });
+});
+
+describe('a cabinet described instead of named (user request 2026-11-21: "chỉ nhớ mang máng")', () => {
+  it('by street: one cabinet Jarvis may switch, so the confirmation comes at once', async () => {
+    await op.call('POST', '/api/chat/new');
+    const r = await op.say('bật đèn tủ trên đường Lý Thường Kiệt');
+    expect(r.pending?.summary).toMatch(/DM0010/);
+    await op.say('hủy');
+  });
+  it('"tủ nào?" then a street half remembered and misheard ("Lý Thường gì đó") finds it too', async () => {
+    await op.call('POST', '/api/chat/new');
+    await op.say('tắt đèn đi');
+    const r = await op.say('Lý Thường Kiệc gì đó');
+    expect(r.pending?.summary).toMatch(/^Tắt tay cả hai nhánh đèn tủ DM0010/);
+    await op.say('hủy');
+  });
+  it('several cabinets: numbered choices, and "số 1" picks the first', async () => {
+    await admin.call('PUT', '/api/admin/settings', { perUserPerMin: 60 });
+    await op.call('POST', '/api/chat/new');
+    // Quận 1 of the stub: DM0010 and DM0001 allowed, DM0099 not (and offline)
+    const r = await op.say('bật đèn một tủ ở quận một');
+    expect(r.text).toBe('Có 2 tủ ở Quận 1: số 1: Lý Thường Kiệt 9, Phường Bến Nghé (DM0010); số 2: Hai Bà Trưng 2, Phường Bến Nghé (DM0001). Bạn chọn số mấy?');
+    expect(r.pending).toBeUndefined();
+    const p = await op.say('số một');
+    expect(p.pending?.summary).toMatch(/^Bật tay cả hai nhánh đèn tủ DM0010/);
+    await op.say('hủy');
+  });
+  it('an area with nothing Jarvis may switch says so', async () => {
+    await op.call('POST', '/api/chat/new');
+    await op.say('bật đèn đi');
+    const r = await op.say('tủ mất kết nối ở Bến Nghé');
+    expect(r.text).toMatch(/^Có 1 tủ ở Phường Bến Nghé mất kết nối nhưng chưa tủ nào được phép điều khiển qua Jarvis/);
+    expect(r.pending).toBeUndefined();
+  });
+});
+
+describe('control wanted, no action said yet (2026-11-21: "tôi muốn điều khiển tổ ở khu vực quận 1")', () => {
+  it('"tổ" is "tủ"; the cabinets are read, the pick is asked what to do, and "bật đèn" makes the order', async () => {
+    await op.call('POST', '/api/chat/new');
+    const r = await op.say('Tôi muốn điều khiển tổ ở khu vực quận 1.');
+    expect(r.text).toMatch(/^Có 2 tủ ở Quận 1: số 1: Lý Thường Kiệt 9/);
+    const pick = await op.say('số 1');
+    expect(pick.text).toBe('Tủ Lý Thường Kiệt 9 (DM0010). Bạn muốn bật đèn, tắt đèn, bật hay tắt một nhánh, hay trả về chạy theo lịch?');
+    expect(pick.pending).toBeUndefined();
+    const order = await op.say('bật đèn');
+    expect(order.pending?.summary).toMatch(/^Bật tay cả hai nhánh đèn tủ DM0010/);
+    await op.say('hủy');
+  });
+  it('"khu vực nào có tủ điều khiển được" lists the allowed cabinets by area', async () => {
+    expect((await op.say('Khu vực nào có tủ trong danh sách có thể điều khiển được?')).text).toMatch(/^Các tủ được phép điều khiển qua Jarvis: Quận 1:/);
+  });
+});
+
+describe('"ngoài khu vực …" leaves that area out (2026-11-21)', () => {
+  it('after "điều khiển tủ ở …", "ngoài Quận 1" is every other area', async () => {
+    await op.call('POST', '/api/chat/new');
+    await op.say('tôi muốn điều khiển tủ ở quận 1');
+    const r = await op.say('ngoài khu vực quận 1');
+    expect(r.text).toMatch(/^Tôi không thấy tủ nào ngoài Quận 1/);
+  });
+});
+
+describe('"hủy" while Jarvis waits for a pick (2026-11-21)', () => {
+  it('drops the search and says nothing was sent', async () => {
+    await op.call('POST', '/api/chat/new');
+    await op.say('bật đèn một tủ ở quận 1');
+    expect((await op.say('hủy')).text).toBe('Đã hủy, chưa có lệnh nào được gửi.');
+    expect((await op.say('số 1')).pending).toBeUndefined();
   });
 });

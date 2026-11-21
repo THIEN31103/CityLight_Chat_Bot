@@ -181,3 +181,112 @@ describe('"which cabinets can I control" is answered from the allowlist', () => 
     'no: %s', (q) => expect(isAllowedCabinetsQuestion(q)).toBe(false),
   );
 });
+
+import { normalizeCodes, cabinetSearchTerms, codeAlternatives } from '../src/tools/names';
+import { cabinetRefOf } from '../src/brain/router';
+
+describe('cabinet codes as speech recognition writes them (user voice test 2026-11-21)', () => {
+  it.each([
+    ['TL1 số 16.', 'tl01.0016'],
+    ['Tắt nhánh một tủ TL1 số 9.', 'tl01.0009'],
+    ['Nhánh một, tổ TL01.00016.', 'tl01.0016'],
+    ['H1 tủ TL01.00016', 'tl01.0016'],
+    ['H1TL1.0009', 'tl01.0009'],
+    ['TL1009', 'tl01.0009'],
+    ['tủ TL01.0016 thế nào', 'tl01.0016'],
+  ])('%s -> %s', (q, code) => expect(cabinetRefOf(q, {})).toBe(code));
+  it('"TL1009" also reads as TL10.0009, so both are looked up', () => {
+    expect(cabinetSearchTerms('TL1009').slice(0, 2)).toEqual(['TL01.0009', 'TL10.0009']);
+    expect(codeAlternatives('tl01.0009')).toEqual([]);
+  });
+  it('keeps other numbers as they are', () => {
+    expect(normalizeCodes('quan 1 co 46 tu')).toBe('quan 1 co 46 tu');
+    expect(normalizeCodes('dm0010 the nao')).toBe('dm0010 the nao');
+  });
+});
+
+describe('branches in spoken orders (2026-11-21)', () => {
+  it.each([
+    ['Tắt nhánh một tủ TL1 số 9.', { type: 'MANUAL_BRANCH', params: { branch: 1, on: false } }, 'tl01.0009'],
+    ['Có tắt nhánh một, tủ TL1 số 16.', { type: 'MANUAL_BRANCH', params: { branch: 1, on: false } }, 'tl01.0016'],
+    ['tắt nhánh hai tủ TL01.0016', { type: 'MANUAL_BRANCH', params: { branch: 2, on: false } }, 'tl01.0016'],
+    ['tắt nhánh một và nhánh hai tủ TL01.0016', { type: 'MANUAL_ALL', params: { on: false } }, 'tl01.0016'],
+    ['tắt hai nhánh tủ TL01.0016', { type: 'MANUAL_ALL', params: { on: false } }, 'tl01.0016'],
+  ])('%s', (q, command, cabinet) => expect(parseOrder(q, {})).toEqual({ kind: 'cabinet', command, cabinet }));
+});
+
+describe('"H1" is "nhánh một" (2026-11-21 recordings)', () => {
+  it('in a reply to "tủ nào?" and glued to the code', () => {
+    expect(normalizeCodes('h1 tucab tl01.00016')).toBe('nhanh 1 tucab tl01.0016');
+    expect(normalizeCodes('h1tl1.0009')).toBe('nhanh 1 tl01.0009');
+    expect(parseOrder('Tắt H1 tủ TL01.0016', {})).toMatchObject({ command: { type: 'MANUAL_BRANCH', params: { branch: 1, on: false } } });
+  });
+});
+
+import { isExplicitConfirm } from '../src/guard/confirm-words';
+describe('user voice test 2 (2026-11-21)', () => {
+  it.each(['Xác nhận.', 'xác nhận nhé', 'Đồng ý', 'xác nhận tắt'])('explicit: %s', (q) => expect(isExplicitConfirm(q)).toBe(true));
+  it.each(['ok', 'có', 'được', 'làm đi', 'không xác nhận', 'xác nhận bật tủ khác đi'])('not explicit: %s', (q) => expect(isExplicitConfirm(q)).toBe(false));
+  it('"TL01 số 9.0009" is TL01.0009', () => expect(cabinetRefOf('Bật đèn tủ TL01 số 9.0009', {})).toBe('tl01.0009'));
+  it('"cho tôi một tủ khác để điều khiển" asks for the allowlist', () => expect(isAllowedCabinetsQuestion('Cho tôi một tủ khác để điều khiển đi.')).toBe(true));
+  it('"tắt hai nhánh của tủ vừa mới bật" switches off the cabinet in focus', () => {
+    const focus = { cabinet: { id: 'c', code: 'TL01.0016', name: 'X' } };
+    expect(parseOrder('Giờ thì tắt hai nhánh của tủ vừa mới bật.', focus)).toEqual({ kind: 'cabinet', command: { type: 'MANUAL_ALL', params: { on: false } }, cabinet: 'tủ đó' });
+  });
+});
+
+import { wordsToDigits, fold } from '../src/tools/names';
+describe('user voice test 3 (2026-11-21)', () => {
+  it('"TL01 số mười sáu." is TL01.0016 (the full stop is not part of the number)', () => {
+    expect(cabinetRefOf('Bật đèn tổ TL01 số mười sáu.', {})).toBe('tl01.0016');
+  });
+  it('a comma ends a number, and "không" at the end stays a word', () => {
+    expect(wordsToDigits(fold('nhánh hai, tủ DM0010'))).toBe('nhanh 2, tu dm0010');
+    expect(wordsToDigits(fold('có sáng không.'))).toBe('co sang khong.');
+    expect(parseOrder('đèn có sáng không.', {})).toBeNull();
+  });
+  it('an unreadable code is said back', () => {
+    expect(parseOrder('Bật đèn tổ TL166', {})).toMatchObject({ kind: 'which_cabinet', heard: 'TL166' });
+  });
+});
+
+import { areaIn, narrow, pickIn, stateIn, streetIn } from '../src/guard/finder';
+describe('the cabinet finder (2026-11-21)', () => {
+  const areas = [
+    { id: 'td', name: 'TP Thủ Đức', kind: 'district', parentId: null, cabinetCount: 4 }, { id: 'q1', name: 'Quận 1', kind: 'district', parentId: null, cabinetCount: 1 },
+    { id: 'q10', name: 'Quận 10', kind: 'district', parentId: null, cabinetCount: 0 }, { id: 'p1', name: 'Phường 1', kind: 'ward', parentId: 'td', cabinetCount: 3 },
+  ] as never[];
+  const cab = (code: string, name: string, status: string, districtId = 'td', wardId = 'p1') => ({ id: code, code, name, status, districtId, wardId }) as never;
+  const all = [cab('TL12.0417', 'Lý Thường Kiệt 3', 'offline'), cab('TL12.0393', 'Lý Thường Kiệt 6', 'off'), cab('TL12.0006', 'Võ Văn Kiệt 6', 'on'), cab('TL12.0011', 'Cộng Hòa 2', 'off'), cab('TL01.0009', 'Lý Thường Kiệt 9', 'on', 'q1', 'x')];
+  const allowed = new Set(['TL12.0417', 'TL12.0393', 'TL12.0006', 'TL12.0011']);
+  const ward = () => 'Phường 1';
+  it.each([
+    ['Tắt đèn một tủ ở Thủ Đức', 'TP Thủ Đức'], ['ở khu vực khu đức', 'TP Thủ Đức'], ['tủ ở quận 1', 'Quận 1'], ['tủ ở quận 10', 'Quận 10'], ['phường 1', 'Phường 1'],
+  ])('area: %s -> %s', (q, name) => expect(areaIn(q, areas)?.name).toBe(name));
+  it('no bare number is an area', () => expect(areaIn('bật nhánh 1', areas)).toBeUndefined());
+  it.each([
+    ['đường Lý Thường Kiệt gì đó', 'Lý Thường Kiệt', undefined], ['Lý Thường gì đó', 'Lý Thường Kiệt', undefined], ['tủ Lý Thường Kiệc 6', 'Lý Thường Kiệt', '6'], ['Võ Văn Kiệt 6', 'Võ Văn Kiệt', '6'],
+  ])('street: %s', (q, name, n) => expect(streetIn(q, all)).toMatchObject({ name, number: n }));
+  it('the order verb is not a state; "đang tắt" is', () => {
+    expect(stateIn('bật đèn tủ ở Thủ Đức')).toBeUndefined();
+    expect(stateIn('tủ đang tắt')).toBe('dang_tat');
+  });
+  it.each([['số 2', 2], ['cái thứ hai', 2], ['số hai nhé', 2], ['thứ nhất', 1], ['cái cuối', 3], ['tủ số ba', 3], ['bật đèn tủ số 2 ở quận 1', null], ['số 9', null]])('pick: %s', (q, n) => expect(pickIn(q as string, 3)).toBe(n));
+  it('only a few connected among many: those are read at once', () => {
+    const many = [...all, ...[1, 2, 3, 4].map((i) => cab(`TL12.10${i}`, `Lê Lợi ${i}`, 'offline'))];
+    const r = narrow(many, new Set([...allowed, 'TL12.101', 'TL12.102', 'TL12.103', 'TL12.104']), { area: { name: 'TP Thủ Đức', ids: ['td'] } }, ward);
+    expect(r).toMatchObject({ kind: 'ask', say: expect.stringMatching(/^Có 8 tủ ở TP Thủ Đức, chỉ 3 tủ đang kết nối: số 1: Lý Thường Kiệt 6/) });
+  });
+  it('one cabinet left: it is the one', () => {
+    expect(narrow(all, allowed, { street: { name: 'Võ Văn Kiệt', folded: ['vo van kiet'] } }, ward)).toMatchObject({ kind: 'one', cabinet: { code: 'TL12.0006' } });
+  });
+  it('found but none allowed', () => {
+    const names = (id: string | null) => (id === 'td' ? 'TP Thủ Đức' : id === 'q1' ? 'Quận 1' : 'Phường 1');
+    expect(narrow(all, allowed, { area: { name: 'Quận 1', ids: ['q1'] } }, names)).toMatchObject({ say: 'Có 1 tủ ở Quận 1 nhưng chưa tủ nào được phép điều khiển qua Jarvis. Tủ được phép ở: TP Thủ Đức (4 tủ).' });
+  });
+});
+
+import { markCabinetWord } from '../src/tools/names';
+describe('"tổ" / "tụ" heard for "tủ" (2026-11-21)', () => {
+  it.each([['điều khiển tổ ở quận 1', 'điều khiển tucab ở quận 1'], ['39 tụ mất kết nối', '39 tucab mất kết nối'], ['tổ bảo trì', 'tổ bảo trì'], ['tụ bù', 'tụ bù'], ['từ 5 giờ', 'từ 5 giờ']])('%s', (q, out) => expect(markCabinetWord(q)).toBe(out));
+});

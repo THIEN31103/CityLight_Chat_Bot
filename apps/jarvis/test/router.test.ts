@@ -104,3 +104,11 @@ describe('"how do you list cabinets" (2026-11-20)', () => {
   });
   it.each(['liệt kê 10 tủ mất kết nối', 'liệt kê các tủ', 'danh sách tủ đang sáng'])('a list, not how: %s', (q) => expect(isListHowQuestion(q)).toBe(false));
 });
+
+describe('an area question is that area, not the whole system (2026-11-21)', () => {
+  it.each([
+    ['Hệ thống khu vực thủ đích thế nào rồi?', 'thu dich'],
+    ['tình hình quận 1 thế nào', 'quan 1'],
+  ])('%s -> get_area_cabinets %s', (q, area) => expect(route(q)).toEqual({ name: 'get_area_cabinets', input: { area } }));
+  it('the whole system stays the overview', () => expect(route('Tình hình hệ thống sao rồi?')).toEqual({ name: 'get_system_overview', input: {} }));
+});

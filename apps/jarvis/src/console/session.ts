@@ -6,6 +6,7 @@ import { ApiClient } from '../api/client';
 import { CityLightReads } from '../api/read';
 import { ShiftContext } from '../brain/context';
 import { PendingSlot } from '../guard/pending';
+import type { Finding } from '../guard/finder';
 
 export const SESSION_IDLE_MS = 12 * 3_600_000;
 
@@ -24,6 +25,10 @@ export class ConsoleSession {
   readonly pending = new PendingSlot();
   /** the user's last question or click: an action proposed after 10 minutes without one needs the button (T2) */
   lastInteraction = Date.now();
+  /** Jarvis asked "tủ nào?" or read numbered cabinets for this order: the reply completes it (2026-11-21) */
+  finding: Finding | null = null;
+  /** where the allowed cabinets are, by area, for the system prompt (read at most once a minute) */
+  allowedByArea: { at: number; text: string | null } | null = null;
 
   constructor(apiBase: string, timeoutMs: number, fetchImpl?: typeof fetch) {
     this.api = new ApiClient({ baseUrl: apiBase, timeoutMs, fetch: fetchImpl });
@@ -33,6 +38,7 @@ export class ConsoleSession {
   newConversation() {
     this.busy?.abort();
     this.pending.clear();
+    this.finding = null;
     this.ctx.reset();
     this.conversationId = null;
   }

@@ -231,3 +231,26 @@ describe('a bare "không biết" twice although a tool answered (2026-11-20)', (
     expect(llm.requests).toHaveLength(0);
   });
 });
+
+describe('a tool call refused for its arguments (2026-11-21: "limit: maximum 30, got 39")', () => {
+  it('is reported to the model once and the answer comes from the next try', async () => {
+    const requests: { messages: { role: string; content: string }[] }[] = [];
+    const llm = {
+      name: 'scripted', model: 'm',
+      async *stream(r: { messages: { role: string; content: string }[] }) {
+        requests.push(r);
+        if (requests.length === 1) {
+          yield { type: 'error' as const, message: 'Tool call validation failed: parameters for tool get_area_cabinets did not match schema' };
+          return;
+        }
+        yield { type: 'text' as const, text: 'Có 39 tủ mất kết nối ở Thủ Đức, ví dụ TL01.0001, TL01.0002.' };
+        yield { type: 'done' as const, stopReason: 'end_turn' as const };
+      },
+    };
+    const r = await runTurn({ llm, tools: [echo], ctx, system: 's', maxTokens: 100, useRouter: false, messages: [{ role: 'user', content: 'liệt kê 39 tủ mất kết nối' }] });
+    expect(r.stopReason).toBe('end_turn');
+    // no red error: the refusal went back to the model once (every request shares the one message list)
+    expect(requests.length).toBeGreaterThanOrEqual(2);
+    expect(requests.at(-1)!.messages.filter((m) => /Your tool call was refused/.test(m.content))).toHaveLength(1);
+  });
+});

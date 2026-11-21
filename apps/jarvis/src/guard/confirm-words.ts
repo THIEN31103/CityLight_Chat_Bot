@@ -44,3 +44,15 @@ export function classifyReply(text: string): Reply | null {
   if (no) return 'cancel';
   return null;
 }
+
+/**
+ * The words that may confirm switching off (T2) without the button: "xác nhận" / "đồng ý", with fillers only
+ * ("xác nhận nhé", "đồng ý tắt"). The user asked to confirm by voice (2026-11-21); "ok", "có", "được" still do not.
+ */
+export function isExplicitConfirm(text: string): boolean {
+  const f = norm(text);
+  if (!f || NEGATION.test(f)) return false;
+  const words = f.split(" ").filter((w) => !FILLER.has(w));
+  const core = words.join(" ");
+  return /^(xac nhan|dong y)( (tat|lenh|tat den|gui))?$/.test(core);
+}

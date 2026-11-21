@@ -20,17 +20,19 @@ import { addTokenUsage, tokensToday, type Db } from '../store/db';
 import { addMessage, createConversation, deleteAllOwn, deleteOwn, getConversation, getMessages, listAll, listOwn, renameOwn, TITLE_MAX, tokenReport } from '../store/history';
 import { SettingsError, effectiveTokenCap, getSettings, updateSettings } from '../store/settings';
 import { READ_TOOLS, SPARE_TOOLS } from '../tools/read';
-import type { ToolDef } from '../tools/registry';
+import type { Focus, ToolDef } from '../tools/registry';
 import { SidecarVoice, type SttProvider, type TtsAudio, type TtsProvider } from '../voice/client';
 import { toSpeech } from '../voice/speech-text';
 import { pcmToWav } from '../voice/groq-stt';
 import { ConsoleSession, RateLimiter, SessionStore } from './session';
 import { FILLER, Speaker } from './speaker';
-import { isControlCapabilityQuestion } from '../brain/router';
-import { classifyReply } from '../guard/confirm-words';
-import { isAllowedCabinetsQuestion, parseOrder } from '../guard/orders';
+import { cabinetRefOf, isControlCapabilityQuestion } from '../brain/router';
+import { classifyReply, isExplicitConfirm } from '../guard/confirm-words';
+import { branchOf, isAllowedCabinetsQuestion, namesBothBranches, parseOrder, type Order } from '../guard/orders';
+import { fold, normalizeCodes, wordsToDigits } from '../tools/names';
 import { sendAndFollow, type PendingAction, type Via } from '../guard/pending';
-import { CommandRate, controlUnavailable, type GuardState } from '../guard/policy';
+import { CommandRate, controlUnavailable, type ActionCommand, type GuardState } from '../guard/policy';
+import { areaIn, matching, narrow, pickIn, stateIn, streetIn, type FindFilter, type Finding } from '../guard/finder';
 import { outcomeText, propose, STATUS_VI } from '../guard/propose';
 
 const STATIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../console');
@@ -310,6 +312,8 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     addMessage(db, conversationId, { role: 'user', content: text });
     audit.write({ kind: 'user_text', userId: user.id, role: user.role, conversationId, text, voice: !!speaker });
     send('status', { state: 'thinking', conversationId });
+    // where the allowed cabinets are, by area name, for the model (cached a minute per session)
+    const byArea = cfg.cabinetAllowlist.length > 5 ? await cachedByArea(s) : null;
     const t0 = performance.now();
     let firstText: number | null = null;
     ac.signal.addEventListener('abort', () => speaker?.stop());
@@ -317,7 +321,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       const result = await runTurn({
         llm, tools, routerTools: deps.tools ? undefined : ROUTER_TOOLS, maxTokens: cfg.llm.maxTokens, signal: ac.signal,
         ctx: { reads: s.reads, user, focus: s.ctx.focus, userText: text },
-        system: systemPrompt(user, s.ctx.focus, new Date(), { voice: !!speaker, allowlist: cfg.cabinetAllowlist }),
+        system: systemPrompt(user, s.ctx.focus, new Date(), { voice: !!speaker, allowlist: cfg.cabinetAllowlist, allowedByArea: byArea ?? undefined }),
         messages: s.ctx.messagesFor(text, cfg.contextMessages),
         onEvent: (ev) => {
           if (ev.type === 'reset') {
@@ -345,6 +349,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         if (m.role === 'tool') addMessage(db, conversationId, { role: 'tool', content: m.content, toolCalls: { name: m.name } });
         else if (m.role === 'assistant' && m.toolCalls?.length) addMessage(db, conversationId, { role: 'assistant', content: m.content, toolCalls: m.toolCalls.map((c) => ({ name: c.name, input: c.input })) });
       }
+      focusNamed(s.ctx.focus, result.text);
       const reply = result.text.trim() || (result.stopReason === 'too_many_tools' ? 'Tôi chưa tìm ra câu trả lời, bạn hỏi cụ thể hơn giúp tôi.' : '');
       addMessage(db, conversationId, { role: 'assistant', content: reply, tokensIn: result.usage.inputTokens, tokensOut: result.usage.outputTokens });
       for (const c of result.toolCalls) audit.write({ kind: 'tool_call', userId: user.id, conversationId, tool: c.name, input: c.input, ok: c.ok, ms: c.ms });
@@ -387,7 +392,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         return fixedTurn(s, user, text, `Đã hủy lệnh: ${p.summary}.`, send, speaker, extra);
       }
       if (!commandRate.allow(user.id)) return fixedTurn(s, user, text, 'Jarvis đã gửi 6 lệnh trong một phút qua, bạn đợi một chút rồi xác nhận lại.', send, speaker, extra);
-      const t = s.pending.take(p.id, via);
+      const t = s.pending.take(p.id, via, Date.now(), isExplicitConfirm(text));
       if (!t.ok) {
         audit.write({ kind: 'pending_refused', userId: user.id, pendingId: p.id, via, reason: t.reason });
         return fixedTurn(s, user, text, t.reason, send, speaker, extra);
@@ -399,6 +404,11 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     // never pass it to the model, which answered "Hồi." with a question about the system
     if (p && !reply && text.trim().split(/\s+/).length <= 2 && !parseOrder(text, s.ctx.focus))
       return fixedTurn(s, user, text, `Tôi chưa nghe rõ. Bạn muốn xác nhận hay hủy lệnh: ${p.summary}?`, send, speaker, extra);
+    // "hủy" while Jarvis waits for a cabinet or a number: drop the search (it said "Không có lệnh nào đang chờ", 2026-11-21)
+    if (reply === 'cancel' && s.finding && Date.now() - s.finding.at < ASK_TTL_MS && text.trim().split(/\s+/).length <= 3) {
+      s.finding = null;
+      return fixedTurn(s, user, text, 'Đã hủy, chưa có lệnh nào được gửi.', send, speaker, extra);
+    }
     if (reply && (reply === 'confirm' || reply === 'cancel') && text.trim().split(/\s+/).length <= 3) {
       if (gone) send('pending_closed', { id: gone.id, state: 'expired' });
       return fixedTurn(s, user, text, gone ? `Lệnh "${gone.summary}" đã hết hạn 60 giây, bạn ra lệnh lại nếu vẫn cần.` : 'Không có lệnh nào đang chờ xác nhận.', send, speaker, extra);
@@ -407,9 +417,16 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       const g = guardState();
       const off = controlUnavailable(g, user.role);
       const list = g.allowlist.length > 15 ? `${g.allowlist.slice(0, 15).join(', ')} và ${g.allowlist.length - 15} tủ khác` : g.allowlist.join(', ');
-      return fixedTurn(s, user, text, off
-        ? `Hiện chưa điều khiển được tủ nào qua Jarvis: ${off}`
-        : `Các tủ được phép điều khiển qua Jarvis: ${list}. Bạn nói ví dụ "bật đèn tủ ${g.allowlist[0]}" là tôi hỏi lại để bạn xác nhận.`, send, speaker, extra);
+      if (off) return fixedTurn(s, user, text, `Hiện chưa điều khiển được tủ nào qua Jarvis: ${off}`, send, speaker, extra);
+      // a long list is said by area (45 cabinets on 2026-11-21): "Quận 1: TL01.0009, …; TP Thủ Đức: 42 tủ, 3 đang kết nối"
+      const byArea = g.allowlist.length > 5 ? await allowedByArea(s, new Set(g.allowlist)) : null;
+      const example = byArea && !byArea.startsWith('mọi tủ') ? byArea.split(/[:(,]/)[0]!.trim() : 'Quận 3';
+      const how = `Bạn nói ví dụ "tắt đèn một tủ ở ${example}" hoặc mã tủ, tôi hỏi lại để bạn xác nhận.`;
+      return fixedTurn(s, user, text, byArea?.startsWith('mọi tủ')
+        ? `Mọi tủ đều được phép điều khiển qua Jarvis, ${byArea.slice('mọi tủ, '.length)}. ${how}`
+        : byArea
+          ? `Các tủ được phép điều khiển qua Jarvis: ${byArea}. ${how}`
+          : `Các tủ được phép điều khiển qua Jarvis: ${list}. Bạn nói ví dụ "bật đèn tủ ${g.allowlist[0]}" là tôi hỏi lại để bạn xác nhận.`, send, speaker, extra);
     }
     if (isControlCapabilityQuestion(text)) {
       const off = controlUnavailable(guardState(), user.role);
@@ -417,11 +434,37 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         ? `Chưa. ${off} Muốn bật hay tắt đèn, bạn thao tác trên web CityLight giúp tôi nhé.`
         : 'Có. Tôi bật, tắt, trả về lịch, bật xung hoặc gửi lệnh chẩn đoán cho từng tủ được phép, và chỉ gửi sau khi bạn xác nhận. Lệnh tắt phải bấm nút trên màn hình.', send, speaker, extra);
     }
-    const order = parseOrder(text, s.ctx.focus);
+    const fresh = s.finding && Date.now() - s.finding.at < ASK_TTL_MS ? s.finding : null;
+    // a number picked from the list Jarvis just read ("số 2", "cái thứ hai")
+    const picked = fresh?.choices.length && fresh.choices.length > 1 ? pickIn(text, fresh.choices.length) : null;
+    const chosen = picked ? fresh!.choices[picked - 1]! : null;
+    // "điều khiển tủ ở quận 1" said no action yet: the cabinet is picked first, then Jarvis asks what to do
+    if (chosen && !fresh!.command) return whatToDo(s, user, text, chosen, fresh!.filter, send, speaker, extra);
+    let order: Order | null = chosen ? { kind: 'cabinet', command: withBranch(fresh!.command!, text), cabinet: chosen.code } : orderOf(s, text, fresh);
+    s.finding = null;
+    const wantsControl = !order && !fresh && /\b(dieu khien|ra lenh|gui lenh)\b/.test(fold(text));
+    // a cabinet described instead of named: by area, street, state; in an order, as more details after "tủ nào?",
+    // or with no action yet ("tôi muốn điều khiển tủ ở quận 1", 2026-11-21)
+    if (!chosen && ((order?.kind === 'which_cabinet' && !order.heard) || (!order && fresh) || wantsControl)) {
+      const command = order ? order.command : fresh?.command ? withBranch(fresh.command, text) : null;
+      send('status', { state: 'tool', label: 'tìm tủ' });
+      const found = await findCabinet(s, user, text, command, order || !fresh ? {} : fresh.filter);
+      if (wantsControl && !found) {
+        s.finding = { command: null, filter: {}, choices: [], at: Date.now() };
+        return fixedTurn(s, user, text, 'Bạn muốn điều khiển tủ nào? Nói mã tủ, tên đường hoặc khu vực giúp tôi.', send, speaker, extra);
+      }
+      if (found && 'pick' in found) return whatToDo(s, user, text, found.pick, found.filter, send, speaker, extra);
+      if (found && 'say' in found) {
+        audit.write({ kind: 'action_refused', userId: user.id, text, reason: found.say });
+        return fixedTurn(s, user, text, found.say, send, speaker, extra);
+      }
+      if (found) order = found;
+    }
     if (!order) return false;
     send('status', { state: 'tool', label: 'chuẩn bị lệnh' });
     const prop = await propose(order, { reads: s.reads, user, focus: s.ctx.focus, userText: text, signal: ac.signal }, guardState(), user.role, Date.now() - s.lastInteraction);
     if (prop.kind === 'refused') {
+      if (prop.askCabinet) s.finding = { command: order.command, filter: {}, choices: [], at: Date.now() };
       audit.write({ kind: 'action_refused', userId: user.id, text, reason: prop.say });
       return fixedTurn(s, user, text, prop.say, send, speaker, extra);
     }
@@ -432,12 +475,129 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     return fixedTurn(s, user, text, `${replaced ? 'Lệnh trước đó đã được thay bằng lệnh này. ' : ''}${prop.say}`, send, speaker, extra);
   }
 
+  /**
+   * "Có, tủ TL01.0009 đang sáng." then "tắt hai nhánh của tủ đó" (2026-11-21): the one cabinet of the last list that
+   * the answer names becomes "tủ đó". Two or more named: nothing changes.
+   */
+  function focusNamed(focus: Focus, answer: string) {
+    const listed = focus.listed;
+    delete focus.listed;
+    if (!listed?.length) return;
+    const named = listed.filter((c) => answer.toUpperCase().includes(c.code.toUpperCase()));
+    if (named.length === 1) focus.cabinet = named[0]!;
+  }
+
+  /** how long a "tủ nào?" waits for the code */
+  const ASK_TTL_MS = 60_000;
+
+  /**
+   * The order in the text, or the order Jarvis just asked "tủ nào?" about completed by this reply: "TL1 số 16",
+   * "nhánh một, tủ TL01.0016" (user test 2026-11-21: a reply with only the code went to the model, which asked
+   * "nhánh 1 hay nhánh 2?" and "có muốn tắt…?" itself). The question is remembered for ASK_TTL_MS, once.
+   */
+  function orderOf(s: ConsoleSession, text: string, asked: Finding | null): Order | null {
+    const order = parseOrder(text, s.ctx.focus);
+    if (!asked || (order && order.kind !== 'which_cabinet')) return order;
+    // "bật đèn" after "Tủ Võ Văn Kiệt 6 (TL12.0006). Bạn muốn…?": the cabinet just chosen
+    if (order && !asked.command && asked.choices.length === 1) return { kind: 'cabinet', command: order.command, cabinet: asked.choices[0]!.code };
+    const cabinet = cabinetRefOf(text, s.ctx.focus);
+    if (!cabinet || (!order && !asked.command)) return order;
+    return { kind: 'cabinet', command: order?.command ?? withBranch(asked.command!, text), cabinet };
+  }
+
+  /** "nhánh một, tủ …" after "tắt tay cả hai nhánh ở tủ nào?": the branch named in the reply wins */
+  function withBranch(command: ActionCommand, text: string): ActionCommand {
+    if (command.type !== 'MANUAL_ALL' && command.type !== 'MANUAL_BRANCH') return command;
+    const f = normalizeCodes(wordsToDigits(fold(text)));
+    const on = command.params.on ?? true;
+    const b = branchOf(f);
+    if (b) return { type: 'MANUAL_BRANCH', params: { branch: b, on } };
+    if (namesBothBranches(f)) return { type: 'MANUAL_ALL', params: { on } };
+    return command;
+  }
+
+  /**
+   * The cabinet of an order described by what the user remembers (guard/finder.ts): an order of its own, a sentence
+   * that asks for more or reads numbered choices (kept in s.finding), or null when the text describes nothing.
+   */
+  async function findCabinet(
+    s: ConsoleSession, user: User, text: string, command: ActionCommand | null, base: FindFilter,
+  ): Promise<Order | { say: string } | { pick: Finding['choices'][number]; filter: FindFilter } | null> {
+    const g = guardState();
+    const off = controlUnavailable(g, user.role);
+    if (off) return { say: off };
+    // no list (no right to the map, API down): back to the plain "ở tủ nào?"
+    const lists = await Promise.all([s.reads.mapCabinets(), s.reads.areaTree()]).catch(() => null);
+    if (!lists) return null;
+    const [cabinets, tree] = lists;
+    const area = areaIn(text, tree.areas);
+    const pool = matching(cabinets, { area: /\b(ngoai|tru|khong phai)\b/.test(fold(text)) ? undefined : area ?? base.area });
+    const street = streetIn(text, pool);
+    const state = stateIn(text);
+    if (!area && !street && !state) return null;
+    // "ngoài khu vực Thủ Đức", "trừ quận 1": that area is left out, and the one asked before is dropped
+    const except = area && /\b(ngoai|tru|khong phai)\b/.test(fold(text)) ? area : undefined;
+    const kept: FindFilter = except ? { ...base, area: undefined, except } : { ...base, ...(area ? { area } : {}) };
+    const filter: FindFilter = { ...kept, ...(street ? { street } : {}), ...(state ? { state } : {}) };
+    const wardName = (id: string | null) => tree.areas.find((a) => a.id === id)?.name ?? '';
+    const r = narrow(cabinets, new Set(g.allowlist), filter, wardName);
+    if (r.kind === 'one' && !command) return { pick: { id: r.cabinet.id, code: r.cabinet.code, name: r.cabinet.name }, filter };
+    if (r.kind === 'one') return { kind: 'cabinet', command: command!, cabinet: r.cabinet.code };
+    s.finding = { command, filter, choices: r.choices.map((c) => ({ id: c.id, code: c.code, name: c.name })), at: Date.now() };
+    return { say: r.say };
+  }
+
+  async function cachedByArea(s: ConsoleSession): Promise<string | null> {
+    if (s.allowedByArea && Date.now() - s.allowedByArea.at < 60_000) return s.allowedByArea.text;
+    const text = await allowedByArea(s, new Set(cfg.cabinetAllowlist));
+    s.allowedByArea = { at: Date.now(), text };
+    return text;
+  }
+
+  /** "Quận 1: TL01.0009, TL01.0016, TL01.0017; TP Thủ Đức: 42 tủ, 3 đang kết nối"; null when the lists cannot be read */
+  async function allowedByArea(s: ConsoleSession, allowed: Set<string>): Promise<string | null> {
+    const lists = await Promise.all([s.reads.mapCabinets(), s.reads.areaTree()]).catch(() => null);
+    if (!lists) return null;
+    const [cabinets, tree] = lists;
+    const groups = new Map<string, typeof cabinets>();
+    for (const c of cabinets) {
+      if (!allowed.has(c.code.toUpperCase())) continue;
+      const name = tree.areas.find((a) => a.id === c.districtId)?.name ?? 'khu vực khác';
+      groups.set(name, [...(groups.get(name) ?? []), c]);
+    }
+    if (!groups.size) return null;
+    // every cabinet on the map allowed (1,010 on 2026-11-21): one short sentence instead of twelve areas
+    const named = [...groups].filter(([name]) => name !== 'khu vực khác');
+    if (cabinets.every((c) => allowed.has(c.code.toUpperCase()))) {
+      const online = cabinets.filter((c) => c.status !== 'offline').length;
+      return `mọi tủ, ở cả ${named.length} khu vực (${cabinets.length} tủ, ${online} đang kết nối)`;
+    }
+    if (named.length > 4)
+      return named.map(([name, cs]) => `${name} (${cs.filter((c) => c.status !== 'offline').length} đang kết nối)`).join(', ');
+    return [...groups].map(([name, cs]) => {
+      const online = cs.filter((c) => c.status !== 'offline').length;
+      return cs.length <= 4 ? `${name}: ${cs.map((c) => c.code).join(', ')}` : `${name}: ${cs.length} tủ, ${online} đang kết nối`;
+    }).join('; ');
+  }
+
+  /** a cabinet chosen with no action said yet: it becomes "tủ đó" and Jarvis asks what to do with it */
+  function whatToDo(
+    s: ConsoleSession, user: User, text: string, c: Finding['choices'][number], filter: FindFilter, send: Send, speaker: Speaker | null, extra: Record<string, unknown>,
+  ) {
+    s.ctx.focus.cabinet = { id: c.id, code: c.code, name: c.name };
+    s.finding = { command: null, filter, choices: [c], at: Date.now() };
+    return fixedTurn(s, user, text, `Tủ ${c.name} (${c.code}). Bạn muốn bật đèn, tắt đèn, bật hay tắt một nhánh, hay trả về chạy theo lịch?`, send, speaker, extra);
+  }
+
   /** true when control() will answer this text without the model */
   function handledInCode(s: ConsoleSession, text: string): boolean {
     if (llm.name === 'fake' && text.startsWith('[[fake:')) return false;
     if (classifyReply(text) && text.trim().split(/\s+/).length <= 4) return true;
     if (s.pending.active() && text.trim().split(/\s+/).length <= 2) return true;
-    return isControlCapabilityQuestion(text) || isAllowedCabinetsQuestion(text) || !!parseOrder(text, s.ctx.focus);
+    const fresh = s.finding && Date.now() - s.finding.at < ASK_TTL_MS ? s.finding : null;
+    // a reply to "tủ nào?" or to the numbered choices is short; a long sentence may be a new question
+    if (fresh && text.trim().split(/\s+/).length <= 12) return true;
+    return isControlCapabilityQuestion(text) || isAllowedCabinetsQuestion(text) || !!orderOf(s, text, fresh);
   }
 
   /** A turn whose answer is a fixed sentence: same history, audit and events as a model turn, no tokens. */
@@ -473,15 +633,14 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     send('text', { text: `${first}\n` });
     speaker?.text(first);
     send('status', { state: 'command', label: 'Đang gửi lệnh…' });
-    const outcome = await sendAndFollow(s.api, p, { signal: ac.signal, pollMs: deps.commandPollMs, onStatus: (st) => send('status', { state: 'command', label: STATUS_VI[st] ?? st }) });
+    // not ac.signal: a sent command is followed to its real result even when the user talks over Jarvis or presses
+    // stop (a barge-in cut it 4 s after sending and the audit said "timeout" for a confirmed command, 2026-11-21).
+    // sendAndFollow has its own time limit; the result goes into the history either way.
+    const outcome = await sendAndFollow(s.api, p, { pollMs: deps.commandPollMs, onStatus: (st) => send('status', { state: 'command', label: STATUS_VI[st] ?? st }) });
     if (outcome.status !== 'not_sent') commandRate.record(user.id);
     audit.write({ kind: 'command_result', userId: user.id, pendingId: p.id, commandId: outcome.commandId, status: outcome.status, error: outcome.error, apiError: outcome.code });
-    let result: string;
-    if (ac.signal.aborted) result = 'Lệnh đã gửi nhưng bạn đã dừng theo dõi; xem kết quả trên web CityLight.';
-    else {
-      const after = outcome.status === 'confirmed' ? ((await s.reads.cabinet(p.cabinet.id).catch(() => null))?.state as Record<string, unknown> | undefined) : undefined;
-      result = outcomeText(p, outcome, after);
-    }
+    const after = outcome.status === 'confirmed' ? ((await s.reads.cabinet(p.cabinet.id).catch(() => null))?.state as Record<string, unknown> | undefined) : undefined;
+    const result = outcomeText(p, outcome, after);
     send('reset', {});
     // the first sentence was already heard: only the result is spoken now
     await fixedTurn(s, user, text, `${first}\n${result}`, send, speaker, { ...extra, command: { status: outcome.status, id: outcome.commandId } }, result);

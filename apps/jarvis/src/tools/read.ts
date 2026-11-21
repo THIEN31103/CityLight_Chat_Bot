@@ -40,6 +40,14 @@ export async function resolveCabinet(ctx: ToolContext, raw: string): Promise<Res
     return { kind: 'one', cabinet: { id: c.id, code: c.code, name: c.name } as CabinetSummary };
   }
   const tried = cabinetSearchTerms(raw);
+  // several readings of one spoken code ("TL1009": TL01.0009 or TL10.0009): look each up, ask back when both exist
+  const codes = tried.filter((t) => /^[A-Z]{2,4}[0-9]{2}[.][0-9]{4}$/.test(t));
+  if (codes.length > 1) {
+    const hits = (await Promise.all(codes.map((c) => ctx.reads.search(c, { signal: ctx.signal })))).flat().filter((c) => codes.includes(c.code.toUpperCase()));
+    const unique = [...new Map(hits.map((c) => [c.id, c])).values()];
+    if (unique.length === 1) return { kind: 'one', cabinet: unique[0]! };
+    if (unique.length > 1) return { kind: 'many', choices: unique.slice(0, 5) };
+  }
   for (const term of tried) {
     const found = await ctx.reads.search(term, { signal: ctx.signal });
     if (!found.length) continue;
@@ -160,7 +168,10 @@ const getCabinet: ToolDef<{ cabinet: string }> = {
       // never connected: "chưa từng" instead of null, which the model turned into "Không biết thời điểm" (2026-11-20)
       // Vietnamese words: with "online" the model wrote "đang sáng, online" (2026-11-20)
       ket_noi: st.online ? 'trực tuyến' : 'mất kết nối', lastSeen: vnTime(st.lastSeenAt as string | null) ?? 'chưa từng gửi dữ liệu lên hệ thống',
-      branch1On: st.branch1On, branch2On: st.branch2On, manualMode: st.manualMode,
+      // Vietnamese words: with branch1On the model wrote "Branch 1 và Branch 2 đều tắt" (2026-11-21)
+      nhanh_1: st.branch1On === true ? 'đang sáng' : st.branch1On === false ? 'đang tắt' : null,
+      nhanh_2: st.branch2On === true ? 'đang sáng' : st.branch2On === false ? 'đang tắt' : null,
+      che_do: st.manualMode === true ? 'chạy tay' : st.manualMode === false ? 'theo lịch' : null,
       plc: st.plcOnline === false ? 'mất kết nối' : st.plcOnline ? 'trực tuyến' : null,
       dong_ho_dien: st.pmOnline === false ? 'mất kết nối' : st.pmOnline ? 'trực tuyến' : null,
       voltageV: [num('vL1'), num('vL2'), num('vL3')], currentA: [num('iL1'), num('iL2'), num('iL3')],
@@ -183,10 +194,10 @@ const getCabinetHistory: ToolDef<{ cabinet: string; hours: number; metrics?: (ty
     'PAST of one cabinet over the last N hours (max 168): min / max / average values, likely on / off times (guessed from power), commands sent. Use for "tối qua / hôm qua bật lúc mấy giờ", "dòng rò 24 giờ qua", "có bất thường không".',
   schema: obj({
     cabinet: CABINET_PROP,
-    hours: { type: 'integer', minimum: 1, maximum: 168, description: 'Số giờ nhìn lại, mặc định 24' },
+    hours: { type: 'integer', minimum: 1, description: 'Số giờ nhìn lại, mặc định 24, tối đa 168' },
     metrics: { type: 'array', items: { type: 'string', enum: [...TELEMETRY_METRICS] }, description: 'Đại lượng cần xem; bỏ trống = công suất, dòng, rò' },
   }, ['cabinet']),
-  input: z.object({ cabinet: ref, hours: z.coerce.number().int().min(1).max(168).default(24), metrics: z.array(z.enum(TELEMETRY_METRICS)).max(6).optional() }),
+  input: z.object({ cabinet: ref, hours: z.coerce.number().int().min(1).default(24).transform((n) => Math.min(n, 168)), metrics: z.array(z.enum(TELEMETRY_METRICS)).max(6).optional() }),
   async run(ctx, { cabinet, hours, metrics }) {
     const r = await resolveCabinet(ctx, cabinet);
     if (r.kind !== 'one') return notResolved(r);
@@ -233,13 +244,13 @@ const listAlarms: ToolDef<{ severity?: 'critical' | 'major' | 'minor'; district?
     severity: { type: 'string', enum: ['critical', 'major', 'minor'], description: 'only if the user asked for a severity' },
     district: { type: 'string', description: 'Tên quận / huyện đúng như hệ thống ghi' },
     active: { type: 'boolean', description: 'true = chỉ cảnh báo đang mở (mặc định)' },
-    limit: { type: 'integer', minimum: 1, maximum: 10 },
+    limit: { type: 'integer', minimum: 1, description: 'tối đa 10' },
   }),
   input: z.object({
     severity: z.enum(['critical', 'major', 'minor']).optional(),
     district: z.string().trim().max(100).optional(),
     active: z.boolean().default(true),
-    limit: z.coerce.number().int().min(1).max(10).default(10),
+    limit: z.coerce.number().int().min(1).default(10).transform((n) => Math.min(n, 10)),
   }),
   async run(ctx, { severity: asked, district, active, limit }) {
     // small models add a severity filter nobody asked for; keep it only when the question names a level
@@ -319,10 +330,21 @@ const listAreas: ToolDef<Record<string, never>> = {
   },
 };
 
+/** letters to change to turn a into b (Levenshtein) */
+export function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length]!;
+}
+
 /** state filters, in the words the model sees: "bình thường" = connected and without fault */
-const STATE_FILTER = ['binh_thuong', 'dang_sang', 'dang_tat', 'co_loi', 'mat_ket_noi'] as const;
-type StateFilter = (typeof STATE_FILTER)[number];
-const MATCHES: Record<StateFilter, (c: CabinetSummary) => boolean> = {
+export const STATE_FILTER = ['binh_thuong', 'dang_sang', 'dang_tat', 'co_loi', 'mat_ket_noi'] as const;
+export type StateFilter = (typeof STATE_FILTER)[number];
+export const MATCHES: Record<StateFilter, (c: CabinetSummary) => boolean> = {
   binh_thuong: (c) => c.status === 'on' || c.status === 'off' || c.status === 'dimming',
   dang_sang: (c) => c.status === 'on' || c.status === 'dimming',
   dang_tat: (c) => c.status === 'off',
@@ -330,11 +352,13 @@ const MATCHES: Record<StateFilter, (c: CabinetSummary) => boolean> = {
   mat_ket_noi: (c) => c.status === 'offline',
 };
 
-const STATE_WORDS_VI: Record<StateFilter, string> = {
+export const STATE_WORDS_VI: Record<StateFilter, string> = {
   binh_thuong: 'hoạt động bình thường', dang_sang: 'đang sáng', dang_tat: 'đang tắt', co_loi: 'có lỗi', mat_ket_noi: 'mất kết nối',
 };
 
 type AreaCabinetsInput = { area?: string; state?: StateFilter; limit?: number };
+// No "maximum" in the tool schemas: Groq checks them and refused the whole answer when the model asked for 39
+// cabinets ("limit: maximum 30, got 39", 2026-11-21). The limits are applied in code instead.
 const getAreaCabinets: ToolDef<AreaCabinetsInput> = {
   name: 'get_area_cabinets',
   kind: 'read',
@@ -343,12 +367,12 @@ const getAreaCabinets: ToolDef<AreaCabinetsInput> = {
   schema: obj({
     area: { type: 'string', description: 'Tên phường hoặc quận; bỏ trống = toàn hệ thống' },
     state: { type: 'string', enum: [...STATE_FILTER], description: 'chỉ tủ ở trạng thái này; binh_thuong = có kết nối, không lỗi' },
-    limit: { type: 'integer', minimum: 1, maximum: 30, description: 'số tủ trong danh sách, mặc định 15' },
+    limit: { type: 'integer', minimum: 1, description: 'số tủ trong danh sách, mặc định 15, tối đa 50' },
   }),
   input: z.object({
     area: z.string().trim().max(100).optional(),
     state: z.enum(STATE_FILTER).optional(),
-    limit: z.number().int().min(1).max(30).optional(),
+    limit: z.number().int().min(1).transform((n) => Math.min(n, 50)).optional(),
   }),
   async run(ctx, { area, state, limit }) {
     let all: CabinetSummary[];
@@ -359,8 +383,18 @@ const getAreaCabinets: ToolDef<AreaCabinetsInput> = {
     } else {
       const areas = await areaTree(ctx);
       const q = fold(area).replace(/^(phuong|quan|huyen|xa|thi tran) /, '');
-      const hits = areas.filter((a) => a.kind !== 'unit' && fold(a.name).includes(q));
-      if (!hits.length) return { error: 'not_found', message: `Không thấy khu vực "${area}"` };
+      let hits = areas.filter((a) => a.kind !== 'unit' && fold(a.name).includes(q));
+      // a name misheard by speech recognition ("khu đức" for Thủ Đức, 2026-11-21): the one area within two letters
+      let heardAs: string | undefined;
+      if (!hits.length) {
+        const near = areas.filter((a) => a.kind !== 'unit' && q.length >= 4 && editDistance(fold(a.name).replace(/^(phuong|quan|huyen|xa|thi tran|tp) /, ''), q) <= 2);
+        if (near.length === 1) {
+          hits = near;
+          heardAs = near[0]!.name;
+        }
+      }
+      if (!hits.length)
+        return { error: 'not_found', message: `Không thấy khu vực "${area}". Hãy nói tên đúng và kể vài khu vực có thật.`, cac_quan: areas.filter((a) => a.kind === 'district').map((a) => a.name) };
       // "quận 1" is the district, not "Phường 1" nor "Quận 10" (2026-11-20): the word the user said picks the kind
       const said = /^(quan|huyen)\b/.test(fold(area)) ? 'district' : /^(phuong|xa|thi tran)\b/.test(fold(area)) ? 'ward' : null;
       const same = hits.filter((a) => fold(a.name).replace(/^(phuong|quan|huyen|xa|thi tran) /, '') === q);
@@ -370,12 +404,15 @@ const getAreaCabinets: ToolDef<AreaCabinetsInput> = {
       ctx.focus.area = { id: pick.id, name: pick.name };
       const wards = pick.kind === 'ward' ? [pick] : areas.filter((a) => a.parentId === pick.id && a.kind === 'ward').slice(0, 15);
       all = (await Promise.all(wards.map((w) => ctx.reads.areaCabinets(w.id, { signal: ctx.signal })))).flat();
-      where = { khu_vuc: pick.name, wardsCounted: pick.kind === 'district' ? wards.length : undefined };
+      where = { khu_vuc: pick.name, wardsCounted: pick.kind === 'district' ? wards.length : undefined, ...(heardAs ? { ghi_chu_ten: `Không có khu vực "${area}", hiểu là ${heardAs}. Nói rõ điều này.` } : {}) };
     }
     const counts: Record<string, number> = {};
     for (const c of all) counts[STATUS_VI[c.status] ?? c.status] = (counts[STATUS_VI[c.status] ?? c.status] ?? 0) + 1;
     const rank = (s: CabinetStatus) => ({ fault: 0, offline: 1, unknown: 2, on: 3, dimming: 3, off: 4 })[s] ?? 5;
     const chosen = state ? all.filter(MATCHES[state]) : [...all].sort((a, b) => rank(a.status) - rank(b.status));
+    const shown = chosen.slice(0, limit ?? 15);
+    // kept out of the result: the console makes the one the answer names "tủ đó"
+    ctx.focus.listed = shown.map((c) => ({ id: c.id, code: c.code, name: c.name }));
     return {
       ...where,
       tong_so_tu: all.length,
@@ -385,7 +422,7 @@ const getAreaCabinets: ToolDef<AreaCabinetsInput> = {
       ...(state && !chosen.length
         ? { ghi_chu: `Không có tủ nào ${STATE_WORDS_VI[state]}. Hiện có: ${Object.entries(counts).map(([k, n]) => `${n} tủ ${k}`).join(', ')}. Nói cả hai ý này.` }
         : {}),
-      danh_sach: chosen.slice(0, limit ?? 15).map(brief),
+      danh_sach: shown.map(brief),
     };
   },
 };
@@ -417,8 +454,8 @@ const listIncidents: ToolDef<{ filter: 'open' | 'overdue' | 'all'; limit: number
   name: 'list_incidents',
   kind: 'read',
   description: 'Field incidents (repair tickets): open, overdue or all; overdue first. Use for "sự cố", "quá hạn".',
-  schema: obj({ filter: { type: 'string', enum: ['open', 'overdue', 'all'] }, limit: { type: 'integer', minimum: 1, maximum: 10 } }),
-  input: z.object({ filter: z.enum(['open', 'overdue', 'all']).default('open'), limit: z.coerce.number().int().min(1).max(10).default(10) }),
+  schema: obj({ filter: { type: 'string', enum: ['open', 'overdue', 'all'] }, limit: { type: 'integer', minimum: 1, description: 'tối đa 10' } }),
+  input: z.object({ filter: z.enum(['open', 'overdue', 'all']).default('open'), limit: z.coerce.number().int().min(1).default(10).transform((n) => Math.min(n, 10)) }),
   async run(ctx, { filter, limit }) {
     const q = filter === 'open' ? 'new_assigned_deferred' : filter;
     const page = await ctx.reads.incidents({ q, size: 50 }, { signal: ctx.signal });

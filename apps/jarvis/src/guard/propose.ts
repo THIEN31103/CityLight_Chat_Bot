@@ -4,7 +4,7 @@
 // packages/coreif/src/commands.ts: PULSE_ON = "bật tạm cả 2 nhánh 15 phút (xung I2)", DIAG = "tự kiểm tra RS485";
 // both end at "acked" (the cabinet reports nothing that proves them), the others at "confirmed".
 import type { RoleKey } from '@citylight/shared';
-import { resolveCabinet } from '../tools/read';
+import { editDistance, resolveCabinet } from '../tools/read';
 import type { ToolContext } from '../tools/registry';
 import { describeCommand, type Order } from './orders';
 import type { Outcome, PendingAction } from './pending';
@@ -13,11 +13,12 @@ import { expectedNow, scheduleNote, type ScheduleLike } from './schedule-note';
 
 export type Proposal =
   | { kind: 'pending'; draft: Omit<PendingAction, 'id' | 'createdAt' | 'expiresAt'>; say: string }
-  | { kind: 'refused'; say: string };
+  /** askCabinet: the answer asks which cabinet; the next reply may be just its code */
+  | { kind: 'refused'; say: string; askCabinet?: boolean };
 
 const HOW: Record<Tier, string> = {
   T1: 'Nói hoặc gõ "xác nhận" (hoặc bấm nút trên thẻ bên dưới) để gửi, "hủy lệnh" để bỏ. Thẻ hết hạn sau 60 giây.',
-  T2: 'Lệnh tắt chỉ gửi khi bạn bấm nút "Xác nhận" trên thẻ bên dưới, không nhận xác nhận bằng giọng hay chữ. Thẻ hết hạn sau 60 giây.',
+  T2: 'Lệnh tắt: nói hoặc gõ đúng chữ "xác nhận" (hoặc bấm nút trên thẻ bên dưới) để gửi, "hủy lệnh" để bỏ. Thẻ hết hạn sau 60 giây.',
 };
 
 /** "Tắt tay nhánh 1 của tủ TL01.0016 (Điện Biên Phủ 7)": the card's title and the first sentence */
@@ -43,11 +44,27 @@ export async function propose(order: Order, ctx: ToolContext, guard: GuardState,
   if (off) return { kind: 'refused', say: off };
   if (order.kind === 'many')
     return { kind: 'refused', say: 'Lệnh cho nhiều tủ cùng lúc phải làm trên web CityLight (cần mã OTP). Jarvis chỉ điều khiển từng tủ một.' };
-  if (order.kind === 'which_cabinet') return { kind: 'refused', say: `Bạn muốn ${describeCommand(order.command).toLowerCase()} ở tủ nào? Nói mã tủ giúp tôi.` };
+  if (order.kind === 'which_cabinet' && order.heard)
+    return { kind: 'refused', askCabinet: true, say: `Tôi nghe mã ${order.heard} nhưng không có tủ nào như vậy. Bạn đọc lại mã tủ giúp tôi, ví dụ "TL01 số 16".` };
+  if (order.kind === 'which_cabinet') return { kind: 'refused', askCabinet: true, say: `Bạn muốn ${describeCommand(order.command).toLowerCase()} ở tủ nào? Nói mã tủ, tên đường hoặc khu vực giúp tôi.` };
 
-  const r = await resolveCabinet(ctx, order.cabinet);
-  if (r.kind === 'none') return { kind: 'refused', say: 'Tôi không tìm thấy tủ đó trong phạm vi của bạn.' };
-  if (r.kind === 'many') return { kind: 'refused', say: `Có nhiều tủ khớp: ${r.choices.map((c) => c.code).join(', ')}. Bạn muốn tủ nào?` };
+  let r = await resolveCabinet(ctx, order.cabinet);
+  // a code misheard by one or two characters ("TL16.0009" for TL01.0009, 2026-11-21): the one allowed cabinet that
+  // close, named in the answer so the user hears it before confirming
+  let heardAs = '';
+  if (r.kind === 'none') {
+    const said = order.cabinet.toUpperCase().replace(/\s+/g, '');
+    const near = /^[A-Z]{2,4}[0-9]/.test(said) ? guard.allowlist.filter((code) => editDistance(code, said) <= 2) : [];
+    if (near.length === 1) {
+      const again = await resolveCabinet(ctx, near[0]!);
+      if (again.kind === 'one') {
+        r = again;
+        heardAs = `Không có tủ ${said}, tôi hiểu là tủ ${near[0]}.`;
+      }
+    }
+  }
+  if (r.kind === 'none') return { kind: 'refused', askCabinet: true, say: 'Tôi không tìm thấy tủ đó trong phạm vi của bạn. Bạn nói lại mã tủ giúp tôi.' };
+  if (r.kind === 'many') return { kind: 'refused', askCabinet: true, say: `Có nhiều tủ khớp: ${r.choices.map((c) => c.code).join(', ')}. Bạn muốn tủ nào?` };
   const c = r.cabinet;
   ctx.focus.cabinet = { id: c.id, code: c.code, name: c.name };
   const refused = cabinetRefused(guard, c.code);
@@ -71,7 +88,7 @@ export async function propose(order: Order, ctx: ToolContext, guard: GuardState,
   return {
     kind: 'pending',
     draft: { command: cmd, cabinet: { id: c.id, code: c.code, name: c.name }, summary: what, tier, note },
-    say: [`${what}.`, state, note, HOW[tier]].filter(Boolean).join(' '),
+    say: [heardAs, `${what}.`, state, note, HOW[tier]].filter(Boolean).join(' '),
   };
 }
 

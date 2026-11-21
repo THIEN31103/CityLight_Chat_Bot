@@ -130,6 +130,13 @@ export async function startStubApi(users: StubUser[]): Promise<StubApi> {
       return json(200, { items: [{ subsystem: 'PLC_KEY', role: 'LTE ↔ PLC', status: 'fault', code: 'E201', evidence: `LTID ${CABINET.ltid} PCON=0`, detail: 'Mất kết nối PLC' }], lastBootAt: null, bootsLast24h: 0, selfTest: null });
     if (req.method === 'GET' && p === `/cabinets/${CABINET.id}/alarms`)
       return json(200, [{ id: 'a1', code: 'E201', cabinetId: CABINET.id, cabinetName: CABINET.name, cabinetCode: CABINET.code, districtName: 'Quận 1', type: 'plc_lost', severity: 'major', message: 'Mất kết nối PLC', value: null, startedAt: new Date().toISOString(), endedAt: null, active: true, ackedBy: null, ackedAt: null }]);
+    // the cabinet finder (2026-11-21): DM0010 in Phường Bến Nghé of Quận 1, named after its street
+    if (req.method === 'GET' && p === '/map/cabinets')
+      return json(200, [{ id: CABINET.id, code: CABINET.code, name: 'Lý Thường Kiệt 9', status: 'on', location: CABINET.location, districtId: 'd1', wardId: 'w1', branch1On: true, branch2On: true, connectedType: 'central' },
+        { id: 'second', code: 'DM0001', name: 'Hai Bà Trưng 2', status: 'off', location: CABINET.location, districtId: 'd1', wardId: 'w1', branch1On: false, branch2On: false, connectedType: 'central' },
+        { id: 'other', code: 'DM0099', name: 'Lý Thường Kiệt 3', status: 'offline', location: CABINET.location, districtId: 'd1', wardId: 'w1', branch1On: null, branch2On: null, connectedType: 'central' }]);
+    if (req.method === 'GET' && p === '/areas/tree')
+      return json(200, { areas: [{ id: 'd1', name: 'Quận 1', parentId: null, kind: 'district', cabinetCount: 2 }, { id: 'w1', name: 'Phường Bến Nghé', parentId: 'd1', kind: 'ward', cabinetCount: 2 }], unassigned: 0 });
     if (req.method === 'GET' && p === '/map/stats')
       return json(200, { cabinets: { offline: 1, fault: 1, dimming: 0, on: 6, off: 2, unknown: 0, total: 10 }, onlinePct: 90, energyTodayKwh: null, energyYesterdayKwh: null, overdueIncidents: 0 });
     if (req.method === 'GET' && p === '/alarms')

@@ -50,7 +50,8 @@ export class PendingSlot {
    * Takes the action for sending: only the waiting one, only once, only in time, only the tier's way.
    * Returns a refusal in words otherwise; the action stays waiting when only the way was wrong.
    */
-  take(id: string, via: Via, now = Date.now()): { ok: true; pending: PendingAction } | { ok: false; reason: string } {
+  /** explicit: the user said "xác nhận" / "đồng ý" (isExplicitConfirm), which may confirm T2 too */
+  take(id: string, via: Via, now = Date.now(), explicit = false): { ok: true; pending: PendingAction } | { ok: false; reason: string } {
     if (this.used.has(id)) return { ok: false, reason: 'Lệnh này đã được xử lý rồi.' };
     const p = this.current;
     if (!p || p.id !== id) return { ok: false, reason: 'Không có lệnh nào đang chờ xác nhận.' };
@@ -58,7 +59,7 @@ export class PendingSlot {
       this.current = null;
       return { ok: false, reason: 'Lệnh đã hết hạn 60 giây, bạn ra lệnh lại nếu vẫn cần.' };
     }
-    if (p.tier === 'T2' && via !== 'button') return { ok: false, reason: 'Lệnh này phải bấm nút "Xác nhận" trên màn hình, nói hay gõ không được.' };
+    if (p.tier === 'T2' && via !== 'button' && !explicit) return { ok: false, reason: 'Lệnh tắt cần nói hoặc gõ đúng chữ "xác nhận", hoặc bấm nút "Xác nhận" trên màn hình.' };
     this.used.add(id);
     this.current = null;
     return { ok: true, pending: p };
