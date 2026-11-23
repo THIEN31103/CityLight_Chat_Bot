@@ -414,7 +414,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
 
   const commandRate = new CommandRate();
   const guardState = (): GuardState => ({ envEnabled: cfg.actionsEnabled, settingsEnabled: settings().actionsEnabled, allowlist: cfg.cabinetAllowlist });
-  const pendingView = (p: PendingAction) => ({ id: p.id, summary: p.summary, tier: p.tier, expiresAt: new Date(p.expiresAt).toISOString(), note: p.note ?? null });
+  const pendingView = (p: PendingAction) => ({ id: p.id, summary: p.summary, tier: p.tier, expiresAt: new Date(p.expiresAt).toISOString(), note: p.note ?? null, warning: p.warning ?? null });
   type Send = (e: string, d: unknown) => void;
 
   /**

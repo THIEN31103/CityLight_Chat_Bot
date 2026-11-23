@@ -138,6 +138,7 @@ label.row input { width: auto; }
 .pending-card .countdown { color: var(--muted); font-variant-numeric: tabular-nums; }
 .pending-card .pc-summary { font-weight: 600; }
 .pending-card .pc-note, .pending-card .pc-how { font-size: 13px; color: var(--muted); }
+.pending-card .pc-warn { font-size: 13px; color: var(--warn); }
 .pending-card .pc-actions { display: flex; gap: 8px; margin-top: 4px; }
 .pending-card.closed { opacity: .6; border-color: var(--line); }
 .msg.error { align-self: flex-start; background: transparent; border: 1px dashed var(--bad); color: var(--bad); }

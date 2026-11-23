@@ -254,6 +254,17 @@ describe('a code misheard by a digit or two (2026-11-21: "TL16.0009" for TL01.00
   });
 });
 
+describe('pre-check before the card (2026-11-23)', () => {
+  it('an open alarm of the cabinet is said and shown on the card; the order still waits for a yes', async () => {
+    await op.call('POST', '/api/chat/new');
+    const r = await op.say('bật đèn tủ DM0010');
+    expect(r.pending?.warning).toMatch(/^Lưu ý trước khi gửi: tủ đang có cảnh báo: E201 Mất kết nối PLC \(quan trọng, từ /);
+    expect(r.text).toContain('Lưu ý trước khi gửi: tủ đang có cảnh báo: E201');
+    expect(r.pending?.summary).toMatch(/^Bật tay cả hai nhánh đèn tủ DM0010/);
+    await op.say('hủy');
+  });
+});
+
 describe('a cabinet described instead of named (user request 2026-11-21: "chỉ nhớ mang máng")', () => {
   it('by street: one cabinet Jarvis may switch, so the confirmation comes at once', async () => {
     await op.call('POST', '/api/chat/new');

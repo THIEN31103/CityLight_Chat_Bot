@@ -11,7 +11,7 @@ const STATUS_VI: Record<CabinetStatus, string> = {
   on: 'đang sáng', off: 'đang tắt', fault: 'có lỗi', offline: 'mất kết nối', dimming: 'tiết giảm', unknown: 'chưa rõ',
 };
 const MAX_ALARM_PAGES = 10;
-const SEVERITY_VI = { critical: 'nghiêm trọng', major: 'quan trọng', minor: 'nhẹ' } as const;
+export const SEVERITY_VI = { critical: 'nghiêm trọng', major: 'quan trọng', minor: 'nhẹ' } as const;
 const COMMAND_STATUS_VI: Record<string, string> = {
   queued: 'đang chờ gửi', sent: 'đã gửi', acked: 'tủ đã nhận, chờ xác nhận đèn', confirmed: 'đã xác nhận (đèn đã đổi)',
   acked_unconfirmed: 'tủ nhận lệnh nhưng chưa thấy đèn đổi', failed: 'thất bại', timeout: 'quá giờ không phản hồi', cancelled: 'đã hủy',
@@ -448,7 +448,7 @@ const getSchedule: ToolDef<{ cabinet: string }> = {
   },
 };
 
-const INCIDENT_STATUS_VI: Record<string, string> = { new: 'mới', assigned: 'đã giao', deferred: 'hoãn', resolved: 'đã xử lý', closed: 'đã đóng' };
+export const INCIDENT_STATUS_VI: Record<string, string> = { new: 'mới', assigned: 'đã giao', deferred: 'hoãn', resolved: 'đã xử lý', closed: 'đã đóng' };
 
 const listIncidents: ToolDef<{ filter: 'open' | 'overdue' | 'all'; limit: number }> = {
   name: 'list_incidents',

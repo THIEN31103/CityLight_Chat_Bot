@@ -89,6 +89,8 @@ Sau câu lệnh, Jarvis hiện **khung xác nhận** ghi rõ tủ nào, làm gì
 | **Tắt** (cả tủ hoặc một nhánh) | Nói hoặc gõ **đúng chữ** "xác nhận" (hoặc "đồng ý"), hoặc bấm nút. "Ok", "có", "được" không dùng được cho lệnh tắt |
 | Lệnh đưa ra khi bạn đã không dùng Jarvis hơn 10 phút | Như lệnh tắt: đúng chữ "xác nhận" hoặc bấm nút |
 
+**Lưu ý trước khi gửi:** nếu tủ đang có cảnh báo hoặc sự cố hiện trường chưa xử lý xong, Jarvis nói và ghi thêm một dòng màu cam trên khung xác nhận, ví dụ "Lưu ý trước khi gửi: tủ đang có cảnh báo: E301 Dòng rò cao (nghiêm trọng, từ 14:20)". Bật đèn khi tủ báo dòng rò, quá dòng, lỗi contactor hoặc quá nhiệt thì Jarvis khuyên kiểm tra hiện trường trước. Đây chỉ là lời nhắc: lệnh vẫn chờ bạn xác nhận hoặc hủy như bình thường.
+
 **Hủy:** nói hoặc gõ "hủy", "thôi", "không", "đừng", hoặc bấm nút Hủy. "Không xác nhận", "đừng làm" cũng là hủy. Nếu câu trả lời không rõ, Jarvis hỏi lại và chưa gửi gì.
 
 Sau khi gửi, Jarvis theo dõi lệnh rồi báo kết quả: tủ đã nhận, đèn đã đổi thật, hoặc lỗi / quá giờ. Jarvis chỉ nói "đã xác nhận" khi hệ thống thấy đèn đã đổi.

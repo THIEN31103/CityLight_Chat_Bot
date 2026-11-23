@@ -4,7 +4,8 @@
 // packages/coreif/src/commands.ts: PULSE_ON = "bật tạm cả 2 nhánh 15 phút (xung I2)", DIAG = "tự kiểm tra RS485";
 // both end at "acked" (the cabinet reports nothing that proves them), the others at "confirmed".
 import type { RoleKey } from '@citylight/shared';
-import { editDistance, resolveCabinet } from '../tools/read';
+import type { Alarm, Incident } from '@citylight/shared';
+import { editDistance, INCIDENT_STATUS_VI, resolveCabinet, SEVERITY_VI, viText, vnTime } from '../tools/read';
 import type { ToolContext } from '../tools/registry';
 import { describeCommand, type Order } from './orders';
 import type { Outcome, PendingAction } from './pending';
@@ -85,11 +86,48 @@ export async function propose(order: Order, ctx: ToolContext, guard: GuardState,
     if (want) note += want[0] === (st.branch1On === true) && want[1] === (st.branch2On === true) ? ' Đèn sẽ giữ nguyên.' : ' Sau lệnh, đèn sẽ đổi theo lịch.';
   }
   const state = st.online === true ? stateNow(cmd, st) : '';
+  const warning = await precheck(ctx, c, cmd, now);
   return {
     kind: 'pending',
-    draft: { command: cmd, cabinet: { id: c.id, code: c.code, name: c.name }, summary: what, tier, note },
-    say: [heardAs, `${what}.`, state, note, HOW[tier]].filter(Boolean).join(' '),
+    draft: { command: cmd, cabinet: { id: c.id, code: c.code, name: c.name }, summary: what, tier, note, ...(warning ? { warning } : {}) },
+    say: [heardAs, `${what}.`, state, note, warning, HOW[tier]].filter(Boolean).join(' '),
   };
+}
+
+const RANK: Record<Alarm['severity'], number> = { critical: 0, major: 1, minor: 2 };
+const OPEN_INCIDENT = ['new', 'assigned', 'deferred'];
+/** alarm types that make switching the lights ON risky for people near the cabinet */
+const UNSAFE_ON: Alarm['type'][] = ['leak_current', 'over_current', 'contactor_fault', 'over_temp'];
+
+/**
+ * Before the card (Gemini review 2026-11-23, "kiểm tra trước khi gửi lệnh"): the cabinet's open alarms and unfinished
+ * field incidents, as one note. It never blocks or changes the order: the operator decides. A read that fails or that
+ * the role may not make (incidents need incident.view) adds nothing.
+ */
+export async function precheck(ctx: ToolContext, c: { id: string; code: string }, cmd: ActionCommand, now = Date.now()): Promise<string> {
+  const o = { signal: ctx.signal };
+  const [alarms, incidents] = await Promise.all([
+    ctx.reads.cabinetAlarms(c.id, 20, o).catch(() => [] as Alarm[]),
+    ctx.reads.incidents({ q: 'new_assigned_deferred', size: 100 }, o).then((p) => p.items).catch(() => [] as Incident[]),
+  ]);
+  const open = alarms.filter((a) => a.active).sort((a, b) => RANK[a.severity] - RANK[b.severity] || b.startedAt.localeCompare(a.startedAt));
+  const mine = incidents.filter((i) => i.cabinetId === c.id && OPEN_INCIDENT.includes(i.status));
+  if (!open.length && !mine.length) return '';
+  const parts: string[] = [];
+  if (open.length) {
+    const said = open.slice(0, 2).map((a) => `${a.code} ${viText(a.message)} (${SEVERITY_VI[a.severity]}, từ ${vnTime(a.startedAt)})`);
+    const more = open.length > 2 ? ` và ${open.length - 2} cảnh báo khác` : '';
+    parts.push(`tủ đang có ${open.length === 1 ? 'cảnh báo' : `${open.length} cảnh báo`}: ${said.join('; ')}${more}.`);
+  }
+  if (mine.length) {
+    const i = mine[0]!;
+    const late = i.deadline && new Date(i.deadline).getTime() < now ? ', quá hạn' : '';
+    const more = mine.length > 1 ? ` và ${mine.length - 1} sự cố khác` : '';
+    parts.push(`Có sự cố hiện trường chưa xong: ${i.code} ${i.category} (${INCIDENT_STATUS_VI[i.status] ?? i.status}${late})${more}.`);
+  }
+  const turnsOn = cmd.type === 'PULSE_ON' || ((cmd.type === 'MANUAL_ALL' || cmd.type === 'MANUAL_BRANCH') && cmd.params.on === true);
+  const risky = turnsOn && open.some((a) => UNSAFE_ON.includes(a.type));
+  return `Lưu ý trước khi gửi: ${parts.join(' ')}${risky ? ' Nên kiểm tra hiện trường trước khi bật đèn.' : ''}`;
 }
 
 /** "cả hai nhánh đang sáng" / "nhánh 1 đang sáng, nhánh 2 đang tắt", branch 1 first */

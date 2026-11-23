@@ -386,8 +386,9 @@ function showPendingCard(p) {
   const card = el('div', { class: `msg pending-card ${p.tier === 'T2' ? 't2' : 't1'}`, role: 'group', 'aria-label': 'Lệnh chờ xác nhận' },
     el('div', { class: 'pc-head' }, el('strong', {}, '⚠ Lệnh chờ xác nhận'), left),
     el('div', { class: 'pc-summary' }, p.summary),
+    p.warning ? el('div', { class: 'pc-warn', role: 'note' }, p.warning) : null,
     p.note ? el('div', { class: 'pc-note' }, p.note) : null,
-    el('div', { class: 'pc-how' }, p.tier === 'T2' ? 'Lệnh tắt: chỉ bấm nút mới gửi được.' : 'Nói hoặc gõ "xác nhận" / "hủy lệnh", hoặc bấm nút.'),
+    el('div', { class: 'pc-how' }, p.tier === 'T2' ? 'Lệnh tắt: nói hoặc gõ đúng chữ "xác nhận", hoặc bấm nút.' : 'Nói hoặc gõ "xác nhận" / "hủy lệnh", hoặc bấm nút.'),
     el('div', { class: 'pc-actions' }, ok, no));
   $('#empty').hidden = true;
   $('#messages').append(card);

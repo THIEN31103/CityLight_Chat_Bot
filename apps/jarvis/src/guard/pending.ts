@@ -19,6 +19,8 @@ export interface PendingAction {
   expiresAt: number;
   /** what will happen afterwards, said with the result ("đèn sẽ tự bật lại theo lịch lúc 18:00") */
   note?: string;
+  /** open alarms / field incidents of the cabinet when the card was made ("Lưu ý trước khi gửi: …"); never blocks */
+  warning?: string;
 }
 
 export type Via = 'voice' | 'text' | 'button';
