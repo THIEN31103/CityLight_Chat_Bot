@@ -418,9 +418,14 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
           } else if (ev.type === 'tool_end') send('status', { state: 'thinking' });
         },
       });
+      // an empty answer was shown as "" after a tool call (2026-11-23): never leave the user without a sentence
+      const fallback = !result.text.trim() && !blocked && result.stopReason !== 'aborted' && result.stopReason !== 'error'
+        ? (result.stopReason === 'too_many_tools' ? 'Tôi chưa tìm ra câu trả lời, bạn hỏi cụ thể hơn giúp tôi.' : 'Tôi chưa trả lời được câu này. Bạn hỏi lại cụ thể hơn giúp tôi, ví dụ nói rõ tên quận hoặc phường.')
+        : '';
+      if (fallback) send('text', { text: fallback });
       if (speaker && result.stopReason !== 'aborted' && result.stopReason !== 'error') {
         // an answer that is only the fallback sentence has no streamed text: speak it too
-        if (!result.text.trim() && result.stopReason === 'too_many_tools') speaker.text('Tôi chưa tìm ra câu trả lời, bạn hỏi cụ thể hơn giúp tôi.');
+        if (fallback) speaker.text(fallback);
         send('status', { state: 'speaking' });
         await speaker.end();
       }
@@ -430,7 +435,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         else if (m.role === 'assistant' && m.toolCalls?.length) addMessage(db, conversationId, { role: 'assistant', content: m.content, toolCalls: m.toolCalls.map((c) => ({ name: c.name, input: c.input })) });
       }
       focusNamed(s.ctx.focus, result.text);
-      const said = result.text.trim() || (result.stopReason === 'too_many_tools' ? 'Tôi chưa tìm ra câu trả lời, bạn hỏi cụ thể hơn giúp tôi.' : '');
+      const said = result.text.trim() || fallback;
       const reply = blocked || leaksAccount(said) ? ACCOUNT_ANSWER : said;
       addMessage(db, conversationId, { role: 'assistant', content: reply, tokensIn: result.usage.inputTokens, tokensOut: result.usage.outputTokens });
       for (const c of result.toolCalls) audit.write({ kind: 'tool_call', userId: user.id, conversationId, tool: c.name, input: c.input, ok: c.ok, ms: c.ms });
@@ -490,7 +495,11 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       s.finding = null;
       return fixedTurn(s, user, text, 'Đã hủy, chưa có lệnh nào được gửi.', send, speaker, extra);
     }
-    if (reply && (reply === 'confirm' || reply === 'cancel') && text.trim().split(/\s+/).length <= 3) {
+    // with nothing waiting, only the words of an order's card get this answer ("xác nhận", "đồng ý", "hủy lệnh"): an
+    // "đúng" / "không" answers the model's own question ("Bạn muốn báo cáo Quận 3?"), it was told "Không có lệnh nào
+    // đang chờ xác nhận" (2026-11-23)
+    const cardWord = isExplicitConfirm(text) || /\bhuy\b/.test(fold(text));
+    if (reply && (reply === 'confirm' || reply === 'cancel') && text.trim().split(/\s+/).length <= 3 && (gone || cardWord)) {
       if (gone) send('pending_closed', { id: gone.id, state: 'expired' });
       return fixedTurn(s, user, text, gone ? `Lệnh "${gone.summary}" đã hết hạn 60 giây, bạn ra lệnh lại nếu vẫn cần.` : 'Không có lệnh nào đang chờ xác nhận.', send, speaker, extra);
     }
@@ -690,7 +699,9 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
   /** true when control() will answer this text without the model */
   function handledInCode(s: ConsoleSession, text: string): boolean {
     if (llm.name === 'fake' && text.startsWith('[[fake:')) return false;
-    if (classifyReply(text) && text.trim().split(/\s+/).length <= 4) return true;
+    // a yes / no is answered in code only when an action waits or it is a card word; else the model answers it
+    const cardWord = isExplicitConfirm(text) || /\bhuy\b/.test(fold(text));
+    if (classifyReply(text) && text.trim().split(/\s+/).length <= 4 && (s.pending.active() || cardWord)) return true;
     if (s.pending.active() && text.trim().split(/\s+/).length <= 2) return true;
     const fresh = s.finding && Date.now() - s.finding.at < ASK_TTL_MS ? s.finding : null;
     // a reply to "tủ nào?" or to the numbered choices is short; a long sentence may be a new question

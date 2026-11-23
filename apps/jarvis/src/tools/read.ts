@@ -366,29 +366,77 @@ const wholeSystem = (area?: string) => !area || /^(toan bo|tat ca|he thong|toan 
  * The one ward or district a user named ("quận 1" is the district, not Phường 1 nor Quận 10; "khu đức" misheard is
  * Thủ Đức). Sets it as the area in focus. Else an answer for the model: not found (with the real districts) or which one.
  */
+const AREA_PREFIX = /^(phuong|quan|huyen|xa|thi tran|tp|thanh pho) /;
+const bareName = (a: AreaNode) => fold(a.name).replace(AREA_PREFIX, '');
+
+/**
+ * The areas of `pool` a name fits: a number only exactly ("2" is not "12" nor "24": "Quận 2", which does not exist,
+ * listed Phường 2 … Phường 24 on 2026-11-23), else the same name, else a part of it, else one within two letters
+ * ("khu đức" for Thủ Đức, misheard 2026-11-21).
+ */
+function fitAreas(pool: AreaNode[], name: string): { hits: AreaNode[]; heardAs?: string } {
+  const q = fold(name).replace(AREA_PREFIX, '').trim();
+  if (!q) return { hits: [] };
+  if (/^\d+$/.test(q)) return { hits: pool.filter((a) => bareName(a) === q) };
+  const same = pool.filter((a) => bareName(a) === q);
+  if (same.length) return { hits: same };
+  const part = pool.filter((a) => fold(a.name).includes(q));
+  if (part.length) return { hits: part };
+  const near = q.length >= 4 ? pool.filter((a) => editDistance(bareName(a), q) <= 2) : [];
+  return near.length === 1 ? { hits: near, heardAs: near[0]!.name } : { hits: [] };
+}
+
+/** "Phường 2 (Quận 3)": a ward with its district, so wards of the same name can be told apart */
+const withParent = (a: AreaNode, areas: AreaNode[]) => {
+  const p = a.kind === 'ward' ? areas.find((x) => x.id === a.parentId) : undefined;
+  return p ? `${a.name} (${p.name})` : a.name;
+};
+
+/**
+ * The one ward or district a user named, set as the area in focus. "quận 1" is the district, not Phường 1 nor Quận 10;
+ * "phường 2 quận 3", "Phường 2, Quận 3", "phường 2 của quận 3" is that ward of that district. Else an answer for the
+ * model: not found (with the real names) or which one (wards with their district).
+ */
 async function pickArea(ctx: ToolContext, area: string): Promise<{ pick: AreaNode; areas: AreaNode[]; heardAs?: string } | { error: Record<string, unknown> }> {
   const areas = await areaTree(ctx);
-  const q = fold(area).replace(/^(phuong|quan|huyen|xa|thi tran) /, '');
-  let hits = areas.filter((a) => a.kind !== 'unit' && fold(a.name).includes(q));
-  // a name misheard by speech recognition ("khu đức" for Thủ Đức, 2026-11-21): the one area within two letters
-  let heardAs: string | undefined;
-  if (!hits.length) {
-    const near = areas.filter((a) => a.kind !== 'unit' && q.length >= 4 && editDistance(fold(a.name).replace(/^(phuong|quan|huyen|xa|thi tran|tp) /, ''), q) <= 2);
-    if (near.length === 1) {
-      hits = near;
-      heardAs = near[0]!.name;
-    }
+  const named = areas.filter((a) => a.kind !== 'unit');
+  const districts = named.filter((a) => a.kind === 'district');
+  const districtNames = districts.map((a) => a.name);
+  const f = fold(area).replace(/[(),;]/g, ' ').replace(/\s+/g, ' ').trim();
+  const done = (pick: AreaNode, heardAs?: string) => {
+    ctx.focus.area = { id: pick.id, name: pick.name };
+    return { pick, areas, ...(heardAs ? { heardAs } : {}) };
+  };
+  const combo = /^((?:phuong|xa|thi tran) .+?) (?:cua |thuoc |o |tai )?((?:quan|huyen|tp|thanh pho) .+)$/.exec(f);
+  if (combo) {
+    const d = fitAreas(districts, combo[2]!);
+    if (d.hits.length !== 1)
+      return { error: { error: 'not_found', message: `Không có ${area.trim()}: không thấy quận "${combo[2]}". Nói rõ điều này và kể các quận có thật.`, cac_quan: districtNames } };
+    const wards = named.filter((a) => a.kind === 'ward' && a.parentId === d.hits[0]!.id);
+    const w = fitAreas(wards, combo[1]!);
+    if (w.hits.length === 1) return done(w.hits[0]!, w.heardAs ?? d.heardAs);
+    return { error: { error: 'not_found', message: `${d.hits[0]!.name} không có "${combo[1]}". Nói rõ điều này và kể vài phường có thật của quận đó.`, cac_phuong: wards.slice(0, 30).map((a) => a.name) } };
   }
+  const said = /^(quan|huyen|tp|thanh pho)\b/.test(f) ? 'district' : /^(phuong|xa|thi tran)\b/.test(f) ? 'ward' : null;
+  const { hits, heardAs } = fitAreas(said ? named.filter((a) => a.kind === said) : named, f);
   if (!hits.length)
-    return { error: { error: 'not_found', message: `Không thấy khu vực "${area}". Hãy nói tên đúng và kể vài khu vực có thật.`, cac_quan: areas.filter((a) => a.kind === 'district').map((a) => a.name) } };
-  // "quận 1" is the district, not "Phường 1" nor "Quận 10" (2026-11-20): the word the user said picks the kind
-  const said = /^(quan|huyen)\b/.test(fold(area)) ? 'district' : /^(phuong|xa|thi tran)\b/.test(fold(area)) ? 'ward' : null;
-  const same = hits.filter((a) => fold(a.name).replace(/^(phuong|quan|huyen|xa|thi tran) /, '') === q);
-  const exact = said && same.some((a) => a.kind === said) ? same.filter((a) => a.kind === said) : same;
-  const pick = exact.length === 1 ? exact[0]! : hits.length === 1 ? hits[0]! : null;
-  if (!pick) return { error: { error: 'ambiguous', message: 'Nhiều khu vực khớp, hỏi lại người dùng', choices: hits.slice(0, 6).map((a) => a.name) } };
-  ctx.focus.area = { id: pick.id, name: pick.name };
-  return { pick, areas, ...(heardAs ? { heardAs } : {}) };
+    return {
+      error: {
+        error: 'not_found',
+        message: said === 'district'
+          ? `Không có "${area.trim()}" trong hệ thống. Nói rõ điều này và kể các quận có thật.`
+          : `Không thấy khu vực "${area.trim()}". Hãy nói tên đúng và kể vài khu vực có thật.`,
+        cac_quan: districtNames,
+      },
+    };
+  if (hits.length === 1) return done(hits[0]!, heardAs);
+  return {
+    error: {
+      error: 'ambiguous',
+      message: 'Nhiều khu vực trùng tên. Hỏi lại người dùng muốn khu vực nào, đọc các lựa chọn đúng như ghi (kèm tên quận), để họ trả lời ví dụ "Phường 2 Quận 3".',
+      choices: hits.slice(0, 8).map((a) => withParent(a, areas)),
+    },
+  };
 }
 
 const getAreaCabinets: ToolDef<AreaCabinetsInput> = {

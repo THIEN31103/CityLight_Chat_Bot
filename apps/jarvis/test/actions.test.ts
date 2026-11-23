@@ -386,3 +386,20 @@ describe('accounts and security (2026-11-23)', () => {
     expect(r.events.some((e) => e.event === 'status' && (e.data?.state === 'thinking' || e.data?.state === 'tool'))).toBe(false);
   });
 });
+
+describe('yes / no with nothing waiting (2026-11-23)', () => {
+  it('"đúng" answers the model, it is not told "no order is waiting"', async () => {
+    await op.call('POST', '/api/chat/new');
+    const r = await op.say('đúng');
+    expect(r.text).not.toBe('Không có lệnh nào đang chờ xác nhận.');
+  });
+  it('"xác nhận" with nothing waiting still gets the fixed answer', async () => {
+    await op.call('POST', '/api/chat/new');
+    expect((await op.say('xác nhận')).text).toBe('Không có lệnh nào đang chờ xác nhận.');
+  });
+  it('an empty model answer becomes a sentence, never ""', async () => {
+    await op.call('POST', '/api/chat/new');
+    const r = await op.say('[[fake:{"text":""}]] tình hình phường 2');
+    expect(r.text).toMatch(/^Tôi chưa trả lời được câu này/);
+  });
+});

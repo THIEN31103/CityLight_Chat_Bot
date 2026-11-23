@@ -237,3 +237,44 @@ describe('get_shift_report (2026-11-23)', () => {
     expect(out.canh_bao.tong_so).toBe(4);
   });
 });
+
+describe('area names said in a shift report (user test 2026-11-23)', () => {
+  // two "Phường 2" in two districts, and no Quận 2
+  const areas = [
+    { id: 'd1', name: 'Quận 1', parentId: null, kind: 'district', cabinetCount: 2 }, { id: 'd3', name: 'Quận 3', parentId: null, kind: 'district', cabinetCount: 2 },
+    { id: 'w12', name: 'Phường 2', parentId: 'd1', kind: 'ward', cabinetCount: 1 }, { id: 'w32', name: 'Phường 2', parentId: 'd3', kind: 'ward', cabinetCount: 1 },
+    { id: 'w312', name: 'Phường 12', parentId: 'd3', kind: 'ward', cabinetCount: 0 }, { id: 'w324', name: 'Phường 24', parentId: 'd3', kind: 'ward', cabinetCount: 0 },
+  ];
+  const cabinets = [{ id: 'c1', code: 'TL01.0001', name: 'A 1', status: 'on', districtId: 'd1', wardId: 'w12' }, { id: 'c2', code: 'TL03.0001', name: 'B 1', status: 'off', districtId: 'd3', wardId: 'w32' }];
+  const ctx = () => ({
+    reads: { mapCabinets: async () => cabinets, areaTree: async () => ({ areas, unassigned: 0 }), alarms: async () => ({ items: [], total: 0, page: 1, size: 100 }), incidents: async () => ({ items: [], total: 0, page: 1, size: 100 }) },
+    // its own user: the area tree is cached a minute per user, another test's tree must not be reused
+    user: { id: 'area-names-test' }, focus: {},
+  }) as unknown as ToolContext;
+  const run = (area: string) => READ_TOOLS.find((t) => t.name === 'get_shift_report')!.run(ctx(), { area }) as Promise<Record<string, any>>;
+
+  it('"Quận 2" does not exist: said so with the real districts, not a list of Phường 2 … Phường 24', async () => {
+    const out = await run('Quận 2');
+    expect(out.error).toBe('not_found');
+    expect(out.message).toContain('Không có "Quận 2"');
+    expect(out.cac_quan).toEqual(['Quận 1', 'Quận 3']);
+  });
+  it('"Phường 2" in two districts: the choices carry their district', async () => {
+    const out = await run('Phường 2');
+    expect(out.error).toBe('ambiguous');
+    expect(out.choices).toEqual(['Phường 2 (Quận 1)', 'Phường 2 (Quận 3)']);
+  });
+  it.each(['phường 2 quận 3', 'Phường 2, Quận 3', 'phường 2 của quận 3', 'Phường 2 (Quận 3)'])('"%s" is that ward', async (q) => {
+    const out = await run(q);
+    expect(out.khu_vuc).toBe('Phường 2');
+    expect(out.tu.tong_so).toBe(1);
+  });
+  it('"phường 2 quận 2": no such district, said plainly', async () => {
+    const out = await run('phường 2 quận 2');
+    expect(out.error).toBe('not_found');
+    expect(out.cac_quan).toEqual(['Quận 1', 'Quận 3']);
+  });
+  it('"Quận 1" is still the district', async () => {
+    expect((await run('Quận 1')).khu_vuc).toBe('Quận 1');
+  });
+});
