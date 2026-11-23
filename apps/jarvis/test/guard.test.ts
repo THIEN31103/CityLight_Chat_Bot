@@ -271,7 +271,7 @@ describe('the cabinet finder (2026-11-21)', () => {
     expect(stateIn('bật đèn tủ ở Thủ Đức')).toBeUndefined();
     expect(stateIn('tủ đang tắt')).toBe('dang_tat');
   });
-  it.each([['số 2', 2], ['cái thứ hai', 2], ['số hai nhé', 2], ['thứ nhất', 1], ['cái cuối', 3], ['tủ số ba', 3], ['bật đèn tủ số 2 ở quận 1', null], ['số 9', null]])('pick: %s', (q, n) => expect(pickIn(q as string, 3)).toBe(n));
+  it.each([['số 2', 2], ['cái thứ hai', 2], ['số hai nhé', 2], ['thứ nhất', 1], ['cái cuối', 3], ['tủ số ba', 3], ['bật đèn tủ số 2 ở quận 1', null], ['số 9', null], ['Bật đèn tủ số 2', 2], ['tắt tay cả hai nhánh tủ số 3 nhé', 3], ['bật nhánh 1 cái số 2', 2], ['bật tủ số hệ', 2], ['bật nhánh 2', null], ['chọn 2', 2], ['tủ số 2 có sáng không', null]])('pick: %s', (q, n) => expect(pickIn(q as string, 3)).toBe(n));
   it('only a few connected among many: those are read at once', () => {
     const many = [...all, ...[1, 2, 3, 4].map((i) => cab(`TL12.10${i}`, `Lê Lợi ${i}`, 'offline'))];
     const r = narrow(many, new Set([...allowed, 'TL12.101', 'TL12.102', 'TL12.103', 'TL12.104']), { area: { name: 'TP Thủ Đức', ids: ['td'] } }, ward);

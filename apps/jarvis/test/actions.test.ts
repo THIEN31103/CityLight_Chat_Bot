@@ -300,6 +300,23 @@ describe('control wanted, no action said yet (2026-11-21: "tôi muốn điều k
     expect(order.pending?.summary).toMatch(/^Bật tay cả hai nhánh đèn tủ DM0010/);
     await op.say('hủy');
   });
+  it('the action said with the number ("Bật đèn tủ số 1", 2026-11-23: "số 2") makes the order at once', async () => {
+    await op.call('POST', '/api/chat/new');
+    await op.say('Tôi muốn điều khiển tủ ở quận 1.');
+    const r = await op.say('Bật đèn tủ số 1');
+    expect(r.pending?.summary).toMatch(/^Bật tay cả hai nhánh đèn tủ DM0010/);
+    await op.say('hủy');
+  });
+  it('a number not heard ("số hệ") keeps the list and reads it again; then "số 1" works', async () => {
+    await op.call('POST', '/api/chat/new');
+    await op.say('Tôi muốn điều khiển tủ ở quận 1.');
+    const r = await op.say('Bật đèn tủ số bê');
+    expect(r.text).toBe('Tôi chưa nghe rõ số. Bạn chọn số mấy? số 1: Lý Thường Kiệt 9 (DM0010); số 2: Hai Bà Trưng 2 (DM0001).');
+    expect(r.pending).toBeUndefined();
+    const p = await op.say('số 1');
+    expect(p.pending?.summary).toMatch(/^Bật tay cả hai nhánh đèn tủ DM0010/);
+    await op.say('hủy');
+  });
   it('"khu vực nào có tủ điều khiển được" lists the allowed cabinets by area', async () => {
     expect((await op.say('Khu vực nào có tủ trong danh sách có thể điều khiển được?')).text).toMatch(/^Các tủ được phép điều khiển qua Jarvis: Quận 1:/);
   });

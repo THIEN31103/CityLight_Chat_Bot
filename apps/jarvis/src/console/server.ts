@@ -447,9 +447,20 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     // a number picked from the list Jarvis just read ("số 2", "cái thứ hai")
     const picked = fresh?.choices.length && fresh.choices.length > 1 ? pickIn(text, fresh.choices.length) : null;
     const chosen = picked ? fresh!.choices[picked - 1]! : null;
+    // the action may come with the number ("bật đèn tủ số 2"); it wins over the one asked about
+    const said = chosen ? parseOrder(text, s.ctx.focus) : null;
+    const command = said && said.kind !== 'many' ? withBranch(said.command, text) : fresh?.command ? withBranch(fresh.command, text) : null;
     // "điều khiển tủ ở quận 1" said no action yet: the cabinet is picked first, then Jarvis asks what to do
-    if (chosen && !fresh!.command) return whatToDo(s, user, text, chosen, fresh!.filter, send, speaker, extra);
-    let order: Order | null = chosen ? { kind: 'cabinet', command: withBranch(fresh!.command!, text), cabinet: chosen.code } : orderOf(s, text, fresh);
+    if (chosen && !command) return whatToDo(s, user, text, chosen, fresh!.filter, send, speaker, extra);
+    // a number not understood ("bật đèn tủ số hệ", 2026-11-23): the list stays and is read again; it was dropped,
+    // so the next "bật đèn tủ số 2" searched for a cabinet called "số 2"
+    if (!chosen && fresh && fresh.choices.length > 1 && /\b(so|thu) [a-z]+$/.test(fold(text).replace(/[^a-z0-9 ]+/g, ' ').trim())) {
+      const said2 = parseOrder(text, s.ctx.focus);
+      s.finding = { ...fresh, command: said2 && said2.kind !== 'many' ? withBranch(said2.command, text) : fresh.command, at: Date.now() };
+      const list = fresh.choices.map((c, k) => `số ${k + 1}: ${c.name} (${c.code})`).join('; ');
+      return fixedTurn(s, user, text, `Tôi chưa nghe rõ số. Bạn chọn số mấy? ${list}.`, send, speaker, extra);
+    }
+    let order: Order | null = chosen ? { kind: 'cabinet', command: command!, cabinet: chosen.code } : orderOf(s, text, fresh);
     s.finding = null;
     const wantsControl = !order && !fresh && /\b(dieu khien|ra lenh|gui lenh)\b/.test(fold(text));
     // a cabinet described instead of named: by area, street, state; in an order, as more details after "tủ nào?",

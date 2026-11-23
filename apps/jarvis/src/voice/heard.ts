@@ -21,7 +21,7 @@ export function collapseRepeats(text: string): string {
  * "Thủ Đức" as Groq heard it on 2026-11-21..23: "khẩu đức", "thủ đích". The answer then repeated the wrong name
  * ("Khu vực Khẩu Đức (TP Thủ Đức)"), so the transcript is corrected, not only the area search.
  */
-const THU_DUC = /(?<![\p{L}])(?:khẩu|khấu|khẩy|khủ|thủ|thù|thú)\s+(?:đức|đích|đứt|đực|đúc)(?![\p{L}])/giu;
+const THU_DUC = /(?<![\p{L}])(?:khẩu|khấu|khẩy|khủ|thủ|thù|thú)\s+(?:đức|đích|đứt|đực|đúc|đất)(?![\p{L}])/giu;
 
 export function fixPlaceNames(text: string): string {
   return text.replace(THU_DUC, 'Thủ Đức');
@@ -31,7 +31,8 @@ export function fixPlaceNames(text: string): string {
  * "tủ" written "tổ" / "tụ" ("điều khiển tổ ở khu vực quận 1", 2026-11-21): the answer copied it. Same exceptions as
  * markCabinetWord in tools/names.ts ("tổ đội", "tổ trưởng", "tổ bảo trì", "tụ bù", "tụ điện").
  */
-const CABINET = /(?<![\p{L}])([tT])[ổỔụỤ](?!\s+(?:đội|trưởng|bảo|kỹ|công|chức|bù|điện))(?![\p{L}])/gu;
+// "mã tố" (2026-11-23) too, but not "tố cáo", "tố giác", "tố chất", "tố tụng"
+const CABINET = /(?<![\p{L}])([tT])(?:[ổỔụỤ](?!\s+(?:đội|trưởng|bảo|kỹ|công|chức|bù|điện))|[ốỐ](?!\s+(?:cáo|giác|chất|tụng)))(?![\p{L}])/gu;
 
 export function fixCabinetWord(text: string): string {
   return text.replace(CABINET, (_m, t: string) => `${t}ủ`);

@@ -18,6 +18,7 @@ describe('fixPlaceNames', () => {
     expect(fixPlaceNames('Hệ thống khu vực thủ đích thế nào rồi?')).toBe('Hệ thống khu vực Thủ Đức thế nào rồi?');
     expect(fixPlaceNames('Tủ ở Khẩu Đức')).toBe('Tủ ở Thủ Đức');
     expect(fixPlaceNames('thủ đức')).toBe('Thủ Đức');
+    expect(fixPlaceNames('tình hình của quận thủ đất')).toBe('tình hình của quận Thủ Đức');
   });
   it('does not touch other words', () => {
     expect(fixPlaceNames('đích đến của khẩu hiệu')).toBe('đích đến của khẩu hiệu');
@@ -30,12 +31,14 @@ describe('fixCabinetWord', () => {
     expect(fixCabinetWord('điều khiển tổ ở khu vực quận 1')).toBe('điều khiển tủ ở khu vực quận 1');
     expect(fixCabinetWord('39 tụ mất kết nối')).toBe('39 tủ mất kết nối');
     expect(fixCabinetWord('Tổ TL01.0009 có sáng không?')).toBe('Tủ TL01.0009 có sáng không?');
+    expect(fixCabinetWord('hãy cho tôi mã tố.')).toBe('hãy cho tôi mã tủ.');
   });
   it('keeps the real words', () => {
     expect(fixCabinetWord('tổ đội bảo trì')).toBe('tổ đội bảo trì');
     expect(fixCabinetWord('tổ trưởng ca đêm')).toBe('tổ trưởng ca đêm');
     expect(fixCabinetWord('tụ bù bị hỏng')).toBe('tụ bù bị hỏng');
     expect(fixCabinetWord('tổng quan')).toBe('tổng quan');
+    expect(fixCabinetWord('tố cáo sai phạm')).toBe('tố cáo sai phạm');
   });
 });
 

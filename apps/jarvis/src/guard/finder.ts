@@ -124,15 +124,28 @@ export function stateIn(raw: string): StateFilter | undefined {
 }
 
 /** "số 2", "cái thứ hai", "tủ số ba", "thứ nhất", "cái cuối": the number picked from a list of `count` */
+// The order may come with the number: "bật đèn tủ số 2" (2026-11-23, it was searched as a cabinet called "số 2")
 export function pickIn(raw: string, count: number): number | null {
-  const f = tokens(textOf(raw)).join(' ');
-  if (f.split(' ').length > 6) return null;
+  // "số hai" heard as "số hệ" (2026-11-23)
+  const t = tokens(textOf(raw).replace(/\b(so|thu) (he|hay)\b/g, '$1 2')).filter((w) => !COURTESY.has(w));
+  if (t.length > 9) return null;
+  const f = t.join(' ');
   if (/\b(dau tien|thu nhat)\b/.test(f)) return 1;
   if (/\b(cuoi cung|cai cuoi|tucab cuoi)\b/.test(f)) return count;
-  const m = /^(?:(?:chon|lay|la|bat|tat)\s)?(?:(?:cai|tucab|so)\s)?(?:(?:so|thu)\s)?(\d{1,2})$/.exec(f.replace(/\b(nhe|nha|di|a|oi|jarvis)\b/g, '').trim());
-  const n = m ? Number(m[1]) : NaN;
-  return n >= 1 && n <= count ? n : null;
+  if (!/^\d{1,2}$/.test(t[t.length - 1] ?? '')) return null;
+  let i = t.length - 1;
+  if (['so', 'thu'].includes(t[i - 1]!)) i--;
+  if (['cai', 'tucab'].includes(t[i - 1]!)) i--;
+  const before = t.slice(0, i);
+  // "bật nhánh 2" names a branch: a bare number only after "chọn", "lấy", "bật", "tắt"
+  const ok = i < t.length - 1 ? before.every((w) => ORDER_WORDS.has(w)) : before.every((w) => BARE_PICK.has(w));
+  const n = Number(t[t.length - 1]);
+  return ok && n >= 1 && n <= count ? n : null;
 }
+const COURTESY = new Set(['nhe', 'nha', 'di', 'a', 'oi', 'jarvis']);
+const BARE_PICK = new Set(['chon', 'lay', 'la', 'bat', 'tat']);
+/** what an order says before "tủ số 2": "bật đèn", "tắt tay cả hai nhánh", "bật nhánh 1 cho tôi" */
+const ORDER_WORDS = new Set([...BARE_PICK, 'mo', 'den', 'tay', 'nhanh', 'ca', '1', '2', 'cho', 'toi', 'lai', 'len', 'o', 'cua', 'tucab', 'cai']);
 
 export const describes = (f: FindFilter) => !!(f.area || f.street || f.state);
 
