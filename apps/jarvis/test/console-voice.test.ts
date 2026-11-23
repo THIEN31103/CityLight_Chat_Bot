@@ -55,7 +55,7 @@ async function speak(seconds: number) {
   const raw = await res.text();
   return {
     status: res.status,
-    events: raw.split('\n\n').filter(Boolean).map((b) => ({ event: /event: (.*)/.exec(b)?.[1], data: JSON.parse(/data: (.*)/.exec(b)?.[1] ?? 'null') as Record<string, unknown> })),
+    events: raw.split('\n\n').filter((b) => b && !b.startsWith(':')).map((b) => ({ event: /event: (.*)/.exec(b)?.[1], data: JSON.parse(/data: (.*)/.exec(b)?.[1] ?? 'null') as Record<string, unknown> })),
     raw,
   };
 }

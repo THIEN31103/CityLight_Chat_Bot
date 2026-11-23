@@ -215,7 +215,15 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     res.on('close', () => {
       if (!res.writableFinished) ac.abort();
     });
-    res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive', ...SECURITY_HEADERS });
+    // behind a proxy (GitHub Codespaces port forwarding, 2026-11-23: no sound, nothing heard, everything late) the
+    // stream must not be compressed or held back: no-transform, X-Accel-Buffering, headers flushed at once and a
+    // first 2 KB comment, which proxies that wait for a full buffer let through
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store, no-transform', connection: 'keep-alive',
+      'x-accel-buffering': 'no', ...SECURITY_HEADERS,
+    });
+    res.flushHeaders();
+    res.write(`:${' '.repeat(2048)}\n\n`);
     const send = (event: string, data: unknown) => {
       if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };

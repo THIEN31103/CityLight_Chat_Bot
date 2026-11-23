@@ -68,7 +68,7 @@ class Browser {
     const res = await fetch(`${base}/api/chat`, { method: 'POST', headers: { cookie: this.cookie, 'content-type': 'application/json', 'x-jarvis-csrf': this.csrf }, body: JSON.stringify({ text }) });
     const raw = await res.text();
     if (!res.headers.get('content-type')?.includes('event-stream')) return { status: res.status, events: [], error: JSON.parse(raw) };
-    const events = raw.split('\n\n').filter(Boolean).map((b) => {
+    const events = raw.split('\n\n').filter((b) => b && !b.startsWith(':')).map((b) => {
       const ev = /event: (.*)/.exec(b)?.[1];
       const data = /data: (.*)/.exec(b)?.[1];
       return { event: ev, data: data ? JSON.parse(data) : null };

@@ -54,6 +54,8 @@ async function stream(path, body, onEvent, signal) {
         if (line.startsWith('event: ')) event = line.slice(7);
         else if (line.startsWith('data: ')) data += line.slice(6);
       }
+      // a comment block (the server's first 2 KB, sent to get through proxies) is not an event
+      if (!data && event === 'message') continue;
       try {
         onEvent(event, data ? JSON.parse(data) : null);
       } catch (e) {

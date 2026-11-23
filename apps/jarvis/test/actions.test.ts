@@ -64,7 +64,7 @@ class Browser {
   }
 }
 const parse = (raw: string): Ev[] =>
-  raw.split('\n\n').filter(Boolean).map((b) => ({ event: /event: (.*)/.exec(b)?.[1] ?? '', data: JSON.parse(/data: (.*)/.exec(b)?.[1] ?? 'null') }));
+  raw.split('\n\n').filter((b) => b && !b.startsWith(':')).map((b) => ({ event: /event: (.*)/.exec(b)?.[1] ?? '', data: JSON.parse(/data: (.*)/.exec(b)?.[1] ?? 'null') }));
 const posts = () => stub.seen.filter((r) => r.method === 'POST' && r.path.endsWith('/commands'));
 const audit = () => readdirSync(auditDir).flatMap((f) => readFileSync(path.join(auditDir, f), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>));
 
