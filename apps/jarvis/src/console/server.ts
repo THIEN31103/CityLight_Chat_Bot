@@ -15,6 +15,7 @@ import type { LlmProvider } from '../brain/llm';
 import { systemPrompt } from '../brain/system-prompt';
 import type { Config } from '../config';
 import { sanitizeText } from '../sanitize/llm';
+import { tidyHeard } from '../voice/heard';
 import { bootstrapAdmin, canEditSettings, canGrant, canViewChatsOf, getAccess, listAccess, rememberUser, rights, setAccess, type Actor, type Flag } from '../store/access';
 import { addTokenUsage, tokensToday, type Db } from '../store/db';
 import { addMessage, createConversation, deleteAllOwn, deleteOwn, getConversation, getMessages, listAll, listOwn, renameOwn, TITLE_MAX, tokenReport } from '../store/history';
@@ -261,7 +262,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     try {
       send('status', { state: 'transcribing' });
       const stt = await voice.transcribe(pcm, ac.signal);
-      const text = sanitizeText(stt.text).trim();
+      const text = tidyHeard(sanitizeText(stt.text));
       if (cfg.debugAudio) keepForDebug(pcm, { heard: text, sttMs: stt.ms, audioMs: stt.audioMs });
       send('transcript', { text, sttMs: stt.ms, audioMs: stt.audioMs });
       if (!text || text.length < 2) {

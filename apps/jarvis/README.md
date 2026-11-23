@@ -385,6 +385,7 @@ Bạn báo: AI trả lời, rồi một luật trong code xen vào, câu khác �
 | D49 | "Ngoài khu vực Thủ Đức" bị hiểu là "ở Thủ Đức" | Bộ tìm tủ hiểu "ngoài / trừ / không phải" + khu vực: bỏ khu vực đó (và khu vực hỏi trước) |
 | D50 | Thử thêm 3 câu gợi ý cho Groq trên 49 bản ghi 21/11: có tên quận; ghép; có tên quận nhưng không mã tủ | **Giữ câu gợi ý cũ.** Có tên quận thì nghe đúng "Thủ Đức", "điều khiển" hơn, nhưng mã tủ mẫu trong gợi ý làm Groq **ghi nhầm mã** (nói TL01.0009 ra "TLA1.0016"), "Hủy lệnh" thành "Quý lệnh"; bỏ mã tủ thì Groq bịa câu quảng cáo YouTube cho cả câu rõ. Nghe sai còn lại xử lý trong code (D30, D37, D40, D44) |
 | D51 | Máy cá nhân quá nặng; Cloudflare miễn phí không chạy được Postgres / MQTT / worker chạy liên tục | **GitHub Codespaces** trên repo của bạn (`.devcontainer/`): máy 2 lõi / 8 GB, Docker trong codespace, tự dựng cả hệ thống thử. Jarvis thêm `JARVIS_EXTRA_ORIGINS` (chỉ `https://`) để nhận yêu cầu qua địa chỉ chuyển tiếp của Codespaces; console vẫn chỉ nghe 127.0.0.1 |
+| D52 | Groq lặp câu ("Xin chào. Xin chào. Xin chào."), nghe "Thủ Đức" thành "khẩu đức" / "thủ đích", "tủ" thành "tổ" / "tụ"; AI chép lại chữ sai vào câu trả lời | **Sửa ngay chữ nghe được** (`src/voice/heard.ts`) trước khi hiện, ghi nhật ký và trả lời: gộp câu giống hệt nhau liền kề, đổi các dạng nghe sai của Thủ Đức thành "Thủ Đức", "tổ" / "tụ" thành "tủ" (trừ "tổ đội", "tổ trưởng", "tụ bù"…, như D44). Chỉ áp dụng cho câu nói, câu gõ giữ nguyên |
 
 ## Còn thiếu (cần máy / quyết định)
 
