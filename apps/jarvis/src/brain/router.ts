@@ -144,8 +144,15 @@ export function route(raw: string, focus: Focus = {}): Routed | null {
 
   const cab = cabinetArg(raw, normalizeCodes(wordsToDigits(fold(markCabinetWord(raw)))), focus);
   if (cab) {
-    if (/(toi qua|hom qua|dem qua|sang nay|luc may gio|may gio bat|may gio tat|\d+\s?(gio|h) qua|lich su|bat thuong|ro .*qua)/.test(f))
-      return { name: 'get_cabinet_history', input: { cabinet: cab, hours: /tuan/.test(f) ? 168 : 24 } };
+    // what was done to the cabinet over weeks (2026-11-23): "tháng này tủ đó bị bật tay mấy lần", "lịch sử can thiệp"
+    if (/(thang nay|thang truoc|\d+ thang|\d+ ngay qua|can thiep|bao nhieu lan|may lan|lich su (lenh|dieu khien|su co|canh bao))/.test(f)) {
+      const n = /(\d+) ngay/.exec(f)?.[1];
+      const m = /(\d+) thang/.exec(f)?.[1];
+      return { name: 'get_cabinet_interventions', input: { cabinet: cab, days: n ? Number(n) : m ? Number(m) * 30 : 30 } };
+    }
+    // leakage questions get the leakage check of the history (2026-11-23): "dòng rò tủ đó có tăng không"
+    if (/(toi qua|hom qua|dem qua|sang nay|luc may gio|may gio bat|may gio tat|\d+\s?(gio|h) qua|lich su|bat thuong|ro .*qua|dong ro|^ro\b|\bro (co|tang|cao|bao nhieu|vuot|the nao|tu|cua))/.test(f))
+      return { name: 'get_cabinet_history', input: { cabinet: cab, hours: /(tuan|7 ngay)/.test(f) ? 168 : 24 } };
     if (/\blich\b/.test(f)) return { name: 'get_schedule', input: { cabinet: cab } };
     // the cabinet answer carries its open alarms too ("tủ đó có cảnh báo gì không")
     if (/(bi gi|the nao|sao roi|tinh trang|trang thai|co sang|co tat|dang sang|dang tat|sang khong|tat khong|loi gi|kiem tra|ra sao|ok khong|on khong|canh bao|bao dong|co loi|bi loi|da bat|da tat|bat (den )?chua|tat (den )?chua|sang chua)/.test(f)) return { name: 'get_cabinet', input: { cabinet: cab } };

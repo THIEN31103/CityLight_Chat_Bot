@@ -85,13 +85,23 @@ export class RateLimiter {
   private readonly hits = new Map<string, number[]>();
 
   allow(userId: string, perMin: number, now = Date.now()): boolean {
-    const recent = (this.hits.get(userId) ?? []).filter((t) => now - t < 60_000);
-    if (recent.length >= perMin) {
-      this.hits.set(userId, recent);
-      return false;
+    return this.allowAll([{ key: userId, max: perMin }], now) === null;
+  }
+
+  /**
+   * Several windows at once (2026-11-23: one user per minute, one user per day, the whole system per minute, speech
+   * per minute): every one must have room, and the hit is counted in all of them only then. Returns null when allowed,
+   * else the first full window with how long until it has room. max 0 = no limit.
+   */
+  allowAll(limits: { key: string; max: number; windowMs?: number }[], now = Date.now()): { key: string; waitMs: number } | null {
+    const live = limits.filter((l) => l.max > 0);
+    for (const l of live) {
+      const w = l.windowMs ?? 60_000;
+      const recent = (this.hits.get(l.key) ?? []).filter((t) => now - t < w);
+      this.hits.set(l.key, recent);
+      if (recent.length >= l.max) return { key: l.key, waitMs: Math.max(1000, w - (now - recent[0]!)) };
     }
-    recent.push(now);
-    this.hits.set(userId, recent);
-    return true;
+    for (const l of live) this.hits.get(l.key)!.push(now);
+    return null;
   }
 }

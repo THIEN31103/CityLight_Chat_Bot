@@ -75,3 +75,32 @@ describe('JARVIS_EXTRA_ORIGINS (GitHub Codespaces, 2026-11-21)', () => {
     expect(loadConfig({ LLM_PROVIDER: 'fake' }).console.extraOrigins).toEqual([]);
   });
 });
+
+describe('shared limits (2026-11-23: one free Groq key for everyone)', () => {
+  it('defaults with Groq; none with other providers; settable, 0 = off', async () => {
+    const { loadConfig } = await import('../src/config');
+    const groq = loadConfig({ LLM_PROVIDER: 'groq', GROQ_API_KEY: 'k', STT_PROVIDER: 'groq' });
+    expect([groq.globalPerMin, groq.perUserPerDay, groq.sttPerMin]).toEqual([4, 150, 15]);
+    const fake = loadConfig({ LLM_PROVIDER: 'fake' });
+    expect([fake.globalPerMin, fake.perUserPerDay, fake.sttPerMin]).toEqual([0, 0, 0]);
+    const set = loadConfig({ LLM_PROVIDER: 'groq', GROQ_API_KEY: 'k', JARVIS_GLOBAL_PER_MIN: '0', JARVIS_PER_USER_PER_DAY: '20' });
+    expect([set.globalPerMin, set.perUserPerDay]).toEqual([0, 20]);
+  });
+});
+
+describe('RateLimiter.allowAll', () => {
+  it('counts a hit only when every window has room, and says how long to wait', async () => {
+    const { RateLimiter } = await import('../src/console/session');
+    const r = new RateLimiter();
+    const t0 = 1_000_000;
+    const limits = (u: string) => [{ key: u, max: 3 }, { key: '*', max: 4 }];
+    expect(r.allowAll(limits('a'), t0)).toBeNull();
+    expect(r.allowAll(limits('a'), t0 + 1)).toBeNull();
+    expect(r.allowAll(limits('b'), t0 + 2)).toBeNull();
+    expect(r.allowAll(limits('b'), t0 + 3)).toBeNull();
+    // the system is full: b is refused and its own window is not charged
+    expect(r.allowAll(limits('b'), t0 + 4)).toEqual({ key: '*', waitMs: 60_000 - 4 });
+    expect(r.allowAll(limits('b'), t0 + 60_001)).toBeNull();
+    expect(r.allowAll([{ key: 'x', max: 0 }], t0)).toBeNull();
+  });
+});

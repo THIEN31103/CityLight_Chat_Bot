@@ -278,3 +278,71 @@ describe('area names said in a shift report (user test 2026-11-23)', () => {
     expect((await run('Quận 1')).khu_vuc).toBe('Quận 1');
   });
 });
+
+describe('leakReport (2026-11-23)', () => {
+  const pt = (h: number, leak: number, kw: number) => ({ ts: new Date(Date.UTC(2026, 10, 23, h)).toISOString(), leakMa: leak, pTotalKw: kw });
+  const detail = (over: Record<string, unknown> = {}) => ({ thresholds: { leakMa: { enabled: true, value: 30 } }, state: { branch1On: true, branch2On: true, iL1: 3 }, ...over });
+
+  it('rising leakage over the cabinet threshold: counted, first and last time, the trend', async () => {
+    const { leakReport } = await import('../src/tools/read');
+    const points = [pt(0, 5, 0), pt(1, 6, 0), pt(2, 6, 0), pt(10, 12, 2), pt(11, 20, 2), pt(12, 25, 2), pt(18, 31, 2), pt(19, 35, 2), pt(20, 40, 2)];
+    const r = leakReport(points, detail(), 0.5);
+    expect(r).toMatchObject({ nguong_mA: 30, cao_nhat_mA: 40, so_lan_vuot_nguong: 3 });
+    expect(r.xu_huong).toMatch(/^tăng dần/);
+    expect(r.ro_trung_binh).toEqual({ khi_den_sang_mA: 27.2, khi_den_tat_mA: 5.7 });
+    expect(r.dong_khi_tat).toBeUndefined();
+  });
+  it('steady and under the threshold: nothing over, "ổn định"', async () => {
+    const { leakReport } = await import('../src/tools/read');
+    const r = leakReport([0, 1, 2, 3, 4, 5].map((h) => pt(h, 8, 2)), detail(), 0.5);
+    expect(r).toMatchObject({ so_lan_vuot_nguong: 0, xu_huong: 'ổn định' });
+  });
+  it('both branches off but a current flows now: says to check the contactor', async () => {
+    const { leakReport } = await import('../src/tools/read');
+    const r = leakReport([pt(0, 4, 0)], detail({ state: { branch1On: false, branch2On: false, iL1: 2.4, iL2: 0 } }), 0.5);
+    expect(r.dong_khi_tat).toMatch(/^Cả hai nhánh đang tắt nhưng vẫn có dòng 2.4 A/);
+  });
+  it('no threshold set, no data: said, not guessed', async () => {
+    const { leakReport } = await import('../src/tools/read');
+    const r = leakReport([], { thresholds: { leakMa: { enabled: false, value: 30 } } }, 0.5);
+    expect(r).toMatchObject({ nguong_mA: 'tủ chưa đặt ngưỡng rò', du_lieu: 'không có số đo dòng rò trong khoảng thời gian này' });
+  });
+});
+
+describe('get_cabinet_interventions (2026-11-23)', () => {
+  const day = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
+  const cab = { id: 'c1', code: 'TL01.0009', name: 'Lý Thường Kiệt 9', status: 'on' };
+  const commands = [
+    { id: 'k1', type: 'MANUAL_ALL', params: { on: true }, status: 'confirmed', queuedAt: day(1), requestedBy: 'secret-user' },
+    { id: 'k2', type: 'MANUAL_BRANCH', params: { on: false, branch: 1 }, status: 'failed', queuedAt: day(3), requestedBy: 'secret-user' },
+    { id: 'k3', type: 'MANUAL_ALL', params: { on: true }, status: 'confirmed', queuedAt: day(10), requestedBy: 'secret-user' },
+    { id: 'k4', type: 'AUTO', params: {}, status: 'confirmed', queuedAt: day(45), requestedBy: 'secret-user' },
+  ];
+  const alarms = [
+    { id: 'a1', code: 'E201', message: 'Mất kết nối PLC', startedAt: day(2), active: true, ackedBy: 'secret-user' },
+    { id: 'a2', code: 'E201', message: 'Mất kết nối PLC', startedAt: day(20), active: false },
+    { id: 'a3', code: 'E301', message: 'Dòng rò cao', startedAt: day(40), active: false },
+  ];
+  const incidents = [{ id: 'i1', code: 'SC-1', cabinetId: 'c1', category: 'Đèn tắt', status: 'resolved', reportedAt: day(5), assignee: 'secret-user', reportedBy: 'secret-user' }, { id: 'i2', code: 'SC-9', cabinetId: 'other', category: 'x', status: 'new', reportedAt: day(1) }];
+  const ctx = () => ({
+    reads: {
+      search: async () => [cab], cabinetCommands: async () => commands, cabinetAlarms: async () => alarms,
+      incidents: async () => ({ items: incidents, total: 2, page: 1, size: 100 }),
+    },
+    user: { id: 'interventions-test' }, focus: {},
+  }) as unknown as ToolContext;
+  const tool = () => READ_TOOLS.find((t) => t.name === 'get_cabinet_interventions')!;
+
+  it('30 days: commands by kind with failures, alarms by code with the open ones, this cabinet\'s incidents; never who', async () => {
+    const out = (await tool().run(ctx(), { cabinet: 'TL01.0009', days: 30 })) as Record<string, any>;
+    expect(out.lenh).toMatchObject({ tong_so: 3, that_bai: 1, theo_loai: { 'Bật tay cả hai nhánh': 2, 'Tắt tay nhánh 1': 1 } });
+    expect(out.canh_bao).toMatchObject({ tong_so: 2, theo_ma: { 'E201 Mất kết nối PLC': 2 }, dang_mo: ['E201'] });
+    expect(out.su_co.map((i: any) => i.code)).toEqual(['SC-1']);
+    expect(JSON.stringify(out)).not.toContain('secret-user');
+  });
+  it('90 days takes the older ones too', async () => {
+    const out = (await tool().run(ctx(), { cabinet: 'TL01.0009', days: 90 })) as Record<string, any>;
+    expect(out.lenh.tong_so).toBe(4);
+    expect(out.canh_bao.tong_so).toBe(3);
+  });
+});

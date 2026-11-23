@@ -1,6 +1,6 @@
 // Read tools (spec 5.2): they run at once, only GET the API as the signed-in user, and return short, model-friendly
 // shapes (Vietnamese labels, Vietnam time). This file must never call a command endpoint (spec 6.10, test/static.test.ts).
-import type { Alarm, CabinetStatus, CabinetSummary, Command, DiagnosticItem } from '@citylight/shared';
+import type { Alarm, CabinetStatus, CabinetSummary, Command, DiagnosticItem, TelemetryPoint } from '@citylight/shared';
 import { z } from 'zod';
 import { ApiProblem } from '../api/client';
 import { TELEMETRY_METRICS, type AreaNode } from '../api/read';
@@ -191,7 +191,7 @@ const getCabinetHistory: ToolDef<{ cabinet: string; hours: number; metrics?: (ty
   name: 'get_cabinet_history',
   kind: 'read',
   description:
-    'PAST of one cabinet over the last N hours (max 168): min / max / average values, likely on / off times (guessed from power), commands sent. Use for "tối qua / hôm qua bật lúc mấy giờ", "dòng rò 24 giờ qua", "có bất thường không".',
+    'PAST of one cabinet over the last N hours (max 168): min / max / average values, likely on / off times (guessed from power), commands sent, and a leakage check against the cabinet own threshold (times over it, rising or not, on vs off, current while both branches are off). Use for "tối qua / hôm qua bật lúc mấy giờ", "dòng rò 24 giờ qua", "rò có tăng không", "có bất thường không".',
   schema: obj({
     cabinet: CABINET_PROP,
     hours: { type: 'integer', minimum: 1, description: 'Số giờ nhìn lại, mặc định 24, tối đa 168' },
@@ -206,6 +206,10 @@ const getCabinetHistory: ToolDef<{ cabinet: string; hours: number; metrics?: (ty
     const to = new Date();
     const from = new Date(to.getTime() - hours * 3_600_000);
     const want = [...new Set([...(metrics ?? ['iL1', 'leakMa']), 'pTotalKw'])].filter((m): m is (typeof HISTORY_METRICS)[number] => (HISTORY_METRICS as readonly string[]).includes(m));
+    // the cabinet's own leakage threshold and its state now, for the leakage check
+    const detail = want.includes('leakMa')
+      ? ctx.reads.cabinet(id, { signal: ctx.signal }).then((d) => d as unknown as Parameters<typeof leakReport>[1]).catch(() => null)
+      : Promise.resolve(null);
     const [points, commands] = await Promise.all([
       ctx.reads.telemetry(id, want, from, to, { signal: ctx.signal }),
       ctx.reads.cabinetCommands(id, 30, { signal: ctx.signal }).catch(() => [] as Command[]),
@@ -227,14 +231,57 @@ const getCabinetHistory: ToolDef<{ cabinet: string; hours: number; metrics?: (ty
     }
     const sent = commands.filter((c) => new Date(c.queuedAt) >= from).slice(0, 10)
       .map((c) => ({ type: c.type, params: c.params, status: COMMAND_STATUS_VI[c.status] ?? c.status, at: vnTime(c.queuedAt) }));
+    const leak = want.includes('leakMa') ? leakReport(points, await detail, threshold) : undefined;
     return {
       cabinet: r.cabinet.code, from: vnTime(from.toISOString()), to: vnTime(to.toISOString()), samples: points.length, stats,
       likelySwitches: peak > 0.05 ? switches.slice(-12) : 'công suất gần 0 suốt khoảng thời gian, không suy ra được giờ bật / tắt',
       note: 'Giờ bật / tắt suy ra từ công suất, chỉ là khả năng',
+      ...(leak ? { chan_doan_ro: leak } : {}),
       commands: sent,
     };
   },
 };
+
+/**
+ * Leakage against this cabinet's own threshold (Gemini review 2026-11-23, "chẩn đoán dòng rò"): how often and when it
+ * went over, whether it is rising, on vs off, and a current while both branches are off now. Facts only: the cause is
+ * for a field check, said as such.
+ */
+export function leakReport(
+  points: TelemetryPoint[], detail: { state?: Record<string, unknown>; thresholds?: { leakMa?: { enabled: boolean; value: number } } } | null, onKw: number,
+): Record<string, unknown> {
+  const xs = points.filter((p) => typeof p.leakMa === 'number').map((p) => ({ ts: p.ts, v: p.leakMa as number, on: typeof p.pTotalKw === 'number' ? p.pTotalKw > onKw : null }));
+  const limit = detail?.thresholds?.leakMa?.enabled ? detail.thresholds.leakMa.value : null;
+  const out: Record<string, unknown> = { nguong_mA: limit ?? 'tủ chưa đặt ngưỡng rò' };
+  if (xs.length) {
+    const over = limit === null ? [] : xs.filter((p) => p.v > limit);
+    out.cao_nhat_mA = Math.max(...xs.map((p) => p.v));
+    if (limit !== null) {
+      out.so_lan_vuot_nguong = over.length;
+      if (over.length) Object.assign(out, { vuot_lan_dau: vnTime(over[0]!.ts), vuot_lan_cuoi: vnTime(over[over.length - 1]!.ts) });
+    }
+    // rising: the last third clearly above the first third (at least 1.5 times and 2 mA more)
+    if (xs.length >= 6) {
+      const third = Math.floor(xs.length / 3);
+      const avg = (a: typeof xs) => a.reduce((s, p) => s + p.v, 0) / a.length;
+      const first = avg(xs.slice(0, third));
+      const last = avg(xs.slice(-third));
+      out.xu_huong = last >= first * 1.5 && last - first >= 2 ? `tăng dần (từ khoảng ${first.toFixed(1)} lên ${last.toFixed(1)} mA)`
+        : first >= last * 1.5 && first - last >= 2 ? `giảm dần (từ khoảng ${first.toFixed(1)} xuống ${last.toFixed(1)} mA)` : 'ổn định';
+    }
+    const lit = xs.filter((p) => p.on === true);
+    const dark = xs.filter((p) => p.on === false);
+    const mean = (a: typeof xs) => Math.round((a.reduce((s, p) => s + p.v, 0) / a.length) * 10) / 10;
+    if (lit.length && dark.length) out.ro_trung_binh = { khi_den_sang_mA: mean(lit), khi_den_tat_mA: mean(dark) };
+  } else out.du_lieu = 'không có số đo dòng rò trong khoảng thời gian này';
+  // a current while both branches are off now: a contactor stuck closed, or a load before the contactor
+  const st = detail?.state ?? {};
+  const amps = ['iL1', 'iL2', 'iL3'].map((k) => st[k]).filter((x): x is number => typeof x === 'number');
+  if (st.branch1On === false && st.branch2On === false && amps.some((a) => a > 0.5))
+    out.dong_khi_tat = `Cả hai nhánh đang tắt nhưng vẫn có dòng ${Math.max(...amps).toFixed(1)} A: nên kiểm tra contactor và tải trước contactor.`;
+  out.ghi_chu = 'Chỉ nói số liệu và điều bất thường; nguyên nhân thật cần kiểm tra hiện trường, nói rõ điều này nếu có bất thường.';
+  return out;
+}
 
 const listAlarms: ToolDef<{ severity?: 'critical' | 'major' | 'minor'; district?: string; active: boolean; limit: number }> = {
   name: 'list_alarms',
@@ -651,6 +698,73 @@ const getShiftReport: ToolDef<{ area?: string }> = {
   },
 };
 
+/** a command in the words of the confirmation card ("Tắt tay nhánh 1"); other device commands keep their name */
+function commandVi(c: Pick<Command, 'type' | 'params'>): string {
+  const on = c.params?.on === true;
+  switch (c.type as string) {
+    case 'MANUAL_ALL': return `${on ? 'Bật' : 'Tắt'} tay cả hai nhánh`;
+    case 'MANUAL_BRANCH': return `${on ? 'Bật' : 'Tắt'} tay nhánh ${String(c.params?.branch ?? '?')}`;
+    case 'AUTO': return 'Trả về chạy theo lịch';
+    case 'PULSE_ON': return 'Bật tạm 15 phút';
+    case 'DIAG': return 'Tự kiểm tra RS485';
+    default: return String(c.type);
+  }
+}
+
+/**
+ * What was done to one cabinet over the last N days (Gemini review 2026-11-23, "lịch sử can thiệp theo tháng"):
+ * commands by kind and result, alarms by code, field incidents. Never who sent or handled them (accounts, D60).
+ */
+const getCabinetInterventions: ToolDef<{ cabinet: string; days: number }> = {
+  name: 'get_cabinet_interventions',
+  kind: 'read',
+  description:
+    'What happened to one cabinet over the last N days (default 30, max 90): commands sent (how many of each kind, how many failed, the latest ones), alarms (how many of each code, which are still open), field incidents. Use for "tháng này tủ đó bị lỗi / bật tay mấy lần", "lịch sử can thiệp", "30 ngày qua tủ X thế nào". Never says who did anything.',
+  schema: obj({ cabinet: CABINET_PROP, days: { type: 'integer', minimum: 1, description: 'Số ngày nhìn lại, mặc định 30, tối đa 90' } }, ['cabinet']),
+  input: z.object({ cabinet: ref, days: z.coerce.number().int().min(1).default(30).transform((n) => Math.min(n, 90)) }),
+  async run(ctx, { cabinet, days }) {
+    const r = await resolveCabinet(ctx, cabinet);
+    if (r.kind !== 'one') return notResolved(r);
+    const id = r.cabinet.id;
+    setFocus(ctx.focus, r.cabinet);
+    const o = { signal: ctx.signal };
+    const from = Date.now() - days * 86_400_000;
+    const since = (iso: string | null | undefined) => !!iso && new Date(iso).getTime() >= from;
+    const noRight = (e: unknown) => (e instanceof ApiProblem && e.status === 403 ? null : Promise.reject(e));
+    const [commands, alarms, incidents] = await Promise.all([
+      ctx.reads.cabinetCommands(id, 200, o).catch(noRight),
+      ctx.reads.cabinetAlarms(id, 100, o).catch(noRight),
+      ctx.reads.incidents({ q: 'all', size: 100 }, o).then((p) => p.items).catch(noRight),
+    ]);
+    const count = <T,>(xs: T[], key: (x: T) => string) => {
+      const m = new Map<string, number>();
+      for (const x of xs) m.set(key(x), (m.get(key(x)) ?? 0) + 1);
+      return Object.fromEntries([...m].sort((a, b) => b[1] - a[1]));
+    };
+    const cmds = (commands ?? []).filter((c) => since(c.queuedAt));
+    const failed = cmds.filter((c) => ['failed', 'timeout', 'cancelled'].includes(c.status as string));
+    const al = (alarms ?? []).filter((a) => since(a.startedAt));
+    const inc = (incidents ?? []).filter((i) => i.cabinetId === id && since(i.reportedAt));
+    return {
+      cabinet: r.cabinet.code, name: r.cabinet.name, so_ngay: days,
+      lenh: commands === null ? 'không có quyền xem lệnh' : {
+        tong_so: cmds.length,
+        theo_loai: count(cmds, commandVi),
+        that_bai: failed.length,
+        gan_nhat: cmds.slice(0, 5).map((c) => ({ lenh: commandVi(c), ket_qua: COMMAND_STATUS_VI[c.status] ?? c.status, luc: vnTime(c.queuedAt) })),
+      },
+      canh_bao: alarms === null ? 'không có quyền xem cảnh báo' : {
+        tong_so: al.length,
+        theo_ma: count(al, (a) => `${a.code} ${viText(a.message)}`.trim()),
+        dang_mo: al.filter((a) => a.active).map((a) => a.code),
+        ...(alarms.length >= 100 ? { ghi_chu: 'Chỉ xem được 100 cảnh báo gần nhất.' } : {}),
+      },
+      su_co: incidents === null ? 'không có quyền xem sự cố' : inc.slice(0, 5).map((i) => ({ code: i.code, category: i.category, status: INCIDENT_STATUS_VI[i.status] ?? i.status, bao_luc: vnTime(i.reportedAt) })),
+      ghi_chu: 'Không nói ai đã gửi lệnh hay xử lý sự cố. Nếu mọi phần đều 0 thì nói tủ không có can thiệp nào trong khoảng này.',
+    };
+  },
+};
+
 const getSchedule: ToolDef<{ cabinet: string }> = {
   name: 'get_schedule',
   kind: 'read',
@@ -713,7 +827,7 @@ const getCommandStatus: ToolDef<{ command_id: string }> = {
  * fewer. get_cabinet already resolves loose names (and asks back when several match), so find_cabinets is not needed.
  */
 export const READ_TOOLS = [
-  getSystemOverview, getCabinet, getCabinetHistory, listAlarms, explainAlarmCode, getAreaCabinets, findScheduleMismatch, getShiftReport, getSchedule, listIncidents,
+  getSystemOverview, getCabinet, getCabinetHistory, listAlarms, explainAlarmCode, getAreaCabinets, findScheduleMismatch, getShiftReport, getCabinetInterventions, getSchedule, listIncidents,
 ] as unknown as ToolDef[];
 
 /** Not offered to the model: list_areas, find_cabinets run only through the keyword router; get_command_status comes back with actions (milestone 4). */

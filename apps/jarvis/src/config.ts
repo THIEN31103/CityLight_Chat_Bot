@@ -84,6 +84,12 @@ const Env = z.object({
   JARVIS_DAILY_TOKEN_CAP_MAX: int(0, 0, 1_000_000_000),
   JARVIS_DAILY_TOKEN_CAP: int(0, 0, 1_000_000_000),
   JARVIS_PER_USER_PER_MIN: int(10, 1, 60),
+  // the whole system shares one free Groq key: 1,000 requests / day and 8,000 tokens / minute per model, one question
+  // about 4,800 tokens and 2-3 requests (measured 2026-11-23). These stop a few accounts from using it up for everyone.
+  // Defaults apply with LLM_PROVIDER=groq only; 0 = no limit.
+  JARVIS_GLOBAL_PER_MIN: z.coerce.number().int().min(0).max(600).optional(),
+  JARVIS_PER_USER_PER_DAY: z.coerce.number().int().min(0).max(100_000).optional(),
+  JARVIS_STT_PER_MIN: z.coerce.number().int().min(0).max(600).optional(),
   JARVIS_HISTORY_DAYS: int(90, 7, 365),
 
   JARVIS_CONSOLE_HOST: z.string().min(1).default('127.0.0.1'),
@@ -137,6 +143,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     dailyTokenCapMax: tokenCapMax,
     dailyTokenCap: e.JARVIS_DAILY_TOKEN_CAP,
     perUserPerMin: e.JARVIS_PER_USER_PER_MIN,
+    globalPerMin: e.JARVIS_GLOBAL_PER_MIN ?? (e.LLM_PROVIDER === 'groq' ? 4 : 0),
+    perUserPerDay: e.JARVIS_PER_USER_PER_DAY ?? (e.LLM_PROVIDER === 'groq' ? 150 : 0),
+    sttPerMin: e.JARVIS_STT_PER_MIN ?? (e.STT_PROVIDER === 'groq' ? 15 : 0),
     historyDays: e.JARVIS_HISTORY_DAYS,
     console: {
       host: e.JARVIS_CONSOLE_HOST, port: e.JARVIS_CONSOLE_PORT, token: consoleToken,

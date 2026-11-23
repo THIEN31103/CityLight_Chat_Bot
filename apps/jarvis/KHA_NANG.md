@@ -31,6 +31,8 @@ Mọi con số đều lấy từ dữ liệu thật lúc bạn hỏi. Không có
 | Tủ mất kết nối từ khi nào | "TL07.0013 mất kết nối từ khi nào?" |
 | Lịch bật / tắt | "Lịch bật tắt tủ TL01.0016 thế nào?" |
 | Lịch sử của một tủ | "Tối qua tủ đó bật lúc mấy giờ?", "Dòng rò tủ DM0003 24 giờ qua có bất thường không?" |
+| Dòng rò của một tủ | "Dòng rò tủ TL01.0009 có tăng không?", "Rò tủ đó tuần này thế nào?": so với ngưỡng riêng của tủ, số lần vượt, xu hướng, lúc sáng / tắt, có dòng khi cả hai nhánh tắt hay không |
+| Can thiệp vào một tủ theo tháng | "Tháng này tủ TL01.0009 bị bật tay mấy lần?", "Lịch sử can thiệp tủ đó 60 ngày qua": lệnh theo loại và số thất bại, cảnh báo theo mã, sự cố (tối đa 90 ngày; không nói ai làm) |
 | Cảnh báo | "Đang có cảnh báo gì?", "Phường nào đang có lỗi?", "Có bao nhiêu cảnh báo nghiêm trọng?" |
 | Ý nghĩa mã lỗi | "Mã E201 là gì?", có thể đọc từng số: "E hai không một" |
 | Sự cố ngoài hiện trường | "Có sự cố nào quá hạn không?" |
@@ -153,6 +155,7 @@ Mẹo để nghe đúng:
 |---|---|
 | Số câu hỏi | 10 câu / người / phút (quản trị viên chỉnh được). Câu xác nhận, hủy và lệnh không tính |
 | Lệnh điều khiển | 6 lệnh / người / phút |
+| Cả hệ thống (vì dùng chung một khóa AI miễn phí) | 4 câu hỏi / phút cho tất cả mọi người, 150 câu / người / 24 giờ, 15 câu nói / phút. Khi đầy, Jarvis báo cần chờ bao lâu. Câu xác nhận, hủy và lệnh luôn dùng được |
 | Khung xác nhận | 60 giây |
 | Độ dài một câu | 1.000 ký tự |
 | Bộ não AI (Groq gói miễn phí) | Khoảng 6–10 câu / phút cho cả hệ thống, tối đa 1.000 lượt / ngày cho mỗi model. Hỏi dồn dập có thể phải chờ vài giây hoặc thấy báo "đã dùng hết giới hạn miễn phí lúc này". Đợi một chút rồi hỏi lại |

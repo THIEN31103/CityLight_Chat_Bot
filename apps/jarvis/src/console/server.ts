@@ -53,7 +53,7 @@ export const ADMIN_NOTICE = 'Quản trị viên có thể xem nội dung chat';
 
 const TOOL_LABELS: Record<string, string> = {
   get_system_overview: 'tổng quan hệ thống', find_cabinets: 'tìm tủ', get_cabinet: 'tình trạng tủ', get_cabinet_history: 'lịch sử tủ',
-  list_alarms: 'cảnh báo', explain_alarm_code: 'mã cảnh báo', list_areas: 'khu vực', get_area_cabinets: 'tủ theo khu vực', find_schedule_mismatch: 'tủ lệch lịch', get_shift_report: 'bản tin đầu ca',
+  list_alarms: 'cảnh báo', explain_alarm_code: 'mã cảnh báo', list_areas: 'khu vực', get_area_cabinets: 'tủ theo khu vực', find_schedule_mismatch: 'tủ lệch lịch', get_shift_report: 'bản tin đầu ca', get_cabinet_interventions: 'lịch sử can thiệp',
   get_schedule: 'lịch bật / tắt', list_incidents: 'sự cố', get_command_status: 'trạng thái lệnh',
 };
 
@@ -200,10 +200,25 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
   // ---------------------------------------------------------------- chat
 
   /** Checks that apply before any work (busy, per-minute limit, daily token cap). */
-  function admit(s: ConsoleSession, user: User, countsAsQuestion = true) {
+  function admit(s: ConsoleSession, user: User, countsAsQuestion = true, voice = false) {
     if (s.busy) throw new HttpError(409, 'busy', 'Jarvis đang trả lời câu trước');
     const st = settings();
-    if (countsAsQuestion && !limiter.allow(user.id, st.perUserPerMin)) throw new HttpError(429, 'rate_limited', `Tối đa ${st.perUserPerMin} câu / phút, đợi một chút`);
+    // a spoken sentence always goes to speech recognition, even when its answer is made in code
+    const limits = [
+      ...(countsAsQuestion
+        ? [{ key: user.id, max: st.perUserPerMin }, { key: `${user.id}:day`, max: cfg.perUserPerDay, windowMs: 86_400_000 }, { key: '*', max: cfg.globalPerMin }]
+        : []),
+      ...(voice ? [{ key: '*stt', max: cfg.sttPerMin }] : []),
+    ];
+    const full = limiter.allowAll(limits);
+    if (full) {
+      const wait = Math.ceil(full.waitMs / 1000);
+      audit.write({ kind: 'rate_limited', userId: user.id, limit: full.key.replace(user.id, 'user'), waitS: wait });
+      if (full.key === user.id) throw new HttpError(429, 'rate_limited', `Tối đa ${st.perUserPerMin} câu / phút, đợi một chút`);
+      if (full.key === `${user.id}:day`) throw new HttpError(429, 'daily_limit', `Bạn đã hỏi tối đa ${cfg.perUserPerDay} câu trong 24 giờ qua. Câu xác nhận, hủy và lệnh vẫn dùng được; câu hỏi mới thì thử lại sau.`);
+      if (full.key === '*stt') throw new HttpError(429, 'busy_voice', `Đang có nhiều người nói với Jarvis cùng lúc, bạn nói lại sau khoảng ${wait} giây hoặc gõ câu hỏi.`);
+      throw new HttpError(429, 'busy_all', `Jarvis đang trả lời nhiều người cùng lúc (tối đa ${cfg.globalPerMin} câu / phút cho cả hệ thống), bạn thử lại sau khoảng ${wait} giây.`);
+    }
     const cap = effectiveTokenCap(st, cfg);
     if (cap > 0 && tokensToday(db) >= cap) {
       audit.write({ kind: 'token_cap_hit', userId: user.id, cap });
@@ -270,7 +285,8 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     if (!voice) throw new HttpError(503, 'voice_off', 'Chức năng giọng nói đang tắt (STT_PROVIDER / TTS_PROVIDER = none)');
     const pcm = await readRaw(req, MAX_AUDIO);
     if (pcm.length < 3200) throw new HttpError(422, 'too_short', 'Câu nói quá ngắn');
-    admit(s, user);
+    // while an action waits, the sentence is most likely its "xác nhận" / "hủy lệnh": never held back as a question
+    admit(s, user, !s.pending.active(), true);
     const { ac, send } = openStream(res, s);
     try {
       send('status', { state: 'transcribing' });
