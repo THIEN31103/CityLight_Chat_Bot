@@ -122,6 +122,8 @@ function cabinetList(m: string): { state?: string; limit?: number } | null {
   return { ...(state ? { state } : {}), ...(limit ? { limit } : {}) };
 }
 
+/** "bản tin đầu ca", "giao ca", "tóm tắt ca trực", "báo cáo đầu ca ở quận 1" */
+const SHIFT = /(dau ca|giao ca|nhan ca|ban tin|tom tat ca|bao cao ca|ca truc|truoc ca|cuoi ca)/;
 /** "lệch lịch", "lẽ ra phải sáng", "sáng ngoài giờ", "tắt trong giờ lịch", "không đúng lịch" */
 const MISMATCH = /(lech lich|sai lich|khong (dung|theo) lich|(le ra|dang le|dang ra) (phai )?(sang|tat|bat)|ngoai gio( lich)?|trong gio( lich)?|ban ngay (ma )?(van )?(sang|bat))/;
 /** off when the schedule wants them lit */
@@ -147,6 +149,11 @@ export function route(raw: string, focus: Focus = {}): Routed | null {
     if (/\blich\b/.test(f)) return { name: 'get_schedule', input: { cabinet: cab } };
     // the cabinet answer carries its open alarms too ("tủ đó có cảnh báo gì không")
     if (/(bi gi|the nao|sao roi|tinh trang|trang thai|co sang|co tat|dang sang|dang tat|sang khong|tat khong|loi gi|kiem tra|ra sao|ok khong|on khong|canh bao|bao dong|co loi|bi loi|da bat|da tat|bat (den )?chua|tat (den )?chua|sang chua)/.test(f)) return { name: 'get_cabinet', input: { cabinet: cab } };
+  }
+  // the shift report (2026-11-23): before incidents and alarms, a report of the shift names them too
+  if (!cab && SHIFT.test(f)) {
+    const area = areaWords(f);
+    return { name: 'get_shift_report', input: area ? { area } : {} };
   }
   if (/(su co|qua han|phieu)/.test(f)) return { name: 'list_incidents', input: { filter: /qua han/.test(f) ? 'overdue' : 'open' } };
   // lights against their schedule (2026-11-23): before the alarms route, "cảnh báo lệch lịch" is this list too

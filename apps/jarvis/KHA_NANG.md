@@ -23,6 +23,7 @@ Mọi con số đều lấy từ dữ liệu thật lúc bạn hỏi. Không có
 | Bạn muốn biết | Hỏi ví dụ |
 |---|---|
 | Tình hình chung | "Hệ thống thế nào rồi?", "Báo cáo tình hình" |
+| Bản tin đầu ca | "Bản tin đầu ca", "Báo cáo đầu ca ở quận 1", "Giao ca, có gì cần lưu ý?": tủ, cảnh báo nặng nhất, sự cố quá hạn, tủ lệch lịch trong một câu trả lời |
 | Danh sách khu vực | "Hệ thống có những khu vực nào?" |
 | Liệt kê tủ theo trạng thái | "Liệt kê 10 tủ đang hoạt động bình thường", "Tủ nào mất kết nối?", "Cho tui 5 tủ đang sáng" |
 | Tủ theo khu vực | "Tủ nào mất kết nối ở quận 1?", "Phường Bến Nghé có tủ nào lỗi?" |

@@ -182,3 +182,58 @@ describe('find_schedule_mismatch (alarm E303, 2026-11-23)', () => {
     expect(out.danh_sach).toEqual([]);
   });
 });
+
+describe('get_shift_report (2026-11-23)', () => {
+  const cab = (i: number, status: string, districtId: string, wardId: string) => ({ id: `c${i}`, code: `TL01.${String(i).padStart(4, '0')}`, name: `Đường ${i}`, status, districtId, wardId });
+  const cabinets = [cab(1, 'on', 'd1', 'w1'), cab(2, 'off', 'd1', 'w1'), cab(3, 'fault', 'd1', 'w1'), cab(4, 'offline', 'd1', 'w1'), cab(5, 'on', 'd2', 'w2'), cab(6, 'offline', 'd2', 'w2')];
+  const alarm = (i: number, code: string, type: string, severity: string, startedAt: string) => ({
+    id: `a${i}${code}`, code, cabinetId: `c${i}`, cabinetName: `Đường ${i}`, cabinetCode: `TL01.${String(i).padStart(4, '0')}`, districtName: i >= 5 ? 'TP Thủ Đức' : 'Quận 1',
+    type, severity, message: 'x', value: null, startedAt, endedAt: null, active: true, ackedBy: null, ackedAt: null,
+  });
+  const alarms = [
+    alarm(3, 'E201', 'plc_lost', 'major', '2026-11-23T10:00:00Z'), alarm(3, 'E301', 'leak_current', 'critical', '2026-11-23T09:00:00Z'),
+    alarm(1, 'E303', 'schedule_mismatch', 'major', '2026-11-23T11:00:00Z'), alarm(5, 'E105', 'door_open', 'minor', '2026-11-23T08:00:00Z'),
+  ];
+  const incidents = [
+    { id: 'i1', code: 'SC-1', cabinetId: 'c2', cabinetName: 'Đường 2', category: 'Đèn tắt', status: 'assigned', deadline: '2026-11-20T00:00:00Z' },
+    { id: 'i2', code: 'SC-2', cabinetId: 'c3', cabinetName: 'Đường 3', category: 'Cháy bóng', status: 'new', deadline: '2099-01-01T00:00:00Z' },
+    { id: 'i3', code: 'SC-3', cabinetId: 'c5', cabinetName: 'Đường 5', category: 'Nghiêng cột', status: 'assigned', deadline: '2026-11-21T00:00:00Z' },
+  ];
+  const areas = [{ id: 'd1', name: 'Quận 1', parentId: null, kind: 'district', cabinetCount: 4 }, { id: 'w1', name: 'Phường Bến Nghé', parentId: 'd1', kind: 'ward', cabinetCount: 4 }, { id: 'd2', name: 'TP Thủ Đức', parentId: null, kind: 'district', cabinetCount: 2 }, { id: 'w2', name: 'Phường Thảo Điền', parentId: 'd2', kind: 'ward', cabinetCount: 2 }];
+  const ctx = (over: Record<string, unknown> = {}) => ({
+    reads: {
+      mapCabinets: async () => cabinets, areaTree: async () => ({ areas, unassigned: 0 }),
+      alarms: async () => ({ items: alarms, total: alarms.length, page: 1, size: 100 }),
+      incidents: async () => ({ items: incidents, total: incidents.length, page: 1, size: 100 }),
+      ...over,
+    },
+    user: {}, focus: {},
+  }) as unknown as ToolContext;
+  const tool = () => READ_TOOLS.find((t) => t.name === 'get_shift_report')!;
+
+  it('whole system: cabinets, alarms worst first, incidents overdue first, off schedule, busiest areas', async () => {
+    const out = (await tool().run(ctx(), {})) as Record<string, any>;
+    expect(out.tu).toEqual({ tong_so: 6, truc_tuyen: 4, mat_ket_noi: 2, dang_sang: 2, dang_tat: 1, dang_loi: 1 });
+    expect(out.canh_bao).toMatchObject({ tong_so: 4, nghiem_trong: 1, quan_trong: 2, nhe: 1 });
+    expect(out.canh_bao.nang_nhat.map((a: any) => a.code)).toEqual(['E301', 'E303', 'E201']);
+    expect(out.su_co).toMatchObject({ dang_mo: 3, qua_han: 2 });
+    expect(out.su_co.qua_han_lau_nhat.map((i: any) => i.code)).toEqual(['SC-1', 'SC-3']);
+    expect(out.lech_lich).toEqual({ so_tu: 1, tu: ['TL01.0001'] });
+    expect(out.khu_vuc_nhieu_canh_bao[0]).toEqual({ khu_vuc: 'Quận 1', so_canh_bao: 3 });
+  });
+  it('one area: only its cabinets, alarms and incidents', async () => {
+    const out = (await tool().run(ctx(), { area: 'Thủ Đức' })) as Record<string, any>;
+    expect(out.khu_vuc).toBe('TP Thủ Đức');
+    expect(out.tu).toMatchObject({ tong_so: 2, mat_ket_noi: 1 });
+    expect(out.canh_bao).toMatchObject({ tong_so: 1, nhe: 1 });
+    expect(out.su_co).toMatchObject({ dang_mo: 1, qua_han: 1 });
+    expect(out.lech_lich).toMatchObject({ so_tu: 0 });
+    expect(out.khu_vuc_nhieu_canh_bao).toBeUndefined();
+  });
+  it('a role without the right to incidents: that part says so, the rest is still there', async () => {
+    const { ApiProblem } = await import('../src/api/client');
+    const out = (await tool().run(ctx({ incidents: async () => { throw new ApiProblem(403, 'forbidden', 'x'); } }), {})) as Record<string, any>;
+    expect(out.su_co).toBe('không có quyền xem sự cố');
+    expect(out.canh_bao.tong_so).toBe(4);
+  });
+});

@@ -512,6 +512,97 @@ const findScheduleMismatch: ToolDef<MismatchInput> = {
   },
 };
 
+const SEV_RANK: Record<Alarm['severity'], number> = { critical: 0, major: 1, minor: 2 };
+
+/**
+ * The shift report of one area or the whole system (Gemini review 2026-11-23, "bản tin đầu ca"): what the operator
+ * starting a shift needs in one answer instead of four questions: cabinets by state, open alarms (worst first), field
+ * incidents (overdue first), lights against their schedule (E303). Each part says when it could not be read.
+ */
+const getShiftReport: ToolDef<{ area?: string }> = {
+  name: 'get_shift_report',
+  kind: 'read',
+  description:
+    'Shift report ("bản tin đầu ca", "giao ca", "tóm tắt ca") of one ward or district, or of the whole system when area is empty: cabinets by state, open alarms by severity with the worst ones, open and overdue field incidents, cabinets off schedule; for the whole system also the areas with the most alarms. Use when the user starts or hands over a shift.',
+  schema: obj({ area: { type: 'string', description: 'Tên phường hoặc quận; bỏ trống = toàn hệ thống' } }),
+  input: z.object({ area: z.string().trim().max(100).optional() }),
+  async run(ctx, { area }) {
+    const o = { signal: ctx.signal };
+    const noRight = (e: unknown) => (e instanceof ApiProblem && e.status === 403 ? null : Promise.reject(e));
+    const alarmsAll = async () => {
+      const first = await ctx.reads.alarms({ active: true, size: 100, page: 1 }, o);
+      const items = [...first.items];
+      for (let p = 2; items.length < first.total && p <= MAX_ALARM_PAGES; p++) {
+        const next = await ctx.reads.alarms({ active: true, size: 100, page: p }, o);
+        if (!next.items.length) break;
+        items.push(...next.items);
+      }
+      return { total: first.total, items };
+    };
+    const [cabinets, alarms, incidents] = await Promise.all([
+      ctx.reads.mapCabinets(o),
+      alarmsAll().catch(noRight),
+      ctx.reads.incidents({ q: 'new_assigned_deferred', size: 100 }, o).then((p) => p.items).catch(noRight),
+    ]);
+    let inArea = (_c: CabinetSummary) => true;
+    let where: Record<string, unknown> = { khu_vuc: 'toàn hệ thống' };
+    if (!wholeSystem(area)) {
+      const found = await pickArea(ctx, area!);
+      if ('error' in found) return found.error;
+      const id = found.pick.id;
+      inArea = (c) => c.districtId === id || c.wardId === id;
+      where = { khu_vuc: found.pick.name, ...(found.heardAs ? { ghi_chu_ten: `Không có khu vực "${area}", hiểu là ${found.heardAs}. Nói rõ điều này.` } : {}) };
+    }
+    const scope = cabinets.filter(inArea);
+    const ids = new Set(scope.map((c) => c.id));
+    const n = (s: CabinetStatus) => scope.filter((c) => c.status === s).length;
+    const now = Date.now();
+
+    let canh_bao: unknown = 'không có quyền xem cảnh báo';
+    let lech_lich: unknown = 'không có quyền xem cảnh báo';
+    let khu_vuc_nhieu_canh_bao: unknown;
+    if (alarms) {
+      const open = alarms.items.filter((a) => a.active && ids.has(a.cabinetId)).sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || b.startedAt.localeCompare(a.startedAt));
+      const sev = (s: Alarm['severity']) => open.filter((a) => a.severity === s).length;
+      canh_bao = {
+        tong_so: open.length,
+        nghiem_trong: sev('critical'), quan_trong: sev('major'), nhe: sev('minor'),
+        nang_nhat: open.slice(0, 3).map(alarmBrief),
+        ...(alarms.items.length < alarms.total ? { ghi_chu: `Chỉ tính trên ${alarms.items.length} / ${alarms.total} cảnh báo mới nhất.` } : {}),
+      };
+      const mismatch = open.filter((a) => a.type === 'schedule_mismatch');
+      lech_lich = { so_tu: mismatch.length, tu: mismatch.slice(0, 3).map((a) => a.cabinetCode) };
+      if (wholeSystem(area)) {
+        const by = new Map<string, number>();
+        for (const a of open) by.set(a.districtName, (by.get(a.districtName) ?? 0) + 1);
+        khu_vuc_nhieu_canh_bao = [...by].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([khu_vuc, so_canh_bao]) => ({ khu_vuc, so_canh_bao }));
+      }
+    }
+
+    let su_co: unknown = 'không có quyền xem sự cố';
+    if (incidents) {
+      const mine = incidents.filter((i) => ids.has(i.cabinetId));
+      const late = mine.filter((i) => i.deadline && new Date(i.deadline).getTime() < now).sort((a, b) => (a.deadline ?? '').localeCompare(b.deadline ?? ''));
+      su_co = {
+        dang_mo: mine.length,
+        qua_han: late.length,
+        qua_han_lau_nhat: late.slice(0, 3).map((i) => ({ code: i.code, cabinet: i.cabinetName, category: i.category, status: INCIDENT_STATUS_VI[i.status] ?? i.status, deadline: vnTime(i.deadline) })),
+      };
+    }
+
+    return {
+      ...where,
+      tu: { tong_so: scope.length, truc_tuyen: scope.length - n('offline'), mat_ket_noi: n('offline'), dang_sang: n('on') + n('dimming'), dang_tat: n('off'), dang_loi: n('fault') },
+      canh_bao,
+      su_co,
+      lech_lich,
+      ...(khu_vuc_nhieu_canh_bao ? { khu_vuc_nhieu_canh_bao } : {}),
+      ghi_chu:
+        'Đây là bản tin đầu ca. Nói theo thứ tự: số tủ và số mất kết nối; cảnh báo (nặng nhất trước); sự cố quá hạn; tủ lệch lịch. Phần nào bằng 0 thì nói gọn "không có". Không đoán nguyên nhân.',
+    };
+  },
+};
+
 const getSchedule: ToolDef<{ cabinet: string }> = {
   name: 'get_schedule',
   kind: 'read',
@@ -574,7 +665,7 @@ const getCommandStatus: ToolDef<{ command_id: string }> = {
  * fewer. get_cabinet already resolves loose names (and asks back when several match), so find_cabinets is not needed.
  */
 export const READ_TOOLS = [
-  getSystemOverview, getCabinet, getCabinetHistory, listAlarms, explainAlarmCode, getAreaCabinets, findScheduleMismatch, getSchedule, listIncidents,
+  getSystemOverview, getCabinet, getCabinetHistory, listAlarms, explainAlarmCode, getAreaCabinets, findScheduleMismatch, getShiftReport, getSchedule, listIncidents,
 ] as unknown as ToolDef[];
 
 /** Not offered to the model: list_areas, find_cabinets run only through the keyword router; get_command_status comes back with actions (milestone 4). */
