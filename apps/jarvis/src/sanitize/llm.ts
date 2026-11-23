@@ -5,7 +5,8 @@ import { stripLtid } from '@citylight/shared';
 
 /** Keys dropped wherever they appear (case-insensitive). */
 const DROP_EXACT = new Set(['ltid', 'imei', 'uid', 'ip', 'otp', 'email', 'phone', 'cookie', 'cookies']);
-const DROP_PATTERN = /imei|iccid|email|phone|password|passwd|secret|csrf|apikey|api_key|^signing|^telegram|token$/i;
+// person fields too (2026-11-23): who requested, acknowledged, reported or is assigned is account data
+const DROP_PATTERN = /imei|iccid|email|phone|password|passwd|secret|csrf|apikey|api_key|^signing|^telegram|token$|(requested|created|updated|acked|reported|assigned|resolved)by$|^assignee$|^fullname$|^username$|^reportedby$/i;
 const COORD_KEYS = new Set(['lat', 'lng', 'lon', 'latitude', 'longitude']);
 
 // CoreIF frames carry identity as KEY'value pairs: *#LTID'CTY0005&LIME'861234567890123&LPAS'secret$

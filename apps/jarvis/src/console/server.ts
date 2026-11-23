@@ -16,6 +16,8 @@ import { systemPrompt } from '../brain/system-prompt';
 import type { Config } from '../config';
 import { sanitizeText } from '../sanitize/llm';
 import { snapPlaces, tidyHeard } from '../voice/heard';
+import { hasSecret, junkReply, maskSecrets, onlyLinks } from '../guard/junk';
+import { accountReply, ACCOUNT_ANSWER, leaksAccount } from '../guard/account';
 import { bootstrapAdmin, canEditSettings, canGrant, canViewChatsOf, getAccess, listAccess, rememberUser, rights, setAccess, type Actor, type Flag } from '../store/access';
 import { addTokenUsage, tokensToday, type Db } from '../store/db';
 import { addMessage, createConversation, deleteAllOwn, deleteOwn, getConversation, getMessages, listAll, listOwn, renameOwn, TITLE_MAX, tokenReport } from '../store/history';
@@ -234,15 +236,26 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
   async function chat(req: IncomingMessage, res: ServerResponse, s: ConsoleSession) {
     const { user } = requireUser(s);
     const body = await readJson(req);
-    const text = typeof body.text === 'string' ? body.text.trim() : '';
-    if (!text) throw new HttpError(422, 'empty', 'Câu hỏi trống');
-    if (text.length > MAX_TEXT) throw new HttpError(422, 'too_long', `Tối đa ${MAX_TEXT} ký tự`);
+    const typed = typeof body.text === 'string' ? body.text.trim() : '';
+    if (!typed) throw new HttpError(422, 'empty', 'Câu hỏi trống');
+    if (typed.length > MAX_TEXT) throw new HttpError(422, 'too_long', `Tối đa ${MAX_TEXT} ký tự`);
+    // emails and typed passwords / codes never reach the model, the history or the audit log (2026-11-23)
+    const text = maskSecrets(typed);
+    // answered at once, in this order: a typed password or code, an email or link alone, anything about accounts or
+    // security (user rule 2026-11-23); other text that is no question waits until orders and replies had their turn
+    const plain = junkReply(typed);
+    const first = plain && (hasSecret(typed) || onlyLinks(typed)) ? plain : accountReply(typed);
+    const junk = first ?? plain;
     // "xác nhận", "hủy lệnh", an order: answered in code without the model, so not counted as a question (the commands
     // themselves have their own limit, 6 a minute); a "xác nhận" used to be refused after 10 questions (2026-11-15)
-    admit(s, user, !handledInCode(s, text));
+    admit(s, user, !junk && !handledInCode(s, text));
     const { ac, send } = openStream(res, s);
     try {
-      if (!(await control(s, user, text, send, ac, null))) await answer(s, user, text, send, ac, null);
+      if (first) await fixedTurn(s, user, text, first, send, null);
+      else if (await control(s, user, text, send, ac, null)) { /* answered in code */ }
+      // not a question ("admin@citylight.test", keyboard noise): say so instead of answering with the system's numbers
+      else if (junk) await fixedTurn(s, user, text, junk, send, null);
+      else await answer(s, user, text, send, ac, null);
     } catch (e) {
       send('error', { code: 'failed', message: (e as Error).message });
     } finally {
@@ -265,7 +278,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       const placesP = placesOf(s);
       const hint = sttHintFor(s, asksForPlace(s) ? (await placesP)?.districts ?? null : null);
       const stt = await voice.transcribe(pcm, ac.signal, hint);
-      const text = snapPlaces(tidyHeard(sanitizeText(stt.text)), (await placesP)?.names ?? []);
+      const text = maskSecrets(snapPlaces(tidyHeard(sanitizeText(stt.text)), (await placesP)?.names ?? []));
       if (cfg.debugAudio) keepForDebug(pcm, { heard: text, raw: stt.text, hint, sttMs: stt.ms, audioMs: stt.audioMs });
       send('transcript', { text, sttMs: stt.ms, audioMs: stt.audioMs });
       if (!text || text.length < 2) {
@@ -273,8 +286,14 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         return;
       }
       const extra = { sttMs: stt.ms, audioMs: stt.audioMs };
+      // accounts and security: before anything else, by voice too
+      const secret = accountReply(text);
+      if (secret) return void (await fixedTurn(s, user, text, secret, send, speakerFor(send, ac, false), extra));
       // orders and yes / no to a waiting action are handled in code; their fixed sentences are spoken at once
       if (await control(s, user, text, send, ac, speakerFor(send, ac, false), extra)) return;
+      // noise heard as words ("Tchau."), an email read out: not a question
+      const junk = junkReply(text);
+      if (junk) return void (await fixedTurn(s, user, text, junk, send, speakerFor(send, ac, false), extra));
       const speaker = speakerFor(send, ac, !looksLikeSmallTalk(text))!;
       await answer(s, user, text, send, ac, speaker, extra);
     } catch (e) {
@@ -363,6 +382,8 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     const t0 = performance.now();
     let firstText: number | null = null;
     ac.signal.addEventListener('abort', () => speaker?.stop());
+    let shown = '';
+    let blocked = false;
     {
       const result = await runTurn({
         llm, tools, routerTools: deps.tools ? undefined : ROUTER_TOOLS, maxTokens: cfg.llm.maxTokens, signal: ac.signal,
@@ -371,11 +392,24 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         messages: s.ctx.messagesFor(text, cfg.contextMessages),
         onEvent: (ev) => {
           if (ev.type === 'reset') {
+            shown = '';
             speaker?.reset();
             send('reset', {});
           } else if (ev.type === 'text') {
             firstText ??= performance.now() - t0;
+            if (blocked) return;
             const clean = sanitizeText(ev.text);
+            // the last check (user rule 2026-11-23): an answer that starts talking about passwords, keys, emails or
+            // accounts is replaced at once, on screen and in speech; the model holds no such data, so it would be made up
+            if (leaksAccount(shown + clean)) {
+              blocked = true;
+              speaker?.reset();
+              send('reset', {});
+              speaker?.text(ACCOUNT_ANSWER);
+              send('text', { text: ACCOUNT_ANSWER });
+              return;
+            }
+            shown += clean;
             speaker?.text(clean);
             send('text', { text: clean });
           } else if (ev.type === 'tool_start') {
@@ -396,7 +430,8 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         else if (m.role === 'assistant' && m.toolCalls?.length) addMessage(db, conversationId, { role: 'assistant', content: m.content, toolCalls: m.toolCalls.map((c) => ({ name: c.name, input: c.input })) });
       }
       focusNamed(s.ctx.focus, result.text);
-      const reply = result.text.trim() || (result.stopReason === 'too_many_tools' ? 'Tôi chưa tìm ra câu trả lời, bạn hỏi cụ thể hơn giúp tôi.' : '');
+      const said = result.text.trim() || (result.stopReason === 'too_many_tools' ? 'Tôi chưa tìm ra câu trả lời, bạn hỏi cụ thể hơn giúp tôi.' : '');
+      const reply = blocked || leaksAccount(said) ? ACCOUNT_ANSWER : said;
       addMessage(db, conversationId, { role: 'assistant', content: reply, tokensIn: result.usage.inputTokens, tokensOut: result.usage.outputTokens });
       for (const c of result.toolCalls) audit.write({ kind: 'tool_call', userId: user.id, conversationId, tool: c.name, input: c.input, ok: c.ok, ms: c.ms });
       audit.write({ kind: 'assistant_text', userId: user.id, conversationId, text: reply, stop: result.stopReason, usage: result.usage, nudged: result.nudged });

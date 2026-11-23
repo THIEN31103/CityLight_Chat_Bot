@@ -34,7 +34,8 @@ describe('sanitizeForLlm', () => {
   it('keeps what the operator needs', () => {
     expect(out.cabinet.code).toBe('DM0010');
     expect(out.cabinet.name).toBe('Tủ demo 10');
-    expect(out.people[0]!.fullName).toBe('Nguyễn Văn A');
+    // a person's name is account data since 2026-11-23: dropped like the email
+    expect(out.people[0]!.fullName).toBeUndefined();
   });
 
   it('drops identity keys entirely', () => {

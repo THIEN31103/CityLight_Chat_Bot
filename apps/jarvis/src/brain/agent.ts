@@ -2,6 +2,7 @@
 // cancelled (stop button, barge-in later, console closed). Read tools only in milestone 2; action tools will only
 // create a PendingAction (milestone 4), never call a command endpoint from here.
 import type { LlmMessage, LlmProvider, LlmToolCall } from './llm';
+import { ACCOUNT_ANSWER } from '../guard/account';
 import { CONTROL_CAPABILITY_ANSWER, isControlCapabilityQuestion, isListHowQuestion, isSwitchOrder, isWhoAmI, LIST_HOW_ANSWER, route, SWITCH_ANSWER } from './router';
 import { ROLE_LABELS } from '@citylight/shared';
 import { fold } from '../tools/names';
@@ -123,7 +124,8 @@ export async function runTurn(t: TurnInput): Promise<TurnResult> {
     : isControlCapabilityQuestion(lastUser) ? CONTROL_CAPABILITY_ANSWER
     : isSwitchOrder(lastUser) ? SWITCH_ANSWER
     : isListHowQuestion(lastUser) ? LIST_HOW_ANSWER
-    : isWhoAmI(lastUser) ? `Bạn là ${t.ctx.user.fullName}, đăng nhập với vai trò ${ROLE_LABELS[t.ctx.user.role] ?? t.ctx.user.role}.`
+    // never an account detail, not even the user's own name or role (user rule 2026-11-23)
+    : isWhoAmI(lastUser) ? ACCOUNT_ANSWER
     : null;
   if (fixed) {
     t.onEvent?.({ type: 'text', text: fixed });

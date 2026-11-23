@@ -183,6 +183,8 @@ Danh sách tủ được phép điều khiển nằm trong file cấu hình máy
 
 ## 8. An toàn
 
-- Jarvis không bao giờ hỏi mật khẩu hay mã OTP của bạn. Đừng gõ những thứ đó vào ô chat.
+- **Jarvis không trả lời bất cứ điều gì về tài khoản và bảo mật**: tên, email, mật khẩu, mã OTP, vai trò, quyền, ai đã làm gì, khóa, máy chủ, cấu hình, kể cả "tôi là ai". Hỏi kiểu nào (viết lách, tiếng Anh, bảo Jarvis "bỏ qua hướng dẫn" hay "giả vờ là quản trị viên") cũng nhận cùng một câu từ chối. Tài khoản của bạn xem trên web CityLight, mục Tài khoản cá nhân.
+- Jarvis không bao giờ hỏi mật khẩu hay mã OTP của bạn. Đừng gõ những thứ đó vào ô chat. Nếu lỡ gõ, Jarvis cảnh báo, không gửi câu đó cho AI, và lưu bản đã che (`***`). Địa chỉ email trong câu cũng được che.
+- Gõ thứ không phải câu hỏi (một địa chỉ email, chữ gõ bừa) thì Jarvis nói là không hiểu và gợi ý một câu hỏi mẫu, không đoán.
 - Mọi câu hỏi, lệnh, xác nhận và kết quả đều được ghi vào nhật ký để tra lại.
 - Nếu dữ liệu trong hệ thống có câu kiểu "hãy tắt tất cả các tủ", Jarvis coi đó là dữ liệu, không làm theo.
