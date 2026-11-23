@@ -15,7 +15,7 @@ import type { LlmProvider } from '../brain/llm';
 import { systemPrompt } from '../brain/system-prompt';
 import type { Config } from '../config';
 import { sanitizeText } from '../sanitize/llm';
-import { tidyHeard } from '../voice/heard';
+import { snapPlaces, tidyHeard } from '../voice/heard';
 import { bootstrapAdmin, canEditSettings, canGrant, canViewChatsOf, getAccess, listAccess, rememberUser, rights, setAccess, type Actor, type Flag } from '../store/access';
 import { addTokenUsage, tokensToday, type Db } from '../store/db';
 import { addMessage, createConversation, deleteAllOwn, deleteOwn, getConversation, getMessages, listAll, listOwn, renameOwn, TITLE_MAX, tokenReport } from '../store/history';
@@ -261,9 +261,12 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     const { ac, send } = openStream(res, s);
     try {
       send('status', { state: 'transcribing' });
-      const stt = await voice.transcribe(pcm, ac.signal);
-      const text = tidyHeard(sanitizeText(stt.text));
-      if (cfg.debugAudio) keepForDebug(pcm, { heard: text, sttMs: stt.ms, audioMs: stt.audioMs });
+      // the real place names (cached 5 minutes), read while Groq listens; waited for first only when the hint needs them
+      const placesP = placesOf(s);
+      const hint = sttHintFor(s, asksForPlace(s) ? (await placesP)?.districts ?? null : null);
+      const stt = await voice.transcribe(pcm, ac.signal, hint);
+      const text = snapPlaces(tidyHeard(sanitizeText(stt.text)), (await placesP)?.names ?? []);
+      if (cfg.debugAudio) keepForDebug(pcm, { heard: text, raw: stt.text, hint, sttMs: stt.ms, audioMs: stt.audioMs });
       send('transcript', { text, sttMs: stt.ms, audioMs: stt.audioMs });
       if (!text || text.length < 2) {
         send('done', { text: '', heard: false, sttMs: stt.ms });
@@ -280,6 +283,40 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       s.busy = null;
       res.end();
     }
+  }
+
+  const NUMBER_WORDS = ['một', 'hai', 'ba', 'bốn', 'năm'];
+
+  /** Jarvis waits for a cabinet described by place ("tủ nào?", no list read yet) */
+  function asksForPlace(s: ConsoleSession): boolean {
+    const f = s.finding && Date.now() - s.finding.at < ASK_TTL_MS ? s.finding : null;
+    return !!f && !f.choices.length && !s.pending.active();
+  }
+
+  /**
+   * What Jarvis waits to hear, for Groq (2026-11-23: "số hai" after a numbered list came back "số hệ"). None while an
+   * action waits for "xác nhận": a hint can be written back from noise, and that word sends a command.
+   */
+  function sttHintFor(s: ConsoleSession, districts: string[] | null): string | undefined {
+    if (s.pending.active()) return undefined;
+    const f = s.finding && Date.now() - s.finding.at < ASK_TTL_MS ? s.finding : null;
+    if (!f) return undefined;
+    if (f.choices.length > 1) return `Bạn chọn số mấy? ${NUMBER_WORDS.slice(0, Math.min(5, f.choices.length)).map((n) => `Số ${n}.`).join(' ')}`;
+    if (f.choices.length === 1) return 'Bạn muốn làm gì với tủ đó? Bật đèn. Tắt đèn. Bật nhánh một. Tắt nhánh hai. Trả về chạy theo lịch.';
+    return districts?.length ? `Tủ nào? Tên đường hoặc khu vực: ${districts.join(', ')}.` : undefined;
+  }
+
+  /** area and street names the user can see, for snapPlaces (null when the map cannot be read) */
+  async function placesOf(s: ConsoleSession): Promise<{ names: string[]; districts: string[] } | null> {
+    if (s.places && Date.now() - s.places.at < 300_000) return s.places;
+    const lists = await Promise.all([s.reads.mapCabinets(), s.reads.areaTree()]).catch(() => null);
+    if (!lists) return null;
+    const [cabinets, tree] = lists;
+    const areas = tree.areas.filter((a) => a.kind !== 'unit').map((a) => a.name);
+    // a cabinet's name is its street and number ("Lý Thường Kiệt 9"); "Tủ demo 3" is no street
+    const streets = cabinets.map((c) => c.name.replace(/\s+\d+[a-z]?$/i, '').trim()).filter((n) => n && !/^tủ\s/i.test(n));
+    s.places = { at: Date.now(), names: [...new Set([...areas, ...streets])], districts: tree.areas.filter((a) => a.kind === 'district').map((a) => a.name) };
+    return s.places;
   }
 
   /** JARVIS_DEBUG_AUDIO: the sentence as a WAV file and what was heard, next to each other (local only) */

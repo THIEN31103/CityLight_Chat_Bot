@@ -10,8 +10,8 @@ export interface SttResult {
 }
 
 export interface SttProvider {
-  /** PCM 16-bit LE, 16 kHz, mono */
-  transcribe(pcm: Uint8Array, signal?: AbortSignal): Promise<SttResult>;
+  /** PCM 16-bit LE, 16 kHz, mono; `hint`: what Jarvis expects to hear next (engines that take no hint ignore it) */
+  transcribe(pcm: Uint8Array, signal?: AbortSignal, hint?: string): Promise<SttResult>;
 }
 
 export interface TtsAudio {

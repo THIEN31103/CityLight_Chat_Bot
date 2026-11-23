@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { collapseRepeats, fixCabinetWord, fixPlaceNames, tidyHeard } from '../src/voice/heard';
+import { collapseRepeats, fixCabinetWord, fixPlaceNames, snapPlaces, tidyHeard } from '../src/voice/heard';
+import { STT_HINT, sttPrompt } from '../src/voice/groq-stt';
 
 describe('collapseRepeats', () => {
   it('keeps a looped sentence once', () => {
@@ -44,4 +45,32 @@ describe('fixCabinetWord', () => {
 
 it('tidyHeard does all three', () => {
   expect(tidyHeard(' Tổ ở thủ đích. Tổ ở thủ đích. ')).toBe('Tủ ở Thủ Đức.');
+});
+
+describe('snapPlaces (real names from the map, 2026-11-23)', () => {
+  const names = ['TP Thủ Đức', 'Quận 1', 'Phường Bến Nghé', 'Phường Thảo Điền', 'Lý Thường Kiệt', 'Cộng Hòa', 'Hai Bà Trưng', 'Điện Biên Phủ', 'Lê Lợi', 'Lê Lai'];
+  it('a name one letter off is fixed anywhere', () => {
+    expect(snapPlaces('tủ trên đường Lý Thường Kiệc có sáng không', names)).toBe('tủ trên đường Lý Thường Kiệt có sáng không');
+    expect(snapPlaces('tủ Điện Biên Phú 7', names)).toBe('tủ Điện Biên Phủ 7');
+  });
+  it('two letters off only right after a place word', () => {
+    expect(snapPlaces('tình hình khu vực khẩu đức', names)).toBe('tình hình khu vực Thủ Đức');
+    expect(snapPlaces('ở phường thảo diễn.', names)).toBe('ở phường Thảo Điền.');
+    expect(snapPlaces('khẩu đức', names)).toBe('khẩu đức');
+  });
+  it('keeps right names, one-word names, numbers and ties alone', () => {
+    expect(snapPlaces('Tủ ở Cộng Hòa', names)).toBe('Tủ ở Cộng Hòa');
+    expect(snapPlaces('đường Lê Lui', names)).toBe('đường Lê Lui');
+    expect(snapPlaces('đường Lê Lơi', names)).toBe('đường Lê Lợi');
+    expect(snapPlaces('quận một', names)).toBe('quận một');
+    expect(snapPlaces('tổng quan hệ thống hôm nay thế nào', names)).toBe('tổng quan hệ thống hôm nay thế nào');
+    expect(snapPlaces('bật đèn tủ số hai', names)).toBe('bật đèn tủ số hai');
+  });
+});
+
+it('sttPrompt: the general hint by default; the short one plus what is expected otherwise, without cabinet codes', () => {
+  expect(sttPrompt()).toBe(STT_HINT);
+  const p = sttPrompt('Bạn chọn số mấy? Số một. Số hai.');
+  expect(p.endsWith('Bạn chọn số mấy? Số một. Số hai.')).toBe(true);
+  expect(p).not.toMatch(/TL\d|DM\d/);
 });

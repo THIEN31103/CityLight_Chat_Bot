@@ -12,6 +12,14 @@ export const STT_HINT =
   'Mã E201 nghĩa là gì? Mất kết nối PLC, LOGO, nhánh một, nhánh hai, dòng rò, điện áp, công suất. ' +
   'Bật tay, tắt tay, trả về chạy theo lịch, xác nhận, hủy lệnh, đồng ý, cảm ơn Jarvis.';
 
+/**
+ * The hint when Jarvis waits for something precise (2026-11-23): the domain words in short, then what may be said
+ * now ("Số một. Số hai." after a numbered list). Whisper reads the hint as the text said just before, so the end
+ * weighs most. No cabinet codes in it: those made Groq write wrong codes (D50).
+ */
+export const STT_BASE = 'Jarvis ơi, tủ, nhánh một, nhánh hai, bật đèn, tắt đèn, xác nhận, hủy lệnh.';
+export const sttPrompt = (hint?: string) => (hint ? `${STT_BASE} ${hint}` : STT_HINT);
+
 // Whisper fills very short or silent audio with phrases from its training data (YouTube outros)
 const HALLUCINATIONS = ['subscribe', 'đăng ký kênh', 'kênh', 'video', 'cảm ơn các bạn đã theo dõi', 'hẹn gặp lại', 'like và', 'ghiền mì gõ'];
 export const MIN_AVG_LOGPROB = -1.0;
@@ -66,21 +74,21 @@ export class GroqStt implements SttProvider {
    * One network retry: on 2026-11-17 two of eight sentences failed on the way to Groq ("fetch failed", a 20 s
    * timeout) and the same audio went through at once afterwards. A refusal from Groq (429, 401...) is not retried.
    */
-  async transcribe(pcm: Uint8Array, signal?: AbortSignal): Promise<SttResult> {
+  async transcribe(pcm: Uint8Array, signal?: AbortSignal, hint?: string): Promise<SttResult> {
     try {
-      return await this.once(pcm, signal);
+      return await this.once(pcm, signal, hint);
     } catch (e) {
       if (signal?.aborted || !(e instanceof NetworkError)) throw e;
-      return this.once(pcm, signal);
+      return this.once(pcm, signal, hint);
     }
   }
 
-  private async once(pcm: Uint8Array, signal?: AbortSignal): Promise<SttResult> {
+  private async once(pcm: Uint8Array, signal?: AbortSignal, hint?: string): Promise<SttResult> {
     const form = new FormData();
     form.append('file', new Blob([pcmToWav(pcm)], { type: 'audio/wav' }), 'cau-noi.wav');
     form.append('model', this.opts.model);
     form.append('language', 'vi');
-    form.append('prompt', STT_HINT);
+    form.append('prompt', sttPrompt(hint));
     form.append('response_format', 'verbose_json');
     form.append('temperature', '0');
     const t0 = performance.now();
@@ -122,8 +130,8 @@ export class MixedVoice implements SttProvider, TtsProvider {
     private readonly sttInfo: Record<string, unknown>,
   ) {}
 
-  transcribe(pcm: Uint8Array, signal?: AbortSignal) {
-    return this.stt.transcribe(pcm, signal);
+  transcribe(pcm: Uint8Array, signal?: AbortSignal, hint?: string) {
+    return this.stt.transcribe(pcm, signal, hint);
   }
 
   synth(text: string, signal?: AbortSignal): Promise<TtsAudio> {

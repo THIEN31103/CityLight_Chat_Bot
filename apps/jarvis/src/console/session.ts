@@ -29,6 +29,8 @@ export class ConsoleSession {
   finding: Finding | null = null;
   /** where the allowed cabinets are, by area, for the system prompt (read at most once a minute) */
   allowedByArea: { at: number; text: string | null } | null = null;
+  /** real area and street names the user can see, to fix misheard ones in voice turns (read at most every 5 minutes) */
+  places: { at: number; names: string[]; districts: string[] } | null = null;
 
   constructor(apiBase: string, timeoutMs: number, fetchImpl?: typeof fetch) {
     this.api = new ApiClient({ baseUrl: apiBase, timeoutMs, fetch: fetchImpl });
