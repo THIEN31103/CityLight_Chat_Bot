@@ -122,6 +122,13 @@ function cabinetList(m: string): { state?: string; limit?: number } | null {
   return { ...(state ? { state } : {}), ...(limit ? { limit } : {}) };
 }
 
+/** "lệch lịch", "lẽ ra phải sáng", "sáng ngoài giờ", "tắt trong giờ lịch", "không đúng lịch" */
+const MISMATCH = /(lech lich|sai lich|khong (dung|theo) lich|(le ra|dang le|dang ra) (phai )?(sang|tat|bat)|ngoai gio( lich)?|trong gio( lich)?|ban ngay (ma )?(van )?(sang|bat))/;
+/** off when the schedule wants them lit */
+const SHOULD_BE_ON = /((le ra|dang le|dang ra) (phai )?(sang|bat)|tat trong gio)/;
+/** lit when the schedule wants them off */
+const SHOULD_BE_OFF = /((le ra|dang le|dang ra) (phai )?tat|sang ngoai gio|ban ngay (ma )?(van )?(sang|bat))/;
+
 export function route(raw: string, focus: Focus = {}): Routed | null {
   const folded = fold(raw);
   // codes are read digit by digit: catch them before number words are joined into one number
@@ -142,6 +149,12 @@ export function route(raw: string, focus: Focus = {}): Routed | null {
     if (/(bi gi|the nao|sao roi|tinh trang|trang thai|co sang|co tat|dang sang|dang tat|sang khong|tat khong|loi gi|kiem tra|ra sao|ok khong|on khong|canh bao|bao dong|co loi|bi loi|da bat|da tat|bat (den )?chua|tat (den )?chua|sang chua)/.test(f)) return { name: 'get_cabinet', input: { cabinet: cab } };
   }
   if (/(su co|qua han|phieu)/.test(f)) return { name: 'list_incidents', input: { filter: /qua han/.test(f) ? 'overdue' : 'open' } };
+  // lights against their schedule (2026-11-23): before the alarms route, "cảnh báo lệch lịch" is this list too
+  if (!cab && MISMATCH.test(f)) {
+    const kind = SHOULD_BE_ON.test(f) ? 'tat_trong_gio' : SHOULD_BE_OFF.test(f) ? 'sang_ngoai_gio' : undefined;
+    const area = areaWords(f);
+    return { name: 'find_schedule_mismatch', input: { ...(area ? { area } : {}), ...(kind ? { kind } : {}) } };
+  }
   if (!cab && (/canh bao/.test(f) || (/(dang loi|co loi|bi loi|loi o dau|loi gi)/.test(f) && /(quan|phuong|khu vuc|o dau|nhieu nhat|nao|dang co|hien co)/.test(f)))) {
     const severity = SEVERITY.find(([re]) => re.test(f))?.[1];
     return { name: 'list_alarms', input: severity ? { severity } : {} };

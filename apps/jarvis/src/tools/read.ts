@@ -359,6 +359,38 @@ export const STATE_WORDS_VI: Record<StateFilter, string> = {
 type AreaCabinetsInput = { area?: string; state?: StateFilter; limit?: number };
 // No "maximum" in the tool schemas: Groq checks them and refused the whole answer when the model asked for 39
 // cabinets ("limit: maximum 30, got 39", 2026-11-21). The limits are applied in code instead.
+/** "toàn hệ thống", "tất cả": no area */
+const wholeSystem = (area?: string) => !area || /^(toan bo|tat ca|he thong|toan he thong|bat ky|bat ki)/.test(fold(area));
+
+/**
+ * The one ward or district a user named ("quận 1" is the district, not Phường 1 nor Quận 10; "khu đức" misheard is
+ * Thủ Đức). Sets it as the area in focus. Else an answer for the model: not found (with the real districts) or which one.
+ */
+async function pickArea(ctx: ToolContext, area: string): Promise<{ pick: AreaNode; areas: AreaNode[]; heardAs?: string } | { error: Record<string, unknown> }> {
+  const areas = await areaTree(ctx);
+  const q = fold(area).replace(/^(phuong|quan|huyen|xa|thi tran) /, '');
+  let hits = areas.filter((a) => a.kind !== 'unit' && fold(a.name).includes(q));
+  // a name misheard by speech recognition ("khu đức" for Thủ Đức, 2026-11-21): the one area within two letters
+  let heardAs: string | undefined;
+  if (!hits.length) {
+    const near = areas.filter((a) => a.kind !== 'unit' && q.length >= 4 && editDistance(fold(a.name).replace(/^(phuong|quan|huyen|xa|thi tran|tp) /, ''), q) <= 2);
+    if (near.length === 1) {
+      hits = near;
+      heardAs = near[0]!.name;
+    }
+  }
+  if (!hits.length)
+    return { error: { error: 'not_found', message: `Không thấy khu vực "${area}". Hãy nói tên đúng và kể vài khu vực có thật.`, cac_quan: areas.filter((a) => a.kind === 'district').map((a) => a.name) } };
+  // "quận 1" is the district, not "Phường 1" nor "Quận 10" (2026-11-20): the word the user said picks the kind
+  const said = /^(quan|huyen)\b/.test(fold(area)) ? 'district' : /^(phuong|xa|thi tran)\b/.test(fold(area)) ? 'ward' : null;
+  const same = hits.filter((a) => fold(a.name).replace(/^(phuong|quan|huyen|xa|thi tran) /, '') === q);
+  const exact = said && same.some((a) => a.kind === said) ? same.filter((a) => a.kind === said) : same;
+  const pick = exact.length === 1 ? exact[0]! : hits.length === 1 ? hits[0]! : null;
+  if (!pick) return { error: { error: 'ambiguous', message: 'Nhiều khu vực khớp, hỏi lại người dùng', choices: hits.slice(0, 6).map((a) => a.name) } };
+  ctx.focus.area = { id: pick.id, name: pick.name };
+  return { pick, areas, ...(heardAs ? { heardAs } : {}) };
+}
+
 const getAreaCabinets: ToolDef<AreaCabinetsInput> = {
   name: 'get_area_cabinets',
   kind: 'read',
@@ -377,31 +409,13 @@ const getAreaCabinets: ToolDef<AreaCabinetsInput> = {
   async run(ctx, { area, state, limit }) {
     let all: CabinetSummary[];
     let where: Record<string, unknown>;
-    if (!area || /^(toan bo|tat ca|he thong|toan he thong|bat ky|bat ki)/.test(fold(area))) {
+    if (wholeSystem(area)) {
       all = await ctx.reads.mapCabinets({ signal: ctx.signal });
       where = { khu_vuc: 'toàn hệ thống' };
     } else {
-      const areas = await areaTree(ctx);
-      const q = fold(area).replace(/^(phuong|quan|huyen|xa|thi tran) /, '');
-      let hits = areas.filter((a) => a.kind !== 'unit' && fold(a.name).includes(q));
-      // a name misheard by speech recognition ("khu đức" for Thủ Đức, 2026-11-21): the one area within two letters
-      let heardAs: string | undefined;
-      if (!hits.length) {
-        const near = areas.filter((a) => a.kind !== 'unit' && q.length >= 4 && editDistance(fold(a.name).replace(/^(phuong|quan|huyen|xa|thi tran|tp) /, ''), q) <= 2);
-        if (near.length === 1) {
-          hits = near;
-          heardAs = near[0]!.name;
-        }
-      }
-      if (!hits.length)
-        return { error: 'not_found', message: `Không thấy khu vực "${area}". Hãy nói tên đúng và kể vài khu vực có thật.`, cac_quan: areas.filter((a) => a.kind === 'district').map((a) => a.name) };
-      // "quận 1" is the district, not "Phường 1" nor "Quận 10" (2026-11-20): the word the user said picks the kind
-      const said = /^(quan|huyen)\b/.test(fold(area)) ? 'district' : /^(phuong|xa|thi tran)\b/.test(fold(area)) ? 'ward' : null;
-      const same = hits.filter((a) => fold(a.name).replace(/^(phuong|quan|huyen|xa|thi tran) /, '') === q);
-      const exact = said && same.some((a) => a.kind === said) ? same.filter((a) => a.kind === said) : same;
-      const pick = exact.length === 1 ? exact[0]! : hits.length === 1 ? hits[0]! : null;
-      if (!pick) return { error: 'ambiguous', message: 'Nhiều khu vực khớp, hỏi lại người dùng', choices: hits.slice(0, 6).map((a) => a.name) };
-      ctx.focus.area = { id: pick.id, name: pick.name };
+      const found = await pickArea(ctx, area!);
+      if ('error' in found) return found.error;
+      const { pick, areas, heardAs } = found;
       const wards = pick.kind === 'ward' ? [pick] : areas.filter((a) => a.parentId === pick.id && a.kind === 'ward').slice(0, 15);
       all = (await Promise.all(wards.map((w) => ctx.reads.areaCabinets(w.id, { signal: ctx.signal })))).flat();
       where = { khu_vuc: pick.name, wardsCounted: pick.kind === 'district' ? wards.length : undefined, ...(heardAs ? { ghi_chu_ten: `Không có khu vực "${area}", hiểu là ${heardAs}. Nói rõ điều này.` } : {}) };
@@ -423,6 +437,77 @@ const getAreaCabinets: ToolDef<AreaCabinetsInput> = {
         ? { ghi_chu: `Không có tủ nào ${STATE_WORDS_VI[state]}. Hiện có: ${Object.entries(counts).map(([k, n]) => `${n} tủ ${k}`).join(', ')}. Nói cả hai ý này.` }
         : {}),
       danh_sach: shown.map(brief),
+    };
+  },
+};
+
+const MISMATCH_KIND = ['tat_trong_gio', 'sang_ngoai_gio'] as const;
+type MismatchInput = { area?: string; kind?: (typeof MISMATCH_KIND)[number]; limit?: number };
+
+/**
+ * Lights against their schedule (Gemini review 2026-11-23, "lệch lịch"). The server already checks every cabinet
+ * (packages/shared/src/rules.ts): branch state vs the schedule it applied, only while the PLC and the LOGO answer and
+ * the cabinet is not in manual mode, and raises E303 "Đèn lệch lịch" after 20 minutes. Its alarms are the answer;
+ * reading 1,000 schedules here would be slower and less exact. Offline cabinets cannot be checked: their number is said.
+ */
+const findScheduleMismatch: ToolDef<MismatchInput> = {
+  name: 'find_schedule_mismatch',
+  kind: 'read',
+  description:
+    'Cabinets whose lights do not follow their schedule right now (alarm E303), of one ward or district or of the whole system when area is empty: off during scheduled hours ("lẽ ra phải sáng mà đang tắt") or on outside them ("sáng ngoài giờ"). Cabinets in manual mode are not counted; offline ones cannot be checked (their number is given). Use for "tủ nào lệch lịch", "tối nay tủ nào đáng lẽ sáng mà đang tắt", "đèn nào sáng ban ngày".',
+  schema: obj({
+    area: { type: 'string', description: 'Tên phường hoặc quận; bỏ trống = toàn hệ thống' },
+    kind: { type: 'string', enum: [...MISMATCH_KIND], description: 'tat_trong_gio = lẽ ra sáng mà tắt; sang_ngoai_gio = lẽ ra tắt mà sáng; bỏ trống = cả hai' },
+    limit: { type: 'integer', minimum: 1, description: 'số tủ trong danh sách, mặc định 10, tối đa 30' },
+  }),
+  input: z.object({
+    area: z.string().trim().max(100).optional(),
+    kind: z.enum(MISMATCH_KIND).optional(),
+    limit: z.number().int().min(1).transform((n) => Math.min(n, 30)).optional(),
+  }),
+  async run(ctx, { area, kind, limit }) {
+    const o = { signal: ctx.signal };
+    const [page, cabinets] = await Promise.all([ctx.reads.alarms({ active: true, type: 'schedule_mismatch', size: 200 }, o), ctx.reads.mapCabinets(o)]);
+    let inArea = (_c: CabinetSummary) => true;
+    let where: Record<string, unknown> = { khu_vuc: 'toàn hệ thống' };
+    if (!wholeSystem(area)) {
+      const found = await pickArea(ctx, area!);
+      if ('error' in found) return found.error;
+      const id = found.pick.id;
+      inArea = (c) => c.districtId === id || c.wardId === id;
+      where = { khu_vuc: found.pick.name, ...(found.heardAs ? { ghi_chu_ten: `Không có khu vực "${area}", hiểu là ${found.heardAs}. Nói rõ điều này.` } : {}) };
+    }
+    const scope = cabinets.filter(inArea);
+    const byId = new Map(scope.map((c) => [c.id, c]));
+    // "nhánh 1 tắt trong lịch, nhánh 2 sáng ngoài lịch (lịch Chế độ 2)": per branch, from the server's own words
+    const rows = (page.items as Alarm[])
+      .filter((a) => a.active && a.type === 'schedule_mismatch' && byId.has(a.cabinetId))
+      .map((a) => {
+        const branches = [...a.message.matchAll(/nhánh (\d) (tắt trong lịch|sáng ngoài lịch)/g)].map((m) => ({ branch: Number(m[1]), off: m[2] === 'tắt trong lịch' }));
+        return { a, off: branches.filter((b) => b.off).map((b) => b.branch), on: branches.filter((b) => !b.off).map((b) => b.branch) };
+      })
+      .sort((x, y) => x.a.startedAt.localeCompare(y.a.startedAt));
+    const offIn = rows.filter((r) => r.off.length);
+    const onOut = rows.filter((r) => r.on.length);
+    const chosen = kind === 'tat_trong_gio' ? offIn : kind === 'sang_ngoai_gio' ? onOut : rows;
+    const shown = chosen.slice(0, limit ?? 10);
+    ctx.focus.listed = shown.map((r) => ({ id: r.a.cabinetId, code: r.a.cabinetCode, name: r.a.cabinetName }));
+    const say = (r: (typeof rows)[number]) =>
+      [r.off.length ? `${r.off.length === 2 ? 'cả hai nhánh' : `nhánh ${r.off[0]}`} tắt trong giờ lịch` : '', r.on.length ? `${r.on.length === 2 ? 'cả hai nhánh' : `nhánh ${r.on[0]}`} sáng ngoài giờ lịch` : '']
+        .filter(Boolean).join(', ');
+    const offline = scope.filter((c) => c.status === 'offline').length;
+    return {
+      ...where,
+      so_tu_kiem_tra: scope.length - offline,
+      lech_lich: rows.length,
+      tat_trong_gio_lich: offIn.length,
+      sang_ngoai_gio_lich: onOut.length,
+      ...(kind ? { loc: kind, so_tu_khop: chosen.length } : {}),
+      danh_sach: shown.map((r) => ({ code: r.a.cabinetCode, name: r.a.cabinetName, district: r.a.districtName, lech: say(r), tu_luc: vnTime(r.a.startedAt) })),
+      mat_ket_noi_khong_kiem_tra_duoc: offline,
+      ghi_chu:
+        'Máy chủ chỉ báo lệch lịch khi đèn khác lịch quá 20 phút; tủ đang chạy tay không tính. Tủ mất kết nối thì không biết đèn đang thế nào: nói số tủ này, đừng gọi chúng là đúng lịch.' +
+        (rows.length ? '' : ' Không có tủ nào lệch lịch: nói rõ điều này.'),
     };
   },
 };
@@ -489,7 +574,7 @@ const getCommandStatus: ToolDef<{ command_id: string }> = {
  * fewer. get_cabinet already resolves loose names (and asks back when several match), so find_cabinets is not needed.
  */
 export const READ_TOOLS = [
-  getSystemOverview, getCabinet, getCabinetHistory, listAlarms, explainAlarmCode, getAreaCabinets, getSchedule, listIncidents,
+  getSystemOverview, getCabinet, getCabinetHistory, listAlarms, explainAlarmCode, getAreaCabinets, findScheduleMismatch, getSchedule, listIncidents,
 ] as unknown as ToolDef[];
 
 /** Not offered to the model: list_areas, find_cabinets run only through the keyword router; get_command_status comes back with actions (milestone 4). */

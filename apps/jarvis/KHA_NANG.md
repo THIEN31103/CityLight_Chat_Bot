@@ -33,7 +33,10 @@ Mọi con số đều lấy từ dữ liệu thật lúc bạn hỏi. Không có
 | Cảnh báo | "Đang có cảnh báo gì?", "Phường nào đang có lỗi?", "Có bao nhiêu cảnh báo nghiêm trọng?" |
 | Ý nghĩa mã lỗi | "Mã E201 là gì?", có thể đọc từng số: "E hai không một" |
 | Sự cố ngoài hiện trường | "Có sự cố nào quá hạn không?" |
+| Đèn lệch lịch | "Tối nay tủ nào ở quận 1 lẽ ra phải sáng mà đang tắt?", "Đèn nào ban ngày mà vẫn sáng?", "Có tủ nào lệch lịch không?" |
 | Tìm tủ theo đường | "Tìm các tủ trên đường Lý Thường Kiệt" |
+
+**Lệch lịch:** Jarvis dựa vào cảnh báo E303 "Đèn lệch lịch" của hệ thống. Hệ thống chỉ báo khi đèn khác lịch quá 20 phút, và không tính tủ đang chạy tay. Tủ mất kết nối thì không biết đèn đang thế nào: Jarvis nói số tủ không kiểm tra được.
 
 **Trạng thái dùng để lọc tủ:** bình thường (có kết nối, không lỗi), đang sáng, đang tắt, có lỗi, mất kết nối.
 

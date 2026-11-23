@@ -13,7 +13,8 @@ export type Order =
   /** several cabinets at once ("tắt hết đèn quận 1"): a batch, which needs OTP on the web */
   | { kind: 'many'; command: ActionCommand };
 
-const QUESTION = /(\?|\bchua\b|\bkhong\b|\bko\b|\bda\b|\bdang\b|co phai|bao gio|luc nao|may gio|the nao|ra sao|\bco\s.*\bkhong\b)/;
+// "tủ nào lẽ ra phải tắt mà vẫn sáng" asks about the schedule (2026-11-23): it was read as "tắt đèn, ở tủ nào?"
+const QUESTION = /(\?|\bchua\b|\bkhong\b|\bko\b|\bda\b|\bdang\b|co phai|bao gio|luc nao|may gio|the nao|ra sao|\bco\s.*\bkhong\b|\ble ra\b|\bdang (le|ra)\b|lech lich|sai lich|ngoai gio|trong gio)/;
 const MANY = /\b(het|tat ca|toan bo|ca quan|ca phuong|cac tu|cac tucab|nhieu tu|nhieu tucab|moi tu|moi tucab)\b/;
 /** "tắt đèn quận 1" is every cabinet there; "tắt đèn một tủ ở quận 1" is one cabinet to find (2026-11-21) */
 const MANY_AREA = /\b(khu vuc|quan \d+|phuong \d+)\b/;

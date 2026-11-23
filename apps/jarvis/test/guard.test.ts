@@ -297,3 +297,9 @@ describe('voice test on the codespace (2026-11-23)', () => {
     expect(normalizeCodes(fold('Quân mong'))).toBe('quan 1');
   });
 });
+
+describe('a question about the schedule is never an order (2026-11-23)', () => {
+  it.each(['tủ nào lẽ ra phải tắt mà vẫn sáng', 'tủ nào đáng lẽ phải bật đèn mà chưa bật', 'đèn nào ban ngày mà vẫn sáng', 'có tủ nào lệch lịch không'])('%s', (q) => {
+    expect(parseOrder(q, {})).toBeNull();
+  });
+});

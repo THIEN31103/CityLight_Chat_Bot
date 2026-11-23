@@ -138,3 +138,47 @@ describe('system prompt: allowed cabinets by area (2026-11-21: the model read "T
     expect(p).toContain('TL12 is not Quận 12');
   });
 });
+
+describe('find_schedule_mismatch (alarm E303, 2026-11-23)', () => {
+  const cab = (i: number, status: string, districtId: string, wardId: string) => ({ id: `c${i}`, code: `TL01.${String(i).padStart(4, '0')}`, name: `Đường ${i}`, status, districtId, wardId });
+  const cabinets = [cab(1, 'off', 'd1', 'w1'), cab(2, 'on', 'd1', 'w1'), cab(3, 'off', 'd2', 'w2'), cab(4, 'offline', 'd1', 'w1'), cab(5, 'offline', 'd2', 'w2'), cab(6, 'on', 'd1', 'w1')];
+  const e303 = (i: number, message: string, startedAt: string) => ({
+    id: `a${i}`, code: 'E303', cabinetId: `c${i}`, cabinetName: `Đường ${i}`, cabinetCode: `TL01.${String(i).padStart(4, '0')}`, districtName: i === 3 ? 'TP Thủ Đức' : 'Quận 1',
+    type: 'schedule_mismatch', severity: 'major', message, value: null, startedAt, endedAt: null, active: true, ackedBy: null, ackedAt: null,
+  });
+  const alarms = [
+    e303(1, 'nhánh 1 tắt trong lịch, nhánh 2 tắt trong lịch (lịch Chế độ 1)', '2026-11-23T11:30:00Z'),
+    e303(2, 'nhánh 2 sáng ngoài lịch (lịch Chế độ 2)', '2026-11-23T03:00:00Z'),
+    e303(3, 'nhánh 1 tắt trong lịch (lịch Chế độ 2)', '2026-11-23T11:40:00Z'),
+    // another alarm type on a page the API should have filtered: never counted
+    { ...e303(6, 'Mất kết nối PLC', '2026-11-23T10:00:00Z'), code: 'E201', type: 'plc_lost' },
+  ];
+  const areas = [{ id: 'd1', name: 'Quận 1', parentId: null, kind: 'district', cabinetCount: 4 }, { id: 'w1', name: 'Phường Bến Nghé', parentId: 'd1', kind: 'ward', cabinetCount: 4 }, { id: 'd2', name: 'TP Thủ Đức', parentId: null, kind: 'district', cabinetCount: 2 }, { id: 'w2', name: 'Phường Thảo Điền', parentId: 'd2', kind: 'ward', cabinetCount: 2 }];
+  const asked: Record<string, unknown>[] = [];
+  const ctx = () => ({
+    reads: { mapCabinets: async () => cabinets, areaTree: async () => ({ areas, unassigned: 0 }), alarms: async (q: Record<string, unknown>) => { asked.push(q); return { items: alarms, total: alarms.length, page: 1, size: 200 }; } },
+    user: {}, focus: {},
+  }) as unknown as ToolContext;
+  const tool = () => READ_TOOLS.find((t) => t.name === 'find_schedule_mismatch')!;
+
+  it('whole system: both kinds, oldest first, offline cabinets counted as not checked', async () => {
+    const out = (await tool().run(ctx(), {})) as Record<string, any>;
+    expect(asked[0]).toMatchObject({ active: true, type: 'schedule_mismatch' });
+    expect(out).toMatchObject({ khu_vuc: 'toàn hệ thống', lech_lich: 3, tat_trong_gio_lich: 2, sang_ngoai_gio_lich: 1, mat_ket_noi_khong_kiem_tra_duoc: 2, so_tu_kiem_tra: 4 });
+    expect(out.danh_sach.map((r: any) => [r.code, r.lech])).toEqual([
+      ['TL01.0002', 'nhánh 2 sáng ngoài giờ lịch'],
+      ['TL01.0001', 'cả hai nhánh tắt trong giờ lịch'],
+      ['TL01.0003', 'nhánh 1 tắt trong giờ lịch'],
+    ]);
+  });
+  it('"lẽ ra phải sáng mà tắt" in one area: only that kind there', async () => {
+    const out = (await tool().run(ctx(), { area: 'quận 1', kind: 'tat_trong_gio' })) as Record<string, any>;
+    expect(out).toMatchObject({ khu_vuc: 'Quận 1', lech_lich: 2, so_tu_khop: 1, mat_ket_noi_khong_kiem_tra_duoc: 1 });
+    expect(out.danh_sach.map((r: any) => r.code)).toEqual(['TL01.0001']);
+  });
+  it('none: says so plainly', async () => {
+    const out = (await tool().run(ctx(), { area: 'Thủ Đức', kind: 'sang_ngoai_gio' })) as Record<string, any>;
+    expect(out.so_tu_khop).toBe(0);
+    expect(out.danh_sach).toEqual([]);
+  });
+});

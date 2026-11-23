@@ -51,7 +51,7 @@ export const ADMIN_NOTICE = 'Quản trị viên có thể xem nội dung chat';
 
 const TOOL_LABELS: Record<string, string> = {
   get_system_overview: 'tổng quan hệ thống', find_cabinets: 'tìm tủ', get_cabinet: 'tình trạng tủ', get_cabinet_history: 'lịch sử tủ',
-  list_alarms: 'cảnh báo', explain_alarm_code: 'mã cảnh báo', list_areas: 'khu vực', get_area_cabinets: 'tủ theo khu vực',
+  list_alarms: 'cảnh báo', explain_alarm_code: 'mã cảnh báo', list_areas: 'khu vực', get_area_cabinets: 'tủ theo khu vực', find_schedule_mismatch: 'tủ lệch lịch',
   get_schedule: 'lịch bật / tắt', list_incidents: 'sự cố', get_command_status: 'trạng thái lệnh',
 };
 
