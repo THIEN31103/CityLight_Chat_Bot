@@ -322,3 +322,14 @@ describe('"hủy" while Jarvis waits for a pick (2026-11-21)', () => {
     expect((await op.say('số 1')).pending).toBeUndefined();
   });
 });
+
+describe('an area that does not exist after "tủ nào?" (2026-11-23)', () => {
+  it('lists the areas there are and keeps the order waiting', async () => {
+    await op.call('POST', '/api/chat/new');
+    await op.say('tắt đèn đi');
+    const r = await op.say('Quận 2');
+    expect(r.text).toMatch(/^Tôi không thấy khu vực đó\. Các khu vực có: Quận 1\./);
+    expect((await op.say('quận một')).text).toMatch(/Quận 1/);
+    await op.say('hủy');
+  });
+});

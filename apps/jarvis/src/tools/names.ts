@@ -73,6 +73,8 @@ export function normalizeCodes(folded: string): string {
     })
     // "nhánh một" came back as "H1" twice in the 2026-11-21 recordings ("H1 tủ TL01.00016", "H1TL1.0009")
     .replace(/(?<![a-z0-9])h([12])(?![0-9])/g, 'nhanh $1')
+    // "quận một" heard as "quận mộng", "Quân mong" (2026-11-23): one after quận / phường
+    .replace(/\b(quan|phuong) (mong|mon|mo|mot)\b/g, '$1 1')
     .replace(/\s+/g, ' ')
     .trim();
 }

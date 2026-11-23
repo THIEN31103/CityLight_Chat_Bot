@@ -290,3 +290,10 @@ import { markCabinetWord } from '../src/tools/names';
 describe('"tổ" / "tụ" heard for "tủ" (2026-11-21)', () => {
   it.each([['điều khiển tổ ở quận 1', 'điều khiển tucab ở quận 1'], ['39 tụ mất kết nối', '39 tucab mất kết nối'], ['tổ bảo trì', 'tổ bảo trì'], ['tụ bù', 'tụ bù'], ['từ 5 giờ', 'từ 5 giờ']])('%s', (q, out) => expect(markCabinetWord(q)).toBe(out));
 });
+
+describe('voice test on the codespace (2026-11-23)', () => {
+  it('"quận mộng" / "Quân mong" is quận 1', () => {
+    expect(normalizeCodes(fold('tắt đèn một tủ ở quận mộng'))).toContain('quan 1');
+    expect(normalizeCodes(fold('Quân mong'))).toBe('quan 1');
+  });
+});

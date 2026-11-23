@@ -542,6 +542,12 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     const pool = matching(cabinets, { area: /\b(ngoai|tru|khong phai)\b/.test(fold(text)) ? undefined : area ?? base.area });
     const street = streetIn(text, pool);
     const state = stateIn(text);
+    // an area that does not exist ("Quân mong", "Quận 2"): say which ones do, and keep waiting for the cabinet
+    if (!area && !street && !state && /\b(quan|phuong|khu vuc|huyen)\b/.test(fold(text))) {
+      s.finding = { command, filter: base, choices: [], at: Date.now() };
+      const names = tree.areas.filter((a) => a.kind === 'district').map((a) => a.name).join(', ');
+      return { say: `Tôi không thấy khu vực đó. Các khu vực có: ${names}. Bạn nói lại khu vực hoặc tên đường giúp tôi.` };
+    }
     if (!area && !street && !state) return null;
     // "ngoài khu vực Thủ Đức", "trừ quận 1": that area is left out, and the one asked before is dropped
     const except = area && /\b(ngoai|tru|khong phai)\b/.test(fold(text)) ? area : undefined;
