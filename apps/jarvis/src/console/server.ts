@@ -22,12 +22,13 @@ import { bootstrapAdmin, canEditSettings, canGrant, canViewChatsOf, getAccess, l
 import { addTokenUsage, tokensToday, type Db } from '../store/db';
 import { addMessage, createConversation, deleteAllOwn, deleteOwn, getConversation, getMessages, listAll, listOwn, renameOwn, TITLE_MAX, tokenReport } from '../store/history';
 import { SettingsError, effectiveTokenCap, getSettings, updateSettings } from '../store/settings';
-import { READ_TOOLS, SPARE_TOOLS, viText, vnTime } from '../tools/read';
+import { READ_TOOLS, SPARE_TOOLS, vnTime } from '../tools/read';
 import type { Focus, ToolDef } from '../tools/registry';
 import { SidecarVoice, type SttProvider, type TtsAudio, type TtsProvider } from '../voice/client';
 import { toSpeech } from '../voice/speech-text';
 import { pcmToWav } from '../voice/groq-stt';
 import { ConsoleSession, RateLimiter, SessionStore } from './session';
+import { parseMute } from './notices';
 import { FILLER, Speaker } from './speaker';
 import { cabinetRefOf, isControlCapabilityQuestion } from '../brain/router';
 import { classifyReply, isExplicitConfirm } from '../guard/confirm-words';
@@ -481,6 +482,16 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     s.lastInteraction = Date.now();
     // tests script the fake model with a [[fake:{...}]] prefix whose JSON may hold words like "bật"
     if (llm.name === 'fake' && text.startsWith('[[fake:')) return false;
+    // "im lặng 15 phút" / "bật lại thông báo" (spec 7): before orders, or "tắt thông báo" would look like "tắt đèn"
+    const mute = parseMute(text);
+    if (mute === 'on') {
+      s.notices.mute();
+      return fixedTurn(s, user, text, `Đã bật im lặng 15 phút, tới ${vnTime(new Date(s.notices.mutedUntil).toISOString())}. Cảnh báo nghiêm trọng vẫn báo ngay; cảnh báo khác tôi đếm lại, hết giờ mới báo.`, send, speaker, { ...extra, mutedUntil: new Date(s.notices.mutedUntil).toISOString() });
+    }
+    if (mute === 'off') {
+      const was = s.notices.unmute();
+      return fixedTurn(s, user, text, was ? 'Đã tắt im lặng, tôi báo cảnh báo mới như bình thường.' : 'Hiện không ở chế độ im lặng, tôi vẫn báo cảnh báo mới như bình thường.', send, speaker, { ...extra, mutedUntil: null });
+    }
     const via: Via = speaker ? 'voice' : 'text';
     const gone = s.pending.expired();
     const p = s.pending.active();
@@ -600,36 +611,20 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
   }
 
   /**
-   * New open alarms since the session's last look, as sentences: critical first (P0, the console beeps), then the
-   * others (P1), grouped by code and area, at most 3 sentences. The first look only remembers what is open: those
-   * belong to the shift report. Alarms that ended are not told (P2: asked for or in the report).
+   * What Jarvis says on its own now (notices.ts): new critical alarms at once and again after 2 minutes unanswered,
+   * other new ones one sentence per 20 s, held back while muted. With voice, each sentence comes with its audio.
    */
-  async function notices(s: ConsoleSession, user: User): Promise<{ level: 'P0' | 'P1'; text: string }[]> {
+  async function notices(s: ConsoleSession, user: User, spoken: boolean): Promise<{ level: 'P0' | 'P1'; text: string; mime?: string; data?: string }[]> {
     const page = await s.reads.alarms({ active: true, size: 100 }).catch(() => null);
     if (!page) return [];
-    const open = page.items.filter((a) => a.active);
-    if (!s.seenAlarms) {
-      s.seenAlarms = new Set(open.map((a) => a.id));
-      return [];
-    }
-    const fresh = open.filter((a) => !s.seenAlarms!.has(a.id));
-    s.seenAlarms = new Set(open.map((a) => a.id));
-    if (!fresh.length) return [];
-    const groups = new Map<string, typeof fresh>();
-    for (const a of fresh) groups.set(`${a.code}|${a.districtName}`, [...(groups.get(`${a.code}|${a.districtName}`) ?? []), a]);
-    const rank = { critical: 0, major: 1, minor: 2 } as const;
-    const out = [...groups.values()]
-      .sort((x, y) => rank[x[0]!.severity] - rank[y[0]!.severity])
-      .slice(0, 3)
-      .map((g) => {
-        const a = g[0]!;
-        const where = g.length === 1 ? `tủ ${a.cabinetCode}` : `${g.length} tủ (${g.slice(0, 3).map((x) => x.cabinetCode).join(', ')}${g.length > 3 ? '…' : ''})`;
-        const level = a.severity === 'critical' ? 'P0' as const : 'P1' as const;
-        const head = level === 'P0' ? 'Cảnh báo nghiêm trọng mới' : 'Cảnh báo mới';
-        return { level, text: `${head}: ${a.code} ${viText(a.message)} ở ${where}${a.districtName ? `, ${a.districtName}` : ''}, từ ${vnTime(a.startedAt)}.` };
-      });
-    audit.write({ kind: 'proactive', userId: user.id, count: fresh.length, said: out.map((n) => n.text) });
-    return out;
+    const { notices: out, fresh } = s.notices.look(page.items.filter((a) => a.active), s.lastInteraction);
+    if (!out.length) return [];
+    audit.write({ kind: 'proactive', userId: user.id, count: fresh, said: out.map((n) => n.text) });
+    if (!spoken || !voice) return out;
+    return Promise.all(out.map(async (n) => {
+      const a = await voice!.synth(toSpeech(n.text)).catch(() => null);
+      return a ? { ...n, mime: a.mime, data: Buffer.from(a.audio).toString('base64') } : n;
+    }));
   }
 
   /** shows the card of a proposed action, replacing the one waiting, and says it */
@@ -784,7 +779,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     const fresh = s.finding && Date.now() - s.finding.at < ASK_TTL_MS ? s.finding : null;
     // a reply to "tủ nào?" or to the numbered choices is short; a long sentence may be a new question
     if (fresh && text.trim().split(/\s+/).length <= 12) return true;
-    return !!parseAck(text) || isControlCapabilityQuestion(text) || isAllowedCabinetsQuestion(text) || !!orderOf(s, text, fresh);
+    return !!parseMute(text) || !!parseAck(text) || isControlCapabilityQuestion(text) || isAllowedCabinetsQuestion(text) || !!orderOf(s, text, fresh);
   }
 
   /** A turn whose answer is a fixed sentence: same history, audit and events as a model turn, no tokens. */
@@ -1008,7 +1003,16 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     // by code and area, critical ones first. No model, no question counted, never an action: only words.
     if (key === 'GET /api/notices') {
       const { user } = requireUser(s);
-      return sendJson(res, 200, { notices: await notices(s, user) });
+      const said = await notices(s, user, url.searchParams.get('voice') === '1');
+      return sendJson(res, 200, { notices: said, mutedUntil: s.notices.muted ? new Date(s.notices.mutedUntil).toISOString() : null });
+    }
+    // the bell button: "im lặng 15 phút" on / off (critical alarms are still said)
+    if (key === 'POST /api/notices/mute') {
+      requireUser(s);
+      const b = await readJson(req);
+      if (b.on === true) s.notices.mute();
+      else s.notices.unmute();
+      return sendJson(res, 200, { mutedUntil: s.notices.muted ? new Date(s.notices.mutedUntil).toISOString() : null });
     }
     // the 2FA code again when the server asks for it (403 reauth_required, spec 6.5): straight to POST /auth/reauth,
     // never logged, never seen by the model (2026-11-23)

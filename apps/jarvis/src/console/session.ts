@@ -7,6 +7,7 @@ import { CityLightReads } from '../api/read';
 import { ShiftContext } from '../brain/context';
 import { PendingSlot } from '../guard/pending';
 import type { Finding } from '../guard/finder';
+import { NoticeState } from './notices';
 
 export const SESSION_IDLE_MS = 12 * 3_600_000;
 
@@ -31,8 +32,8 @@ export class ConsoleSession {
   allowedByArea: { at: number; text: string | null } | null = null;
   /** real area and street names the user can see, to fix misheard ones in voice turns (read at most every 5 minutes) */
   places: { at: number; names: string[]; districts: string[] } | null = null;
-  /** open alarms already told (Jarvis speaks up, spec 7, 2026-11-23); null until the first look, which tells nothing */
-  seenAlarms: Set<string> | null = null;
+  /** what Jarvis already said on its own, the P0 repeats and the 15-minute mute (spec 7, 2026-11-23/24) */
+  readonly notices = new NoticeState();
 
   constructor(apiBase: string, timeoutMs: number, fetchImpl?: typeof fetch) {
     this.api = new ApiClient({ baseUrl: apiBase, timeoutMs, fetch: fetchImpl });

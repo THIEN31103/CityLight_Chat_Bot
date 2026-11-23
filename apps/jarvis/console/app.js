@@ -194,24 +194,51 @@ $('#new-chat').addEventListener('click', newChat);
 $('#start-shift').addEventListener('click', () => ask('Bản tin đầu ca'));
 
 /**
- * Jarvis speaks up (spec 7, 2026-11-23): every 20 s the console asks for new open alarms. Critical ones (P0) beep.
- * Not while an answer streams or an old chat is open: they wait for the next look.
+ * Jarvis speaks up (spec 7): every 20 s the console asks what to say. Critical ones (P0) beep, and come back after
+ * 2 minutes while nobody answers (the server decides). In voice mode they are read aloud too. Not while an answer
+ * streams or is read, while the user talks, or while an old chat is open: they wait for the next look.
  */
 let noticeTimer = null;
-function startNotices() {
-  if (noticeTimer) return;
-  const look = async () => {
-    if (!session?.signedIn || busy || viewingId) return;
-    const r = await api('GET', '/api/notices').catch(() => null);
-    for (const n of r?.notices ?? []) {
+let looking = false;
+async function lookNotices() {
+  if (looking || !session?.signedIn || busy || viewingId || player.playing || $('#voice-btn').classList.contains('hot')) return;
+  looking = true;
+  try {
+    const r = await api('GET', voiceIn.on ? '/api/notices?voice=1' : '/api/notices').catch(() => null);
+    if (!r) return;
+    showMute(r.mutedUntil);
+    for (const n of r.notices ?? []) {
       const b = addBubble('assistant', n.text);
       b.classList.add('notice', n.level === 'P0' ? 'p0' : 'p1');
       if (n.level === 'P0') beep();
+      if (n.data && voiceIn.on) player.enqueue(n.data, n.mime);
     }
-  };
-  look();
-  noticeTimer = setInterval(look, 20_000);
+  } finally {
+    looking = false;
+  }
 }
+function startNotices() {
+  if (noticeTimer) return;
+  lookNotices();
+  noticeTimer = setInterval(lookNotices, 20_000);
+}
+
+/** the bell button shows "im lặng" and until when (said or clicked) */
+let mutedUntil = null;
+function showMute(until) {
+  mutedUntil = until ? new Date(until) : null;
+  const b = $('#mute-btn');
+  const on = !!mutedUntil && mutedUntil > new Date();
+  b.setAttribute('aria-pressed', String(on));
+  b.classList.toggle('on', on);
+  b.textContent = on ? `🔔 Hết im lặng (tới ${mutedUntil.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })})` : '🔕 Im lặng 15 phút';
+}
+$('#mute-btn').addEventListener('click', async () => {
+  const on = !(mutedUntil && mutedUntil > new Date());
+  const r = await api('POST', '/api/notices/mute', { on }).catch(() => null);
+  if (r) showMute(r.mutedUntil);
+});
+
 function beep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -412,6 +439,7 @@ async function turn({ text, pcm, confirmId, otp }) {
           bubble.remove();
           return;
         }
+        if ('mutedUntil' in data) showMute(data.mutedUntil);
         const full = data.text || got || '(không có câu trả lời)';
         const finish = () => {
           revealRest = null;

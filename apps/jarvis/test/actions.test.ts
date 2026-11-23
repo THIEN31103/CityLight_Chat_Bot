@@ -489,4 +489,20 @@ describe('Jarvis speaks up (2026-11-23)', () => {
     expect((await fresh.call('GET', '/api/notices')).data.notices).toEqual([]);
     stub.extraAlarms.length = 0;
   });
+
+  it('"im lặng 15 phút" by words or by the button; "tắt thông báo" is never an order to the lights', async () => {
+    const fresh = new Browser();
+    await fresh.signIn('op@demo.vn', 'mat-khau-op-1', '333333');
+    const before = posts().length;
+    const on = await fresh.say('Tắt thông báo');
+    expect(on.text).toMatch(/^Đã bật im lặng 15 phút, tới .+Cảnh báo nghiêm trọng vẫn báo ngay/);
+    expect(on.pending).toBeUndefined();
+    expect(on.events.find((e) => e.event === 'done')?.data.mutedUntil).toEqual(expect.any(String));
+    expect((await fresh.call('GET', '/api/notices')).data.mutedUntil).toEqual(expect.any(String));
+    expect((await fresh.say('hết im lặng')).text).toBe('Đã tắt im lặng, tôi báo cảnh báo mới như bình thường.');
+    expect((await fresh.call('GET', '/api/notices')).data.mutedUntil).toBeNull();
+    expect((await fresh.call('POST', '/api/notices/mute', { on: true })).data.mutedUntil).toEqual(expect.any(String));
+    expect((await fresh.call('POST', '/api/notices/mute', { on: false })).data.mutedUntil).toBeNull();
+    expect(posts().length).toBe(before);
+  });
 });

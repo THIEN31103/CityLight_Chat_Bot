@@ -133,6 +133,11 @@ Câu hỏi về trạng thái ("tủ đó đã bật đèn chưa?") chỉ là c�
 
 Khi đang mở Jarvis, cứ 20 giây Jarvis xem có cảnh báo mới không. Có thì hiện tin nhắn viền cam ("Cảnh báo mới: …"); cảnh báo nghiêm trọng có viền đỏ và tiếng bíp. Cảnh báo đã có từ trước khi mở Jarvis thì xem bằng nút **▶ Bắt đầu ca** (bản tin đầu ca). Jarvis không bao giờ tự gửi lệnh.
 
+- **Đang bật giọng nói** thì Jarvis đọc to câu báo. Jarvis chờ bạn nói xong và chờ đọc xong câu trả lời trước mới báo.
+- **Cảnh báo nghiêm trọng** chưa ai trả lời thì 2 phút sau Jarvis nhắc lại, tối đa 3 lần. Bạn hỏi hay bấm gì đó, hoặc cảnh báo đã được xác nhận / đã hết, thì Jarvis thôi nhắc.
+- **Cảnh báo thường** mỗi 20 giây báo tối đa một câu; nhiều tủ cùng mã lỗi trong cùng quận gom thành một câu.
+- **Im lặng 15 phút**: bấm nút **🔕 Im lặng 15 phút** ở thanh trên, hoặc nói / gõ "im lặng 15 phút", "tắt thông báo", "đừng báo nữa". Trong lúc im lặng, cảnh báo nghiêm trọng vẫn báo; cảnh báo thường được đếm, hết giờ Jarvis báo một câu "có N cảnh báo mới". Muốn thôi sớm: bấm nút 🔔 hoặc nói "hết im lặng", "bật lại thông báo".
+
 ## 4. Nói chuyện bằng giọng
 
 1. Bấm **🎙 Giọng nói** ở ô nhập. Trình duyệt hỏi quyền micro lần đầu, chọn Cho phép.

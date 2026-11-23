@@ -149,6 +149,7 @@ label.row input { width: auto; }
 /* Jarvis speaking up (2026-11-23) */
 .msg.notice { border-left: 4px solid var(--warn); border-radius: 4px 16px 16px 4px; }
 .msg.notice.p0 { border-left-color: var(--bad); }
+#mute-btn.on { border-color: var(--warn); color: var(--warn); }
 .pending-card .pc-actions { display: flex; gap: 8px; margin-top: 4px; }
 .pending-card.closed { opacity: .6; border-color: var(--line); }
 .msg.error { align-self: flex-start; background: transparent; border: 1px dashed var(--bad); color: var(--bad); }
