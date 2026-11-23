@@ -53,6 +53,8 @@ export interface StubApi {
   server: Server;
   /** every request the stub saw: method, path, headers (tests check CSRF / idempotency headers) */
   seen: { method: string; path: string; headers: IncomingMessage['headers'] }[];
+  batches: { codes: string; command: unknown }[];
+  extraAlarms: Record<string, unknown>[];
   close(): Promise<void>;
 }
 
@@ -62,6 +64,9 @@ export async function startStubApi(users: StubUser[]): Promise<StubApi> {
   // commands (milestone 4): queued on POST, confirmed on the first GET; one command per Idempotency-Key
   const commands = new Map<string, { id: string; key: string; type: string; params: unknown; by: string; polls: number }>();
   const seen: StubApi['seen'] = [];
+  const batches: { codes: string; command: unknown }[] = [];
+  /** alarms a test adds while running (Jarvis speaking up, 2026-11-23) */
+  const extraAlarms: Record<string, unknown>[] = [];
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://stub');
@@ -139,8 +144,30 @@ export async function startStubApi(users: StubUser[]): Promise<StubApi> {
       return json(200, { areas: [{ id: 'd1', name: 'Quận 1', parentId: null, kind: 'district', cabinetCount: 2 }, { id: 'w1', name: 'Phường Bến Nghé', parentId: 'd1', kind: 'ward', cabinetCount: 2 }], unassigned: 0 });
     if (req.method === 'GET' && p === '/map/stats')
       return json(200, { cabinets: { offline: 1, fault: 1, dimming: 0, on: 6, off: 2, unknown: 0, total: 10 }, onlinePct: 90, energyTodayKwh: null, energyYesterdayKwh: null, overdueIncidents: 0 });
+    // batches (T3, 2026-11-23): preview, create with the OTP 123456, then finished at the first read
+    if (req.method === 'POST' && p === '/command-batches/preview') {
+      const b = await body(req);
+      const n = String(b.codes ?? '').split(',').filter(Boolean).length;
+      return json(200, { total: n, offline: 0, blocked: 0, unsupported: 0, max: 2000 });
+    }
+    if (req.method === 'POST' && p === '/command-batches') {
+      const b = await body(req);
+      if (b.otp !== '123456') return problem(res, 422, 'invalid_otp', 'Mã xác thực không đúng hoặc đã dùng');
+      batches.push({ codes: String(b.codes), command: b.command });
+      const n = String(b.codes).split(',').length;
+      return json(202, { id: 'batch-1', total: n, succeeded: 0, failed: 0, offline: 0, pending: n, finishedAt: null, requestedBy: 'someone' });
+    }
+    if (req.method === 'GET' && p === '/command-batches/batch-1') {
+      const n = batches.length ? batches[batches.length - 1]!.codes.split(',').length : 0;
+      return json(200, { id: 'batch-1', total: n, succeeded: n, failed: 0, offline: 0, pending: 0, finishedAt: new Date().toISOString(), requestedBy: 'someone' });
+    }
+    // alarm ack (2026-11-23): the one open alarm of the stub, once
+    if (req.method === 'POST' && p === '/alarms/a1/ack') {
+      if (user.role === 'viewer') return problem(res, 403, 'forbidden', 'Không đủ quyền');
+      return json(200, { ok: true });
+    }
     if (req.method === 'GET' && p === '/alarms')
-      return json(200, { items: [{ id: 'a1', code: 'E201', cabinetId: CABINET.id, cabinetName: CABINET.name, cabinetCode: CABINET.code, districtName: 'Quận 1', type: 'plc_lost', severity: 'major', message: 'Mất kết nối PLC', value: null, startedAt: new Date().toISOString(), endedAt: null, active: true, ackedBy: null, ackedAt: null }], total: 1, page: 1, size: 200 });
+      return json(200, { items: [{ id: 'a1', code: 'E201', cabinetId: CABINET.id, cabinetName: CABINET.name, cabinetCode: CABINET.code, districtName: 'Quận 1', type: 'plc_lost', severity: 'major', message: 'Mất kết nối PLC', value: null, startedAt: new Date().toISOString(), endedAt: null, active: true, ackedBy: null, ackedAt: null }, ...extraAlarms], total: 1 + extraAlarms.length, page: 1, size: 200 });
     if (req.method === 'POST' && p === `/cabinets/${CABINET.id}/commands`) {
       if (user.role === 'viewer') return problem(res, 403, 'forbidden', 'Không đủ quyền');
       const b = await body(req);
@@ -171,6 +198,8 @@ export async function startStubApi(users: StubUser[]): Promise<StubApi> {
     base: `http://127.0.0.1:${port}/api/v1`,
     server,
     seen,
+    batches,
+    extraAlarms,
     close: () => new Promise((r) => server.close(() => r())),
   };
 }

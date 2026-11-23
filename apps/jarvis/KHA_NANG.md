@@ -29,6 +29,7 @@ Mọi con số đều lấy từ dữ liệu thật lúc bạn hỏi. Không có
 | Tủ theo khu vực | "Tủ nào mất kết nối ở quận 1?", "Phường Bến Nghé có tủ nào lỗi?" |
 | Một tủ cụ thể | "Tủ TL01.0016 thế nào?", "TL12.0006 tình trạng", "Tủ đó có cảnh báo gì không?" |
 | Tủ mất kết nối từ khi nào | "TL07.0013 mất kết nối từ khi nào?" |
+| Xu hướng cảnh báo | "30 ngày qua khu vực nào nhiều lỗi nhất?", "Xu hướng cảnh báo quận 1 tháng qua", "So với tuần trước cảnh báo tăng hay giảm?" |
 | Lịch bật / tắt | "Lịch bật tắt tủ TL01.0016 thế nào?" |
 | Lịch sử của một tủ | "Tối qua tủ đó bật lúc mấy giờ?", "Dòng rò tủ DM0003 24 giờ qua có bất thường không?" |
 | Dòng rò của một tủ | "Dòng rò tủ TL01.0009 có tăng không?", "Rò tủ đó tuần này thế nào?": so với ngưỡng riêng của tủ, số lần vượt, xu hướng, lúc sáng / tắt, có dòng khi cả hai nhánh tắt hay không |
@@ -66,6 +67,14 @@ Jarvis gửi lệnh cho **từng tủ một** và **chỉ gửi sau khi bạn x�
 
 Chế độ chạy tay giữ đến mốc lịch kế tiếp, sau đó tủ tự chạy lại theo lịch. Khi báo kết quả, Jarvis nói luôn chuyện gì xảy ra sau đó, ví dụ "đèn sẽ tự bật lại theo lịch lúc 18:00".
 
+### Xác nhận đã xem cảnh báo
+
+Nói hoặc gõ "xác nhận đã xem cảnh báo E201 tủ TL01.0026" (hoặc "đánh dấu đã xem lỗi E202"). Jarvis hiện thẻ xác nhận như lệnh bật; nói "xác nhận" hoặc bấm nút. Việc này chỉ ghi nhận là đã xem, cảnh báo vẫn mở cho tới khi lỗi hết. Cần quyền xác nhận cảnh báo.
+
+### Lệnh nhiều tủ
+
+Nói "tắt hết đèn quận 1", "bật hết đèn phường Bến Nghé". Jarvis chỉ lấy các tủ được phép trong khu vực đó, nói số tủ, số tủ mất kết nối, rồi hiện thẻ **lệnh nhiều tủ**: nhập mã **OTP 6 số** trong ứng dụng xác thực (nếu tài khoản bật 2 lớp) và bấm **Xác nhận**. Nói hay gõ "xác nhận" không gửi được lệnh nhiều tủ. Mã sai thì thẻ hiện lại để nhập lại. Cần quyền chạy lệnh hàng loạt.
+
 ### Không nhớ mã tủ
 
 Cứ nói những gì bạn nhớ: khu vực, tên đường (nhớ một phần cũng được), số nhà, tủ đang sáng hay đang tắt. Jarvis lọc trong các tủ được phép điều khiển rồi:
@@ -83,7 +92,7 @@ Ví dụ:
 
 Chưa biết muốn làm gì cũng được: "tôi muốn điều khiển tủ ở quận 1" → Jarvis đọc các tủ có số → bạn chọn "số 1" → Jarvis hỏi "bật đèn, tắt đèn…?" → bạn nói "bật đèn".
 
-Nói "tắt đèn **quận 1**" (không có chữ "tủ") là lệnh cho cả quận, phải làm trên web. Nói "tắt đèn **một tủ ở** quận 1" là tìm một tủ.
+Nói "tắt đèn **quận 1**" hay "tắt **hết** đèn quận 1" là lệnh nhiều tủ (xem trên). Nói "tắt đèn **một tủ ở** quận 1" là tìm một tủ.
 
 ### Xác nhận
 
@@ -119,6 +128,10 @@ Nếu Jarvis hỏi "ở tủ nào?", bạn chỉ cần nói mã tủ trong vòng
 Câu hỏi về trạng thái ("tủ đó đã bật đèn chưa?") chỉ là câu hỏi, không phải lệnh.
 
 ---
+
+### Jarvis tự lên tiếng
+
+Khi đang mở Jarvis, cứ 20 giây Jarvis xem có cảnh báo mới không. Có thì hiện tin nhắn viền cam ("Cảnh báo mới: …"); cảnh báo nghiêm trọng có viền đỏ và tiếng bíp. Cảnh báo đã có từ trước khi mở Jarvis thì xem bằng nút **▶ Bắt đầu ca** (bản tin đầu ca). Jarvis không bao giờ tự gửi lệnh.
 
 ## 4. Nói chuyện bằng giọng
 
@@ -161,8 +174,6 @@ Mẹo để nghe đúng:
 | Bộ não AI (Groq gói miễn phí) | Khoảng 6–10 câu / phút cho cả hệ thống, tối đa 1.000 lượt / ngày cho mỗi model. Hỏi dồn dập có thể phải chờ vài giây hoặc thấy báo "đã dùng hết giới hạn miễn phí lúc này". Đợi một chút rồi hỏi lại |
 
 Jarvis **chưa** làm được:
-- Điều khiển nhiều tủ một lần (cần OTP trên web).
-- Xác nhận đã xem cảnh báo (ack).
 - Sửa lịch, sửa thông tin tủ, quản lý người dùng.
 - Trả lời những gì không có trong dữ liệu CityLight (thời tiết, chuyện ngoài lề…).
 

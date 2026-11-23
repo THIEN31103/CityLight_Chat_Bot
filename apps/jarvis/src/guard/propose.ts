@@ -4,11 +4,13 @@
 // packages/coreif/src/commands.ts: PULSE_ON = "bật tạm cả 2 nhánh 15 phút (xung I2)", DIAG = "tự kiểm tra RS485";
 // both end at "acked" (the cabinet reports nothing that proves them), the others at "confirmed".
 import type { RoleKey } from '@citylight/shared';
+import { hasPermission } from '@citylight/shared';
 import type { Alarm, Incident } from '@citylight/shared';
 import { editDistance, INCIDENT_STATUS_VI, resolveCabinet, SEVERITY_VI, viText, vnTime } from '../tools/read';
 import type { ToolContext } from '../tools/registry';
+import { areaIn } from './finder';
 import { describeCommand, type Order } from './orders';
-import type { Outcome, PendingAction } from './pending';
+import type { Outcome, PendingAction, PreviewBatch } from './pending';
 import { cabinetRefused, controlUnavailable, tierFor, type ActionCommand, type GuardState, type Tier } from './policy';
 import { expectedNow, scheduleNote, type ScheduleLike } from './schedule-note';
 
@@ -20,6 +22,7 @@ export type Proposal =
 const HOW: Record<Tier, string> = {
   T1: 'Nói hoặc gõ "xác nhận" (hoặc bấm nút trên thẻ bên dưới) để gửi, "hủy lệnh" để bỏ. Thẻ hết hạn sau 60 giây.',
   T2: 'Lệnh tắt: nói hoặc gõ đúng chữ "xác nhận" (hoặc bấm nút trên thẻ bên dưới) để gửi, "hủy lệnh" để bỏ. Thẻ hết hạn sau 60 giây.',
+  T3: 'Lệnh nhiều tủ: chỉ gửi bằng nút "Xác nhận" trên thẻ bên dưới, kèm mã OTP 6 số nếu tài khoản bật xác thực 2 lớp; "hủy lệnh" để bỏ. Thẻ hết hạn sau 60 giây.',
 };
 
 /** "Tắt tay nhánh 1 của tủ TL01.0016 (Điện Biên Phủ 7)": the card's title and the first sentence */
@@ -37,14 +40,94 @@ export function summaryOf(cmd: ActionCommand, c: { code: string; name: string })
       return `Bật tạm cả hai nhánh 15 phút (xung) ở ${cab}`;
     case 'DIAG':
       return `Gửi lệnh tự kiểm tra RS485 tới ${cab}`;
+    case 'ACK_ALARM':
+      return `Xác nhận đã xem cảnh báo ${cmd.params.alarmCode ?? ''} ở ${cab}`.replace('  ', ' ');
   }
 }
 
-export async function propose(order: Order, ctx: ToolContext, guard: GuardState, role: RoleKey, idleMs = 0, now = Date.now()): Promise<Proposal> {
+/**
+ * "Tắt hết đèn quận 1" (spec 5.3 propose_batch_control, 2026-11-23): the cabinets of that area that Jarvis may
+ * control (the allowlist still applies: the others are left out and counted), previewed by the API
+ * (POST /command-batches/preview) and offered as a T3 card. Sent only from the console's button with the OTP.
+ */
+export async function proposeBatch(cmd: ActionCommand, ctx: ToolContext, guard: GuardState, role: RoleKey, preview?: PreviewBatch): Promise<Proposal> {
+  if (!hasPermission(role, 'batch.run')) return { kind: 'refused', say: 'Tài khoản của bạn không có quyền chạy lệnh nhiều tủ.' };
+  if (cmd.type === 'DIAG' || cmd.type === 'ACK_ALARM') return { kind: 'refused', say: 'Lệnh này không chạy được cho nhiều tủ cùng lúc.' };
+  const o = { signal: ctx.signal };
+  const lists = await Promise.all([ctx.reads.mapCabinets(o), ctx.reads.areaTree(o)]).catch(() => null);
+  if (!lists) return { kind: 'refused', say: 'Tôi chưa đọc được danh sách tủ, bạn thử lại sau.' };
+  const [cabinets, tree] = lists;
+  const area = areaIn(ctx.userText ?? '', tree.areas);
+  if (!area) {
+    const names = tree.areas.filter((a) => a.kind === 'district').map((a) => a.name).join(', ');
+    return { kind: 'refused', say: `Lệnh nhiều tủ cần nói rõ khu vực, ví dụ "${describeCommand(cmd).toLowerCase()} quận 1". Các khu vực có: ${names}.` };
+  }
+  const inArea = cabinets.filter((c) => area.ids.some((id) => id === c.districtId || id === c.wardId));
+  const allowed = inArea.filter((c) => guard.allowlist.includes(c.code.toUpperCase()));
+  if (!allowed.length) return { kind: 'refused', say: `${area.name} không có tủ nào được phép điều khiển qua Jarvis.` };
+  const codes = allowed.map((c) => c.code);
+  const seen = preview ? await preview({ kind: 'control', command: { type: cmd.type, params: cmd.params }, codes: codes.join(',') }) : null;
+  const offline = seen?.offline ?? allowed.filter((c) => c.status === 'offline').length;
+  const skipped = (seen?.blocked ?? 0) + (seen?.unsupported ?? 0);
+  const summary = `${describeCommand(cmd)} ${allowed.length} tủ ở ${area.name}`;
+  const parts = [
+    `${summary}.`,
+    inArea.length > allowed.length ? `${inArea.length - allowed.length} tủ khác ở đó không nằm trong danh sách được phép, không gửi.` : '',
+    offline ? `${offline} tủ đang mất kết nối sẽ không nhận lệnh.` : '',
+    skipped ? `${skipped} tủ không hỗ trợ lệnh này.` : '',
+    HOW.T3,
+  ];
+  return {
+    kind: 'pending',
+    draft: { command: cmd, cabinet: { id: 'batch', code: area.name, name: `${allowed.length} tủ` }, summary, tier: 'T3', batch: { area: area.name, codes, total: allowed.length, offline, skipped } },
+    say: parts.filter(Boolean).join(' '),
+  };
+}
+
+/**
+ * "Xác nhận đã xem cảnh báo E201 tủ TL01.0026" (spec 5.3 propose_ack_alarm, 2026-11-23): finds the one open, not yet
+ * acknowledged alarm the words name and makes a T1 card for it. It switches nothing, so the cabinet allowlist does not
+ * apply; the kill switch and the role's alarm.ack do, and the API checks the role again. Never says who acknowledged.
+ */
+export async function proposeAck(
+  ask: { code?: string; cabinet?: string }, ctx: ToolContext, guard: GuardState, role: RoleKey, idleMs = 0,
+): Promise<Proposal> {
+  if (!guard.envEnabled || !guard.settingsEnabled) return { kind: 'refused', say: controlUnavailable(guard, role) ?? 'Chức năng hành động của Jarvis đang tắt.' };
+  if (!hasPermission(role, 'alarm.ack')) return { kind: 'refused', say: 'Tài khoản của bạn không có quyền xác nhận cảnh báo.' };
+  let alarms: Alarm[];
+  if (ask.cabinet) {
+    const r = await resolveCabinet(ctx, ask.cabinet);
+    if (r.kind !== 'one') return { kind: 'refused', say: r.kind === 'many' ? `Có nhiều tủ khớp: ${r.choices.map((c) => c.code).join(', ')}. Bạn nói rõ mã tủ giúp tôi.` : 'Tôi không tìm thấy tủ đó trong phạm vi của bạn.' };
+    ctx.focus.cabinet = { id: r.cabinet.id, code: r.cabinet.code, name: r.cabinet.name };
+    alarms = await ctx.reads.cabinetAlarms(r.cabinet.id, 50, { signal: ctx.signal }).catch(() => [] as Alarm[]);
+  } else {
+    const page = await ctx.reads.alarms({ active: true, size: 100 }, { signal: ctx.signal }).catch(() => null);
+    alarms = page?.items ?? [];
+  }
+  const open = alarms.filter((a) => a.active && (!ask.code || a.code === ask.code));
+  const waiting = open.filter((a) => !a.ackedAt);
+  if (!open.length) return { kind: 'refused', say: `Không có cảnh báo ${ask.code ?? ''} nào đang mở${ask.cabinet ? ' ở tủ đó' : ''}.`.replace('  ', ' ') };
+  if (!waiting.length) return { kind: 'refused', say: `Cảnh báo ${open[0]!.code} ở tủ ${open[0]!.cabinetCode} đã được xác nhận đã xem từ ${vnTime(open[0]!.ackedAt) ?? 'trước'}.` };
+  if (waiting.length > 1) {
+    const list = waiting.slice(0, 5).map((a) => `${a.code} ở tủ ${a.cabinetCode}`).join('; ');
+    return { kind: 'refused', say: `Có ${waiting.length} cảnh báo chưa xác nhận: ${list}${waiting.length > 5 ? '…' : ''}. Bạn nói rõ mã cảnh báo và mã tủ, ví dụ "xác nhận đã xem cảnh báo ${waiting[0]!.code} tủ ${waiting[0]!.cabinetCode}".` };
+  }
+  const a = waiting[0]!;
+  const cab = { id: a.cabinetId, code: a.cabinetCode, name: a.cabinetName };
+  const cmd: ActionCommand = { type: 'ACK_ALARM', params: { alarmId: a.id, alarmCode: a.code } };
+  const tier = tierFor(cmd, idleMs);
+  const what = `${summaryOf(cmd, cab)} (${viText(a.message)}, từ ${vnTime(a.startedAt)})`;
+  return {
+    kind: 'pending',
+    draft: { command: cmd, cabinet: cab, summary: what, tier, note: 'Xác nhận chỉ ghi nhận là đã xem; cảnh báo vẫn mở cho tới khi lỗi hết.' },
+    say: `${what}. Xác nhận chỉ ghi nhận là đã xem, cảnh báo vẫn mở cho tới khi lỗi hết. ${HOW[tier]}`,
+  };
+}
+
+export async function propose(order: Order, ctx: ToolContext, guard: GuardState, role: RoleKey, idleMs = 0, now = Date.now(), preview?: PreviewBatch): Promise<Proposal> {
   const off = controlUnavailable(guard, role);
   if (off) return { kind: 'refused', say: off };
-  if (order.kind === 'many')
-    return { kind: 'refused', say: 'Lệnh cho nhiều tủ cùng lúc phải làm trên web CityLight (cần mã OTP). Jarvis chỉ điều khiển từng tủ một.' };
+  if (order.kind === 'many') return proposeBatch(order.command, ctx, guard, role, preview);
   if (order.kind === 'which_cabinet' && order.heard)
     return { kind: 'refused', askCabinet: true, say: `Tôi nghe mã ${order.heard} nhưng không có tủ nào như vậy. Bạn đọc lại mã tủ giúp tôi, ví dụ "TL01 số 16".` };
   if (order.kind === 'which_cabinet') return { kind: 'refused', askCabinet: true, say: `Bạn muốn ${describeCommand(order.command).toLowerCase()} ở tủ nào? Nói mã tủ, tên đường hoặc khu vực giúp tôi.` };
@@ -159,8 +242,14 @@ export function outcomeText(p: PendingAction, o: Outcome, after?: Record<string,
   const cmd = p.command;
   const now = after ? ` Hiện ${lights(after)}.` : '';
   const note = p.note && (cmd.type === 'MANUAL_ALL' || cmd.type === 'MANUAL_BRANCH') ? ` ${p.note}` : '';
+  if (p.batch && o.batch) {
+    const b = o.batch;
+    const head = `Lệnh nhiều tủ ở ${p.batch.area}: ${b.succeeded} tủ đã nhận, ${b.failed} lỗi, ${b.offline} mất kết nối`;
+    return o.status === 'confirmed' ? `${head}.` : `${head}, ${b.pending} tủ chưa xong sau 60 giây. Bạn theo dõi tiếp trên web CityLight.`;
+  }
   switch (o.status) {
     case 'confirmed': {
+      if (cmd.type === 'ACK_ALARM') return `Đã ghi nhận: cảnh báo ${cmd.params.alarmCode ?? ''} ở tủ ${code} đã được xác nhận là đã xem. Cảnh báo vẫn mở cho tới khi lỗi hết.`.replace('  ', ' ');
       const verb = cmd.params.on ? 'bật' : 'tắt';
       const did =
         cmd.type === 'MANUAL_ALL' ? `đã ${verb} cả hai nhánh (chạy tay)`
@@ -183,7 +272,7 @@ export function outcomeText(p: PendingAction, o: Outcome, after?: Record<string,
       return `Lệnh tới tủ ${code} đã bị hủy.`;
     case 'not_sent':
       return o.code === 'reauth_required'
-        ? 'Máy chủ yêu cầu xác thực lại 2 lớp: bạn đăng xuất rồi đăng nhập lại Jarvis, sau đó ra lệnh lại.'
+        ? 'Máy chủ yêu cầu xác thực lại 2 lớp.'
         : `Không gửi được lệnh tới tủ ${code}${o.error ? `: ${o.error}` : ''}.`;
     default:
       return `Lệnh tới tủ ${code}: ${o.status}.`;

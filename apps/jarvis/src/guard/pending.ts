@@ -21,6 +21,8 @@ export interface PendingAction {
   note?: string;
   /** open alarms / field incidents of the cabinet when the card was made ("Lưu ý trước khi gửi: …"); never blocks */
   warning?: string;
+  /** a batch (T3): the allowed cabinets of one area, sent as POST /command-batches with the OTP from the console */
+  batch?: { area: string; codes: string[]; total: number; offline: number; skipped: number };
 }
 
 export type Via = 'voice' | 'text' | 'button';
@@ -61,6 +63,8 @@ export class PendingSlot {
       this.current = null;
       return { ok: false, reason: 'Lệnh đã hết hạn 60 giây, bạn ra lệnh lại nếu vẫn cần.' };
     }
+    if (p.tier === 'T3' && via !== 'button')
+      return { ok: false, reason: 'Lệnh nhiều tủ chỉ gửi bằng nút "Xác nhận" trên thẻ, nhập mã OTP 6 số nếu tài khoản bật xác thực 2 lớp. Nói hay gõ "xác nhận" không gửi được.' };
     if (p.tier === 'T2' && via !== 'button' && !explicit) return { ok: false, reason: 'Lệnh tắt cần nói hoặc gõ đúng chữ "xác nhận", hoặc bấm nút "Xác nhận" trên màn hình.' };
     this.used.add(id);
     this.current = null;
@@ -88,6 +92,8 @@ export const POLL_MS = 2_000;
 export interface Outcome {
   status: CommandStatus | 'not_sent';
   commandId?: string;
+  /** a batch: how its cabinets ended (2026-11-23) */
+  batch?: { id: string; total: number; succeeded: number; failed: number; offline: number; pending: number };
   /** the API's reason when it refused or the command failed */
   error?: string;
   code?: string;
@@ -98,8 +104,19 @@ export interface Outcome {
  * (GET /commands/:id every 2 s; the socket event can replace the polling later). Never throws for an API refusal.
  */
 export async function sendAndFollow(
-  api: ApiClient, p: PendingAction, opts: { signal?: AbortSignal; onStatus?: (s: CommandStatus) => void; followMs?: number; pollMs?: number } = {},
+  api: ApiClient, p: PendingAction, opts: { signal?: AbortSignal; onStatus?: (s: CommandStatus) => void; followMs?: number; pollMs?: number; otp?: string } = {},
 ): Promise<Outcome> {
+  if (p.batch) return sendBatch(api, p, opts);
+  // marking an alarm as seen is one call with an answer at once, nothing to follow (2026-11-23)
+  if (p.command.type === 'ACK_ALARM') {
+    try {
+      await api.post(`alarms/${encodeURIComponent(p.command.params.alarmId ?? '')}/ack`, {}, { idempotencyKey: p.id, signal: opts.signal });
+      return { status: 'confirmed' };
+    } catch (e) {
+      if (e instanceof ApiProblem) return { status: 'not_sent', error: e.detail, code: e.code };
+      throw e;
+    }
+  }
   let cmd: Command;
   try {
     cmd = await api.post<Command>(`cabinets/${encodeURIComponent(p.cabinet.id)}/commands`, { type: p.command.type, params: p.command.params }, { idempotencyKey: p.id, signal: opts.signal });
@@ -126,4 +143,46 @@ export async function sendAndFollow(
     last = cmd.status;
   }
   return { status: done(last) ? last : 'timeout', commandId: cmd.id, error: cmd.error ?? undefined };
+}
+
+/**
+ * A batch (T3, spec 5.3 / 6.3): POST /command-batches with the cabinets' codes and the OTP typed on the console. The
+ * OTP goes straight to the API: it is not logged, not audited, never seen by the model. Followed by
+ * GET /command-batches/:id until it finishes or the time is up.
+ */
+async function sendBatch(
+  api: ApiClient, p: PendingAction, opts: { signal?: AbortSignal; onStatus?: (s: CommandStatus) => void; followMs?: number; pollMs?: number; otp?: string },
+): Promise<Outcome> {
+  type Batch = { id: string; total: number; succeeded: number; failed: number; offline: number; pending: number; finishedAt: string | null };
+  const pick = (b: Batch) => ({ id: b.id, total: b.total, succeeded: b.succeeded, failed: b.failed, offline: b.offline, pending: b.pending });
+  let b: Batch;
+  try {
+    b = await api.post<Batch>('command-batches', {
+      kind: 'control', command: { type: p.command.type, params: p.command.params }, codes: p.batch!.codes.join(','), ...(opts.otp ? { otp: opts.otp } : {}),
+    }, { idempotencyKey: p.id, signal: opts.signal });
+  } catch (e) {
+    if (e instanceof ApiProblem) return { status: 'not_sent', error: e.detail, code: e.code };
+    throw e;
+  }
+  opts.onStatus?.('sent');
+  const until = Date.now() + (opts.followMs ?? FOLLOW_MS);
+  while (!b.finishedAt && b.pending > 0 && Date.now() < until) {
+    await new Promise((r) => setTimeout(r, opts.pollMs ?? POLL_MS));
+    if (opts.signal?.aborted) break;
+    try {
+      b = await api.get<Batch>(`command-batches/${encodeURIComponent(b.id)}`, undefined, { signal: opts.signal });
+    } catch (e) {
+      if (opts.signal?.aborted) break;
+      if (!(e instanceof ApiProblem)) throw e;
+    }
+  }
+  return { status: b.finishedAt || b.pending === 0 ? 'confirmed' : 'timeout', batch: pick(b) };
+}
+
+export interface BatchPreview { total: number; offline: number; blocked: number; unsupported: number; max: number | null }
+export type PreviewBatch = (body: { kind: 'control'; command: { type: string; params: Record<string, unknown> }; codes: string }) => Promise<BatchPreview | null>;
+
+/** POST /command-batches/preview: what a batch would reach (sends nothing); null when the API refuses */
+export function batchPreviewer(api: ApiClient, signal?: AbortSignal): PreviewBatch {
+  return (body) => api.post<BatchPreview>('command-batches/preview', body, { signal }).catch(() => null);
 }

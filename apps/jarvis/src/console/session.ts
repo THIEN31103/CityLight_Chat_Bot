@@ -31,6 +31,8 @@ export class ConsoleSession {
   allowedByArea: { at: number; text: string | null } | null = null;
   /** real area and street names the user can see, to fix misheard ones in voice turns (read at most every 5 minutes) */
   places: { at: number; names: string[]; districts: string[] } | null = null;
+  /** open alarms already told (Jarvis speaks up, spec 7, 2026-11-23); null until the first look, which tells nothing */
+  seenAlarms: Set<string> | null = null;
 
   constructor(apiBase: string, timeoutMs: number, fetchImpl?: typeof fetch) {
     this.api = new ApiClient({ baseUrl: apiBase, timeoutMs, fetch: fetchImpl });

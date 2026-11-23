@@ -144,7 +144,7 @@ describe('actions (milestone 4)', () => {
 
   it('a cabinet outside the allowlist, an unknown cabinet, several cabinets, no cabinet: refused, nothing pending', async () => {
     expect((await op.say('bật đèn tủ DM0099')).text).toMatch(/không tìm thấy tủ/i);
-    expect((await op.say('tắt hết đèn quận 1')).text).toMatch(/nhiều tủ cùng lúc/);
+    expect((await op.say('tắt hết đèn')).text).toMatch(/nói rõ khu vực/);
     await op.call('POST', '/api/chat/new');
     expect((await op.say('bật đèn lên')).text).toMatch(/tủ nào/);
     expect((await op.call('GET', '/api/session')).data.pending).toBeNull();
@@ -401,5 +401,92 @@ describe('yes / no with nothing waiting (2026-11-23)', () => {
     await op.call('POST', '/api/chat/new');
     const r = await op.say('[[fake:{"text":""}]] tình hình phường 2');
     expect(r.text).toMatch(/^Tôi chưa trả lời được câu này/);
+  });
+});
+
+describe('numbered cabinets come as buttons too (2026-11-23)', () => {
+  it('the list read out is sent as choices "1. …", "2. …"; nothing is logged as refused', async () => {
+    await op.call('POST', '/api/chat/new');
+    const r = await op.say('bật đèn một tủ ở quận một');
+    const c = r.events.find((e) => e.event === 'choices')?.data;
+    expect(c?.items).toEqual([{ n: 1, label: '1. Lý Thường Kiệt 9 (DM0010)' }, { n: 2, label: '2. Hai Bà Trưng 2 (DM0001)' }]);
+    const p = await op.say('số 1');
+    expect(p.pending?.summary).toMatch(/DM0010/);
+    await op.say('hủy');
+  });
+});
+
+describe('alarm ack, T1 (2026-11-23)', () => {
+  it('a card for the one open alarm; "xác nhận" sends POST /alarms/:id/ack; the result says it stays open', async () => {
+    await op.call('POST', '/api/chat/new');
+    const r = await op.say('xác nhận đã xem cảnh báo E201 tủ DM0010');
+    expect(r.pending?.summary).toMatch(/^Xác nhận đã xem cảnh báo E201 ở tủ DM0010/);
+    expect(r.pending?.tier).toBe('T1');
+    const before = stub.seen.filter((x) => x.method === 'POST' && x.path === '/alarms/a1/ack').length;
+    const done = await op.say('xác nhận');
+    expect(stub.seen.filter((x) => x.method === 'POST' && x.path === '/alarms/a1/ack').length).toBe(before + 1);
+    expect(done.text).toMatch(/Đã ghi nhận: cảnh báo E201 ở tủ DM0010 đã được xác nhận là đã xem/);
+  });
+  it('"xác nhận cảnh báo …" while a switching card waits does not confirm that card', async () => {
+    await op.call('POST', '/api/chat/new');
+    const first = await op.say('bật đèn tủ DM0010');
+    expect(first.pending).toBeTruthy();
+    const before = posts().length;
+    const r = await op.say('xác nhận cảnh báo E201');
+    expect(posts().length).toBe(before);
+    expect(r.pending?.summary).toMatch(/cảnh báo E201/);
+    await op.say('hủy');
+  });
+});
+
+describe('batches, T3 (2026-11-23)', () => {
+  it('a T3 card for the allowed cabinets of the area; words cannot send it; a wrong OTP brings the card back; the right one sends the batch', async () => {
+    await op.call('POST', '/api/chat/new');
+    const r = await op.say('tắt hết đèn quận 1');
+    expect(r.pending).toMatchObject({ tier: 'T3', summary: 'Tắt tay cả hai nhánh đèn 2 tủ ở Quận 1' });
+    expect(r.text).toMatch(/1 tủ khác ở đó không nằm trong danh sách được phép/);
+    // typed or spoken "xác nhận" never sends a batch
+    const said = await op.say('xác nhận');
+    expect(said.text).toMatch(/chỉ gửi bằng nút "Xác nhận"/);
+    expect(stub.batches.length).toBe(0);
+    // a wrong OTP: nothing sent, a new card to try again
+    const wrong = await op.call('POST', `/api/pending/${r.pending!.id}/confirm`, { otp: '000000' });
+    const again = wrong.events.find((e) => e.event === 'pending')?.data;
+    expect(again?.tier).toBe('T3');
+    expect(wrong.events.find((e) => e.event === 'done')?.data.text).toMatch(/Thẻ mới đã hiện/);
+    expect(stub.batches.length).toBe(0);
+    // the right OTP: the batch goes out with the allowed codes only, and its result is said
+    const right = await op.call('POST', `/api/pending/${again!.id}/confirm`, { otp: '123456' });
+    expect(stub.batches.at(-1)).toMatchObject({ codes: 'DM0010,DM0001', command: { type: 'MANUAL_ALL', params: { on: false } } });
+    expect(right.events.find((e) => e.event === 'done')?.data.text).toMatch(/Lệnh nhiều tủ ở Quận 1: 2 tủ đã nhận, 0 lỗi, 0 mất kết nối\./);
+    // the OTP is nowhere in the audit log
+    expect(JSON.stringify(audit())).not.toContain('123456');
+  });
+  it('a viewer cannot run batches', async () => {
+    const { proposeBatch } = await import('../src/guard/propose');
+    const r = await proposeBatch({ type: 'MANUAL_ALL', params: { on: true } }, { reads: {}, focus: {}, userText: 'bật hết đèn quận 1' } as never, { envEnabled: true, settingsEnabled: true, allowlist: ['DM0010'] }, 'viewer');
+    expect(r).toMatchObject({ kind: 'refused', say: 'Tài khoản của bạn không có quyền chạy lệnh nhiều tủ.' });
+  });
+});
+
+describe('2FA again when the server asks (2026-11-23)', () => {
+  it('POST /api/reauth checks the code shape before it goes anywhere', async () => {
+    const r = await op.call('POST', '/api/reauth', { code: '12' });
+    expect(r.status).toBe(422);
+  });
+});
+
+describe('Jarvis speaks up (2026-11-23)', () => {
+  it('the first look tells nothing; a new critical alarm is told once, P0; no model involved', async () => {
+    const fresh = new Browser();
+    await fresh.signIn('op@demo.vn', 'mat-khau-op-1', '333333');
+    expect((await fresh.call('GET', '/api/notices')).data.notices).toEqual([]);
+    stub.extraAlarms.push({ id: 'n1', code: 'E204', cabinetId: 'second', cabinetName: 'Hai Bà Trưng 2', cabinetCode: 'DM0001', districtName: 'Quận 1', type: 'contactor_fault', severity: 'critical', message: 'Lỗi contactor', value: null, startedAt: new Date().toISOString(), endedAt: null, active: true, ackedBy: null, ackedAt: null });
+    const told = (await fresh.call('GET', '/api/notices')).data.notices;
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatchObject({ level: 'P0' });
+    expect(told[0].text).toMatch(/^Cảnh báo nghiêm trọng mới: E204 Lỗi contactor ở tủ DM0001, Quận 1, từ /);
+    expect((await fresh.call('GET', '/api/notices')).data.notices).toEqual([]);
+    stub.extraAlarms.length = 0;
   });
 });

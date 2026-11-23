@@ -115,6 +115,7 @@ function render() {
   $('#voice-btn').hidden = !session.voice;
   const l = session.limits;
   $('#limits').textContent = `Tối đa ${l.perUserPerMin} câu / phút · token hôm nay ${fmtNum(l.tokensToday)}${l.tokenCap ? ` / ${fmtNum(l.tokenCap)}` : ''}`;
+  startNotices();
   // after a reload (F5) the chat in progress is shown again, not an empty screen
   showCurrent();
   $('#input').focus();
@@ -189,6 +190,43 @@ async function newChat() {
   input.focus();
 }
 $('#new-chat').addEventListener('click', newChat);
+// spec 7 briefing (2026-11-23): one click for the shift report
+$('#start-shift').addEventListener('click', () => ask('Bản tin đầu ca'));
+
+/**
+ * Jarvis speaks up (spec 7, 2026-11-23): every 20 s the console asks for new open alarms. Critical ones (P0) beep.
+ * Not while an answer streams or an old chat is open: they wait for the next look.
+ */
+let noticeTimer = null;
+function startNotices() {
+  if (noticeTimer) return;
+  const look = async () => {
+    if (!session?.signedIn || busy || viewingId) return;
+    const r = await api('GET', '/api/notices').catch(() => null);
+    for (const n of r?.notices ?? []) {
+      const b = addBubble('assistant', n.text);
+      b.classList.add('notice', n.level === 'P0' ? 'p0' : 'p1');
+      if (n.level === 'P0') beep();
+    }
+  };
+  look();
+  noticeTimer = setInterval(look, 20_000);
+}
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.frequency.value = 880;
+    g.gain.value = 0.08;
+    o.connect(g).connect(ctx.destination);
+    o.start();
+    o.stop(ctx.currentTime + 0.25);
+    o.onended = () => ctx.close();
+  } catch {
+    // no sound allowed yet: the message is still there
+  }
+}
 
 // phone: the chat list opens as a drawer; picking a chat, starting one or tapping outside closes it
 function setDrawer(open) {
@@ -245,6 +283,52 @@ function addBubble(role, text) {
   return b;
 }
 
+/**
+ * Buttons under the answer for the numbered cabinets it read (2026-11-23): a click sends "số N", as if said. They go
+ * away after one click or once the next question is asked.
+ */
+function showChoices(bubble, items) {
+  document.querySelectorAll('.choices').forEach((x) => x.remove());
+  const row = el('div', { class: 'choices', role: 'group', 'aria-label': 'Chọn tủ' });
+  for (const it of items) {
+    const b = el('button', { type: 'button', class: 'ghost' }, it.label);
+    b.addEventListener('click', () => {
+      if (busy) return;
+      row.remove();
+      ask(`số ${it.n}`);
+    });
+    row.append(b);
+  }
+  bubble.after(row);
+}
+
+/**
+ * The server asked for the 2FA code again (403 reauth_required, 2026-11-23): a box under the answer; the code goes to
+ * /api/reauth and from there to the server, never into the chat.
+ */
+function showReauth(bubble) {
+  document.querySelectorAll('.reauth').forEach((x) => x.remove());
+  const code = el('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', placeholder: 'Mã 6 số', 'aria-label': 'Mã xác thực 2 lớp' });
+  const go = el('button', { type: 'button', class: 'primary' }, 'Xác thực lại');
+  const msg = el('span', { class: 'pc-note' }, '');
+  const box = el('div', { class: 'reauth', role: 'group', 'aria-label': 'Xác thực lại 2 lớp' }, code, go, msg);
+  go.addEventListener('click', async () => {
+    const v = code.value.trim();
+    if (!/^\d{6}$/.test(v)) {
+      msg.textContent = 'Mã gồm 6 chữ số.';
+      return;
+    }
+    go.disabled = true;
+    code.value = '';
+    const r = await api('POST', '/api/reauth', { code: v }).catch((e) => ({ ok: false, text: e.message }));
+    msg.textContent = r.text ?? '';
+    if (r.ok) setTimeout(() => box.remove(), 4000);
+    else go.disabled = false;
+  });
+  bubble.after(box);
+  code.focus();
+}
+
 function showLive() {
   viewingId = null;
   $('#viewing').hidden = true;
@@ -255,6 +339,7 @@ function showLive() {
 function ask(raw) {
   const text = raw.trim();
   if (!text || busy) return;
+  document.querySelectorAll('.choices').forEach((x) => x.remove());
   input.value = '';
   input.style.height = 'auto';
   return turn({ text });
@@ -263,7 +348,7 @@ function ask(raw) {
 const STATUS_TEXT = { thinking: 'Đang nghĩ…', transcribing: 'Đang nghe lại câu nói…', speaking: 'Đang nói…' };
 
 /** One question, typed ({ text }) or spoken ({ pcm }): streams the answer, plays its audio in voice mode. */
-async function turn({ text, pcm, confirmId }) {
+async function turn({ text, pcm, confirmId, otp }) {
   showLive();
   // a click on "Xác nhận" streams the command like a turn; in voice mode its result is spoken too
   const spoken = !!pcm || (!!confirmId && voiceIn.on);
@@ -292,7 +377,7 @@ async function turn({ text, pcm, confirmId }) {
   };
   revealRest?.();
   try {
-    const [path, payload] = confirmId ? [`/api/pending/${encodeURIComponent(confirmId)}/confirm`, { voice: voiceIn.on }] : pcm ? ['/api/voice', pcm] : ['/api/chat', { text }];
+    const [path, payload] = confirmId ? [`/api/pending/${encodeURIComponent(confirmId)}/confirm`, { voice: voiceIn.on, ...(otp ? { otp } : {}) }] : pcm ? ['/api/voice', pcm] : ['/api/chat', { text }];
     await stream(path, payload, (event, data) => {
       if (event === 'transcript') {
         userBubble.textContent = data.text ? `🎙 ${data.text}` : '🎙 (không nghe rõ)';
@@ -301,6 +386,10 @@ async function turn({ text, pcm, confirmId }) {
         got = '';
         if (!spoken) body.textContent = '';
         if (!confirmId) setStatus('Đang tra cứu dữ liệu…', true);
+      } else if (event === 'reauth') {
+        showReauth(bubble);
+      } else if (event === 'choices') {
+        showChoices(bubble, data.items);
       } else if (event === 'pending') {
         card = showPendingCard(data);
       } else if (event === 'pending_closed') {
@@ -383,13 +472,20 @@ function showPendingCard(p) {
   const left = el('span', { class: 'countdown' });
   const ok = el('button', { class: 'primary', type: 'button' }, 'Xác nhận');
   const no = el('button', { class: 'ghost', type: 'button' }, 'Hủy');
-  const card = el('div', { class: `msg pending-card ${p.tier === 'T2' ? 't2' : 't1'}`, role: 'group', 'aria-label': 'Lệnh chờ xác nhận' },
+  // a batch (T3, 2026-11-23): the OTP is typed here and goes with the click straight to the server, never into the chat
+  const otp = p.tier === 'T3'
+    ? el('input', { class: 'pc-otp', type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', placeholder: 'Mã OTP 6 số', 'aria-label': 'Mã OTP 6 số' })
+    : null;
+  const how = p.tier === 'T3'
+    ? 'Lệnh nhiều tủ: nhập mã OTP trong ứng dụng xác thực (nếu tài khoản bật 2 lớp) rồi bấm Xác nhận. Nói hay gõ "xác nhận" không gửi được.'
+    : p.tier === 'T2' ? 'Lệnh tắt: nói hoặc gõ đúng chữ "xác nhận", hoặc bấm nút.' : 'Nói hoặc gõ "xác nhận" / "hủy lệnh", hoặc bấm nút.';
+  const card = el('div', { class: `msg pending-card ${p.tier === 'T1' ? 't1' : 't2'}`, role: 'group', 'aria-label': 'Lệnh chờ xác nhận' },
     el('div', { class: 'pc-head' }, el('strong', {}, '⚠ Lệnh chờ xác nhận'), left),
     el('div', { class: 'pc-summary' }, p.summary),
     p.warning ? el('div', { class: 'pc-warn', role: 'note' }, p.warning) : null,
     p.note ? el('div', { class: 'pc-note' }, p.note) : null,
-    el('div', { class: 'pc-how' }, p.tier === 'T2' ? 'Lệnh tắt: nói hoặc gõ đúng chữ "xác nhận", hoặc bấm nút.' : 'Nói hoặc gõ "xác nhận" / "hủy lệnh", hoặc bấm nút.'),
-    el('div', { class: 'pc-actions' }, ok, no));
+    el('div', { class: 'pc-how' }, how),
+    el('div', { class: 'pc-actions' }, otp, ok, no));
   $('#empty').hidden = true;
   $('#messages').append(card);
   card.scrollIntoView({ block: 'end' });
@@ -405,9 +501,17 @@ function showPendingCard(p) {
   card.scrollIntoView({ block: 'end' });
   ok.addEventListener('click', () => {
     if (busy) return;
+    const code = otp ? otp.value.trim() : '';
+    if (otp && code && !/^\d{6}$/.test(code)) {
+      otp.setCustomValidity('Mã OTP gồm 6 chữ số');
+      otp.reportValidity();
+      return;
+    }
     ok.disabled = no.disabled = true;
-    turn({ confirmId: p.id });
+    if (otp) otp.value = '';
+    turn({ confirmId: p.id, otp: code || undefined });
   });
+  otp?.addEventListener('input', () => otp.setCustomValidity(''));
   no.addEventListener('click', async () => {
     if (busy) return;
     ok.disabled = no.disabled = true;

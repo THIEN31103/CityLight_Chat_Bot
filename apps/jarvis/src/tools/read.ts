@@ -765,6 +765,72 @@ const getCabinetInterventions: ToolDef<{ cabinet: string; days: number }> = {
   },
 };
 
+/**
+ * Alarms over the last N days by area and code, and whether they are rising (Gemini review 2026-11-23, "xu hướng 30
+ * ngày"). Built from the alarm list filtered by date: the server has no aggregate endpoint and Jarvis does not change the
+ * server (spec G1). Counts alarms that started in the period, open or ended.
+ */
+const getAlarmTrends: ToolDef<{ area?: string; days: number }> = {
+  name: 'get_alarm_trends',
+  kind: 'read',
+  description:
+    'Alarm TRENDS over the last N days (default 30, max 90) for one ward or district or the whole system: how many alarms started, by area and by code, last 7 days against the 7 before (rising or falling), how long they stayed open, how many are still open. Use for "xu hướng", "30 ngày qua", "tháng qua khu vực nào nhiều lỗi nhất", "so với tuần trước".',
+  schema: obj({ area: { type: 'string', description: 'Tên phường hoặc quận; bỏ trống = toàn hệ thống' }, days: { type: 'integer', minimum: 7, description: 'Số ngày, mặc định 30, tối đa 90' } }),
+  input: z.object({ area: z.string().trim().max(100).optional(), days: z.coerce.number().int().min(7).default(30).transform((n) => Math.min(n, 90)) }),
+  async run(ctx, { area, days }) {
+    const o = { signal: ctx.signal };
+    const now = Date.now();
+    const from = new Date(now - days * 86_400_000).toISOString();
+    const first = await ctx.reads.alarms({ from, size: 100, page: 1 }, o);
+    const items = [...first.items];
+    for (let p = 2; items.length < first.total && p <= MAX_ALARM_PAGES; p++) {
+      const next = await ctx.reads.alarms({ from, size: 100, page: p }, o);
+      if (!next.items.length) break;
+      items.push(...next.items);
+    }
+    let rows = items.filter((a) => new Date(a.startedAt).getTime() >= now - days * 86_400_000);
+    let where: Record<string, unknown> = { khu_vuc: 'toàn hệ thống' };
+    let groupBy = (a: Alarm) => a.districtName || 'khu vực khác';
+    if (!wholeSystem(area)) {
+      const found = await pickArea(ctx, area!);
+      if ('error' in found) return found.error;
+      const id = found.pick.id;
+      const cabinets = await ctx.reads.mapCabinets(o);
+      const inArea = new Map(cabinets.filter((c) => c.districtId === id || c.wardId === id).map((c) => [c.id, c]));
+      rows = rows.filter((a) => inArea.has(a.cabinetId));
+      // inside a district: by ward; inside a ward: by cabinet
+      const names = new Map(found.areas.map((x) => [x.id, x.name]));
+      groupBy = found.pick.kind === 'district' ? (a) => names.get(inArea.get(a.cabinetId)?.wardId ?? '') ?? 'phường khác' : (a) => a.cabinetCode;
+      where = { khu_vuc: found.pick.name, ...(found.heardAs ? { ghi_chu_ten: `Không có khu vực "${area}", hiểu là ${found.heardAs}. Nói rõ điều này.` } : {}) };
+    }
+    const top = (key: (a: Alarm) => string, n: number) => {
+      const m = new Map<string, number>();
+      for (const a of rows) m.set(key(a), (m.get(key(a)) ?? 0) + 1);
+      return [...m].sort((x, y) => y[1] - x[1]).slice(0, n).map(([ten, so]) => ({ ten, so }));
+    };
+    const inDays = (a: Alarm, d0: number, d1: number) => {
+      const t = new Date(a.startedAt).getTime();
+      return t >= now - d1 * 86_400_000 && t < now - d0 * 86_400_000;
+    };
+    const last7 = rows.filter((a) => inDays(a, 0, 7)).length;
+    const prev7 = rows.filter((a) => inDays(a, 7, 14)).length;
+    const ended = rows.filter((a) => a.endedAt);
+    const hours = ended.map((a) => (new Date(a.endedAt!).getTime() - new Date(a.startedAt).getTime()) / 3_600_000).sort((x, y) => x - y);
+    return {
+      ...where,
+      so_ngay: days,
+      tong_so_canh_bao: rows.length,
+      ...(items.length < first.total ? { ghi_chu_du_lieu: `Chỉ tính trên ${items.length} / ${first.total} cảnh báo mới nhất trong khoảng này.` } : {}),
+      nhieu_nhat_theo_khu_vuc: top(groupBy, 5),
+      nhieu_nhat_theo_ma: top((a) => `${a.code} ${viText(a.message)}`.trim(), 5),
+      bay_ngay_qua_so_voi_bay_ngay_truoc: { bay_ngay_qua: last7, bay_ngay_truoc: prev7, xu_huong: last7 > prev7 * 1.2 && last7 - prev7 >= 2 ? 'tăng' : prev7 > last7 * 1.2 && prev7 - last7 >= 2 ? 'giảm' : 'gần như không đổi' },
+      thoi_gian_mo_trung_vi_gio: hours.length ? Math.round(hours[Math.floor(hours.length / 2)]! * 10) / 10 : null,
+      con_mo: rows.filter((a) => a.active).length,
+      ghi_chu: 'Chỉ có số cảnh báo; không có số giờ mất kết nối hay điện năng theo ngày. Nói con số, không đoán nguyên nhân.',
+    };
+  },
+};
+
 const getSchedule: ToolDef<{ cabinet: string }> = {
   name: 'get_schedule',
   kind: 'read',
@@ -827,7 +893,7 @@ const getCommandStatus: ToolDef<{ command_id: string }> = {
  * fewer. get_cabinet already resolves loose names (and asks back when several match), so find_cabinets is not needed.
  */
 export const READ_TOOLS = [
-  getSystemOverview, getCabinet, getCabinetHistory, listAlarms, explainAlarmCode, getAreaCabinets, findScheduleMismatch, getShiftReport, getCabinetInterventions, getSchedule, listIncidents,
+  getSystemOverview, getCabinet, getCabinetHistory, listAlarms, explainAlarmCode, getAreaCabinets, findScheduleMismatch, getShiftReport, getCabinetInterventions, getAlarmTrends, getSchedule, listIncidents,
 ] as unknown as ToolDef[];
 
 /** Not offered to the model: list_areas, find_cabinets run only through the keyword router; get_command_status comes back with actions (milestone 4). */

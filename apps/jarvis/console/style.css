@@ -139,6 +139,16 @@ label.row input { width: auto; }
 .pending-card .pc-summary { font-weight: 600; }
 .pending-card .pc-note, .pending-card .pc-how { font-size: 13px; color: var(--muted); }
 .pending-card .pc-warn { font-size: 13px; color: var(--warn); }
+/* numbered cabinets to pick from (2026-11-23) */
+.choices { align-self: flex-start; display: flex; flex-wrap: wrap; gap: 6px; max-width: 85%; }
+.choices button { font-size: 13px; padding: 6px 10px; }
+/* T3 OTP on the card and the 2FA box (2026-11-23) */
+.pending-card .pc-otp { width: 9em; font-variant-numeric: tabular-nums; letter-spacing: .1em; }
+.reauth { align-self: flex-start; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.reauth input { width: 8em; }
+/* Jarvis speaking up (2026-11-23) */
+.msg.notice { border-left: 4px solid var(--warn); border-radius: 4px 16px 16px 4px; }
+.msg.notice.p0 { border-left-color: var(--bad); }
 .pending-card .pc-actions { display: flex; gap: 8px; margin-top: 4px; }
 .pending-card.closed { opacity: .6; border-color: var(--line); }
 .msg.error { align-self: flex-start; background: transparent; border: 1px dashed var(--bad); color: var(--bad); }

@@ -346,3 +346,39 @@ describe('get_cabinet_interventions (2026-11-23)', () => {
     expect(out.canh_bao.tong_so).toBe(3);
   });
 });
+
+describe('get_alarm_trends (2026-11-23)', () => {
+  const ago = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
+  const a = (i: number, code: string, district: string, cabinetId: string, start: number, end: number | null) => ({
+    id: `t${i}`, code, cabinetId, cabinetCode: `TL.${cabinetId}`, cabinetName: cabinetId, districtName: district, type: 'x', severity: 'major', message: code === 'E201' ? 'Mất kết nối PLC' : 'Cửa tủ mở',
+    value: null, startedAt: ago(start), endedAt: end === null ? null : ago(end), active: end === null, ackedBy: null, ackedAt: null,
+  });
+  const alarms = [
+    a(1, 'E201', 'Quận 1', 'c1', 1, null), a(2, 'E201', 'Quận 1', 'c1', 2, 1.9), a(3, 'E201', 'Quận 1', 'c2', 3, 2.5), a(4, 'E105', 'Quận 3', 'c3', 4, 3.9),
+    a(5, 'E105', 'Quận 1', 'c2', 9, 8), a(6, 'E201', 'Quận 3', 'c3', 20, 19), a(7, 'E201', 'Quận 3', 'c3', 40, 39),
+  ];
+  const areas = [{ id: 'd1', name: 'Quận 1', parentId: null, kind: 'district', cabinetCount: 2 }, { id: 'w1', name: 'Phường Bến Nghé', parentId: 'd1', kind: 'ward', cabinetCount: 1 }, { id: 'w2', name: 'Phường Đa Kao', parentId: 'd1', kind: 'ward', cabinetCount: 1 }, { id: 'd3', name: 'Quận 3', parentId: null, kind: 'district', cabinetCount: 1 }];
+  const cabinets = [{ id: 'c1', code: 'TL.c1', districtId: 'd1', wardId: 'w1', status: 'on' }, { id: 'c2', code: 'TL.c2', districtId: 'd1', wardId: 'w2', status: 'on' }, { id: 'c3', code: 'TL.c3', districtId: 'd3', wardId: null, status: 'on' }];
+  const asked: Record<string, unknown>[] = [];
+  const ctx = () => ({
+    reads: { alarms: async (q: Record<string, unknown>) => { asked.push(q); return { items: alarms, total: alarms.length, page: 1, size: 100 }; }, areaTree: async () => ({ areas, unassigned: 0 }), mapCabinets: async () => cabinets },
+    user: { id: 'trends-test' }, focus: {},
+  }) as unknown as ToolContext;
+  const tool = () => READ_TOOLS.find((t) => t.name === 'get_alarm_trends')!;
+
+  it('30 days, whole system: by district and code, last 7 against the 7 before, still open', async () => {
+    const out = (await tool().run(ctx(), { days: 30 })) as Record<string, any>;
+    expect(typeof asked[0]!.from).toBe('string');
+    expect(out.tong_so_canh_bao).toBe(6);
+    expect(out.nhieu_nhat_theo_khu_vuc[0]).toEqual({ ten: 'Quận 1', so: 4 });
+    expect(out.nhieu_nhat_theo_ma[0]).toEqual({ ten: 'E201 Mất kết nối PLC', so: 4 });
+    expect(out.bay_ngay_qua_so_voi_bay_ngay_truoc).toEqual({ bay_ngay_qua: 4, bay_ngay_truoc: 1, xu_huong: 'tăng' });
+    expect(out.con_mo).toBe(1);
+  });
+  it('one district: by ward', async () => {
+    const out = (await tool().run(ctx(), { area: 'Quận 1', days: 30 })) as Record<string, any>;
+    expect(out.khu_vuc).toBe('Quận 1');
+    expect(out.tong_so_canh_bao).toBe(4);
+    expect(out.nhieu_nhat_theo_khu_vuc).toEqual([{ ten: 'Phường Bến Nghé', so: 2 }, { ten: 'Phường Đa Kao', so: 2 }]);
+  });
+});

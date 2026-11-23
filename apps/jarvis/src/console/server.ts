@@ -22,7 +22,7 @@ import { bootstrapAdmin, canEditSettings, canGrant, canViewChatsOf, getAccess, l
 import { addTokenUsage, tokensToday, type Db } from '../store/db';
 import { addMessage, createConversation, deleteAllOwn, deleteOwn, getConversation, getMessages, listAll, listOwn, renameOwn, TITLE_MAX, tokenReport } from '../store/history';
 import { SettingsError, effectiveTokenCap, getSettings, updateSettings } from '../store/settings';
-import { READ_TOOLS, SPARE_TOOLS } from '../tools/read';
+import { READ_TOOLS, SPARE_TOOLS, viText, vnTime } from '../tools/read';
 import type { Focus, ToolDef } from '../tools/registry';
 import { SidecarVoice, type SttProvider, type TtsAudio, type TtsProvider } from '../voice/client';
 import { toSpeech } from '../voice/speech-text';
@@ -31,12 +31,12 @@ import { ConsoleSession, RateLimiter, SessionStore } from './session';
 import { FILLER, Speaker } from './speaker';
 import { cabinetRefOf, isControlCapabilityQuestion } from '../brain/router';
 import { classifyReply, isExplicitConfirm } from '../guard/confirm-words';
-import { branchOf, isAllowedCabinetsQuestion, namesBothBranches, parseOrder, type Order } from '../guard/orders';
+import { branchOf, isAllowedCabinetsQuestion, namesBothBranches, parseAck, parseOrder, type Order } from '../guard/orders';
 import { fold, normalizeCodes, wordsToDigits } from '../tools/names';
-import { sendAndFollow, type PendingAction, type Via } from '../guard/pending';
+import { batchPreviewer, sendAndFollow, type PendingAction, type Via } from '../guard/pending';
 import { CommandRate, controlUnavailable, type ActionCommand, type GuardState } from '../guard/policy';
 import { areaIn, matching, narrow, pickIn, stateIn, streetIn, type FindFilter, type Finding } from '../guard/finder';
-import { outcomeText, propose, STATUS_VI } from '../guard/propose';
+import { outcomeText, propose, proposeAck, STATUS_VI, type Proposal } from '../guard/propose';
 
 const STATIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../console');
 const STATIC: Record<string, string> = {
@@ -53,7 +53,7 @@ export const ADMIN_NOTICE = 'Quản trị viên có thể xem nội dung chat';
 
 const TOOL_LABELS: Record<string, string> = {
   get_system_overview: 'tổng quan hệ thống', find_cabinets: 'tìm tủ', get_cabinet: 'tình trạng tủ', get_cabinet_history: 'lịch sử tủ',
-  list_alarms: 'cảnh báo', explain_alarm_code: 'mã cảnh báo', list_areas: 'khu vực', get_area_cabinets: 'tủ theo khu vực', find_schedule_mismatch: 'tủ lệch lịch', get_shift_report: 'bản tin đầu ca', get_cabinet_interventions: 'lịch sử can thiệp',
+  list_alarms: 'cảnh báo', explain_alarm_code: 'mã cảnh báo', list_areas: 'khu vực', get_area_cabinets: 'tủ theo khu vực', find_schedule_mismatch: 'tủ lệch lịch', get_shift_report: 'bản tin đầu ca', get_cabinet_interventions: 'lịch sử can thiệp', get_alarm_trends: 'xu hướng cảnh báo',
   get_schedule: 'lịch bật / tắt', list_incidents: 'sự cố', get_command_status: 'trạng thái lệnh',
 };
 
@@ -484,7 +484,8 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     const via: Via = speaker ? 'voice' : 'text';
     const gone = s.pending.expired();
     const p = s.pending.active();
-    const reply = classifyReply(text);
+    // "xác nhận cảnh báo E201" asks for a new card; it never confirms the one waiting (2026-11-23)
+    const reply = parseAck(text) ? null : classifyReply(text);
     if (p && reply) {
       if (reply === 'unclear') return fixedTurn(s, user, text, `Bạn muốn xác nhận hay hủy lệnh: ${p.summary}?`, send, speaker, extra);
       if (reply === 'cancel') {
@@ -518,6 +519,14 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     if (reply && (reply === 'confirm' || reply === 'cancel') && text.trim().split(/\s+/).length <= 3 && (gone || cardWord)) {
       if (gone) send('pending_closed', { id: gone.id, state: 'expired' });
       return fixedTurn(s, user, text, gone ? `Lệnh "${gone.summary}" đã hết hạn 60 giây, bạn ra lệnh lại nếu vẫn cần.` : 'Không có lệnh nào đang chờ xác nhận.', send, speaker, extra);
+    }
+    // "xác nhận đã xem cảnh báo E201 tủ TL01.0026" (spec 5.3, 2026-11-23): a T1 card like the orders
+    const ack = parseAck(text);
+    if (ack) {
+      send('status', { state: 'tool', label: 'tìm cảnh báo' });
+      const prop = await proposeAck(ack, { reads: s.reads, user, focus: s.ctx.focus, userText: text, signal: ac.signal }, guardState(), user.role, Date.now() - s.lastInteraction);
+      if (prop.kind === 'refused') return fixedTurn(s, user, text, prop.say, send, speaker, extra);
+      return offerPending(s, user, text, prop, send, speaker, extra);
     }
     if (isAllowedCabinetsQuestion(text)) {
       const g = guardState();
@@ -555,6 +564,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       const said2 = parseOrder(text, s.ctx.focus);
       s.finding = { ...fresh, command: said2 && said2.kind !== 'many' ? withBranch(said2.command, text) : fresh.command, at: Date.now() };
       const list = fresh.choices.map((c, k) => `số ${k + 1}: ${c.name} (${c.code})`).join('; ');
+      sendChoices(s, send);
       return fixedTurn(s, user, text, `Tôi chưa nghe rõ số. Bạn chọn số mấy? ${list}.`, send, speaker, extra);
     }
     let order: Order | null = chosen ? { kind: 'cabinet', command: command!, cabinet: chosen.code } : orderOf(s, text, fresh);
@@ -572,19 +582,60 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       }
       if (found && 'pick' in found) return whatToDo(s, user, text, found.pick, found.filter, send, speaker, extra);
       if (found && 'say' in found) {
-        audit.write({ kind: 'action_refused', userId: user.id, text, reason: found.say });
+        // a numbered list read out is a list to pick from, not a refusal
+        if (!sendChoices(s, send)) audit.write({ kind: 'action_refused', userId: user.id, text, reason: found.say });
         return fixedTurn(s, user, text, found.say, send, speaker, extra);
       }
       if (found) order = found;
     }
     if (!order) return false;
     send('status', { state: 'tool', label: 'chuẩn bị lệnh' });
-    const prop = await propose(order, { reads: s.reads, user, focus: s.ctx.focus, userText: text, signal: ac.signal }, guardState(), user.role, Date.now() - s.lastInteraction);
+    const prop = await propose(order, { reads: s.reads, user, focus: s.ctx.focus, userText: text, signal: ac.signal }, guardState(), user.role, Date.now() - s.lastInteraction, Date.now(), batchPreviewer(s.api, ac.signal));
     if (prop.kind === 'refused') {
       if (prop.askCabinet) s.finding = { command: order.command, filter: {}, choices: [], at: Date.now() };
       audit.write({ kind: 'action_refused', userId: user.id, text, reason: prop.say });
       return fixedTurn(s, user, text, prop.say, send, speaker, extra);
     }
+    return offerPending(s, user, text, prop, send, speaker, extra);
+  }
+
+  /**
+   * New open alarms since the session's last look, as sentences: critical first (P0, the console beeps), then the
+   * others (P1), grouped by code and area, at most 3 sentences. The first look only remembers what is open: those
+   * belong to the shift report. Alarms that ended are not told (P2: asked for or in the report).
+   */
+  async function notices(s: ConsoleSession, user: User): Promise<{ level: 'P0' | 'P1'; text: string }[]> {
+    const page = await s.reads.alarms({ active: true, size: 100 }).catch(() => null);
+    if (!page) return [];
+    const open = page.items.filter((a) => a.active);
+    if (!s.seenAlarms) {
+      s.seenAlarms = new Set(open.map((a) => a.id));
+      return [];
+    }
+    const fresh = open.filter((a) => !s.seenAlarms!.has(a.id));
+    s.seenAlarms = new Set(open.map((a) => a.id));
+    if (!fresh.length) return [];
+    const groups = new Map<string, typeof fresh>();
+    for (const a of fresh) groups.set(`${a.code}|${a.districtName}`, [...(groups.get(`${a.code}|${a.districtName}`) ?? []), a]);
+    const rank = { critical: 0, major: 1, minor: 2 } as const;
+    const out = [...groups.values()]
+      .sort((x, y) => rank[x[0]!.severity] - rank[y[0]!.severity])
+      .slice(0, 3)
+      .map((g) => {
+        const a = g[0]!;
+        const where = g.length === 1 ? `tủ ${a.cabinetCode}` : `${g.length} tủ (${g.slice(0, 3).map((x) => x.cabinetCode).join(', ')}${g.length > 3 ? '…' : ''})`;
+        const level = a.severity === 'critical' ? 'P0' as const : 'P1' as const;
+        const head = level === 'P0' ? 'Cảnh báo nghiêm trọng mới' : 'Cảnh báo mới';
+        return { level, text: `${head}: ${a.code} ${viText(a.message)} ở ${where}${a.districtName ? `, ${a.districtName}` : ''}, từ ${vnTime(a.startedAt)}.` };
+      });
+    audit.write({ kind: 'proactive', userId: user.id, count: fresh.length, said: out.map((n) => n.text) });
+    return out;
+  }
+
+  /** shows the card of a proposed action, replacing the one waiting, and says it */
+  function offerPending(
+    s: ConsoleSession, user: User, text: string, prop: Extract<Proposal, { kind: 'pending' }>, send: Send, speaker: Speaker | null, extra: Record<string, unknown>,
+  ) {
     const { pending, replaced } = s.pending.create(prop.draft);
     if (replaced) send('pending_closed', { id: replaced.id, state: 'replaced' });
     audit.write({ kind: 'pending_created', userId: user.id, role: user.role, pendingId: pending.id, cabinet: pending.cabinet.code, command: pending.command, tier: pending.tier, replaced: replaced?.id });
@@ -712,6 +763,17 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     return fixedTurn(s, user, text, `Tủ ${c.name} (${c.code}). Bạn muốn bật đèn, tắt đèn, bật hay tắt một nhánh, hay trả về chạy theo lịch?`, send, speaker, extra);
   }
 
+  /**
+   * The numbered cabinets Jarvis just read, as buttons on the console (2026-11-23: "số hai" was heard "số hệ"; a click
+   * cannot be misheard). The click sends "số N", the same as saying it. True when buttons were sent.
+   */
+  function sendChoices(s: ConsoleSession, send: Send): boolean {
+    const c = s.finding?.choices ?? [];
+    if (c.length < 2) return false;
+    send('choices', { items: c.map((x, k) => ({ n: k + 1, label: `${k + 1}. ${x.name} (${x.code})` })) });
+    return true;
+  }
+
   /** true when control() will answer this text without the model */
   function handledInCode(s: ConsoleSession, text: string): boolean {
     if (llm.name === 'fake' && text.startsWith('[[fake:')) return false;
@@ -722,7 +784,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     const fresh = s.finding && Date.now() - s.finding.at < ASK_TTL_MS ? s.finding : null;
     // a reply to "tủ nào?" or to the numbered choices is short; a long sentence may be a new question
     if (fresh && text.trim().split(/\s+/).length <= 12) return true;
-    return isControlCapabilityQuestion(text) || isAllowedCabinetsQuestion(text) || !!orderOf(s, text, fresh);
+    return !!parseAck(text) || isControlCapabilityQuestion(text) || isAllowedCabinetsQuestion(text) || !!orderOf(s, text, fresh);
   }
 
   /** A turn whose answer is a fixed sentence: same history, audit and events as a model turn, no tokens. */
@@ -751,7 +813,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
   }
 
   /** Sends the confirmed action and follows it; the result is said only from the command's real status. */
-  async function execute(s: ConsoleSession, user: User, text: string, p: PendingAction, via: Via, send: Send, ac: AbortController, speaker: Speaker | null, extra: Record<string, unknown> = {}) {
+  async function execute(s: ConsoleSession, user: User, text: string, p: PendingAction, via: Via, send: Send, ac: AbortController, speaker: Speaker | null, extra: Record<string, unknown> = {}, otp?: string) {
     audit.write({ kind: 'pending_confirmed', userId: user.id, role: user.role, pendingId: p.id, cabinet: p.cabinet.code, command: p.command, via });
     send('pending_closed', { id: p.id, state: 'confirmed' });
     const first = `Đang gửi lệnh: ${p.summary}.`;
@@ -761,11 +823,22 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     // not ac.signal: a sent command is followed to its real result even when the user talks over Jarvis or presses
     // stop (a barge-in cut it 4 s after sending and the audit said "timeout" for a confirmed command, 2026-11-21).
     // sendAndFollow has its own time limit; the result goes into the history either way.
-    const outcome = await sendAndFollow(s.api, p, { pollMs: deps.commandPollMs, onStatus: (st) => send('status', { state: 'command', label: STATUS_VI[st] ?? st }) });
+    // the OTP of a batch goes straight to the API: never audited, never in the history, never seen by the model
+    const outcome = await sendAndFollow(s.api, p, { pollMs: deps.commandPollMs, otp, onStatus: (st) => send('status', { state: 'command', label: STATUS_VI[st] ?? st }) });
     if (outcome.status !== 'not_sent') commandRate.record(user.id);
     audit.write({ kind: 'command_result', userId: user.id, pendingId: p.id, commandId: outcome.commandId, status: outcome.status, error: outcome.error, apiError: outcome.code });
-    const after = outcome.status === 'confirmed' ? ((await s.reads.cabinet(p.cabinet.id).catch(() => null))?.state as Record<string, unknown> | undefined) : undefined;
-    const result = outcomeText(p, outcome, after);
+    const after = outcome.status === 'confirmed' && p.command.type !== 'ACK_ALARM' ? ((await s.reads.cabinet(p.cabinet.id).catch(() => null))?.state as Record<string, unknown> | undefined) : undefined;
+    let result = outcomeText(p, outcome, after);
+    // a wrong OTP, or the server asking for the 2FA code again: the same card comes back to try once more (2026-11-23)
+    if (outcome.status === 'not_sent' && (outcome.code === 'invalid_otp' || outcome.code === 'reauth_required')) {
+      const { id: _id, createdAt: _c, expiresAt: _e, ...draft } = p;
+      const again = s.pending.create(draft).pending;
+      send('pending', pendingView(again));
+      if (outcome.code === 'reauth_required') send('reauth', {});
+      result += outcome.code === 'reauth_required'
+        ? ' Bạn nhập mã 6 số trong ô "Xác thực lại" bên dưới, rồi bấm Xác nhận trên thẻ mới.'
+        : ' Thẻ mới đã hiện: bạn nhập lại mã rồi bấm Xác nhận.';
+    }
     send('reset', {});
     // the first sentence was already heard: only the result is spoken now
     await fixedTurn(s, user, text, `${first}\n${result}`, send, speaker, { ...extra, command: { status: outcome.status, id: outcome.commandId } }, result);
@@ -913,13 +986,15 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       try {
         s.lastInteraction = Date.now();
         const asked = '(bấm nút Xác nhận)';
+        // only a 6-digit code is passed on, and only to the API
+        const otp = typeof b.otp === 'string' && /^\d{6}$/.test(b.otp) ? b.otp : undefined;
         if (!commandRate.allow(user.id)) await fixedTurn(s, user, asked, 'Jarvis đã gửi 6 lệnh trong một phút qua, bạn đợi một chút rồi xác nhận lại.', send, speaker);
         else {
           const t = s.pending.take(id, 'button');
           if (!t.ok) {
             send('pending_closed', { id, state: 'gone' });
             await fixedTurn(s, user, asked, t.reason, send, speaker);
-          } else await execute(s, user, asked, t.pending, 'button', send, ac, speaker);
+          } else await execute(s, user, asked, t.pending, 'button', send, ac, speaker, {}, otp);
         }
       } catch (e) {
         send('error', { code: 'failed', message: (e as Error).message });
@@ -928,6 +1003,29 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         res.end();
       }
       return;
+    }
+    // Jarvis speaks up (spec 7, 2026-11-23): the console asks every 20 s; new open alarms since the last look, grouped
+    // by code and area, critical ones first. No model, no question counted, never an action: only words.
+    if (key === 'GET /api/notices') {
+      const { user } = requireUser(s);
+      return sendJson(res, 200, { notices: await notices(s, user) });
+    }
+    // the 2FA code again when the server asks for it (403 reauth_required, spec 6.5): straight to POST /auth/reauth,
+    // never logged, never seen by the model (2026-11-23)
+    if (key === 'POST /api/reauth') {
+      const { user } = requireUser(s);
+      const b = await readJson(req);
+      const code = typeof b.code === 'string' ? b.code.trim() : '';
+      if (!/^\d{6}$/.test(code)) throw new HttpError(422, 'bad_code', 'Mã xác thực gồm 6 chữ số');
+      try {
+        await s.api.post('auth/reauth', { code });
+        audit.write({ kind: 'reauth', userId: user.id, ok: true });
+        return sendJson(res, 200, { ok: true, text: 'Đã xác thực lại. Bạn bấm Xác nhận trên thẻ lệnh để gửi.' });
+      } catch (e) {
+        audit.write({ kind: 'reauth', userId: user.id, ok: false });
+        if (e instanceof ApiProblem) throw new HttpError(e.status === 423 ? 423 : 422, e.code, e.detail);
+        throw e;
+      }
     }
     if (method === 'POST' && /^\/api\/pending\/[\w-]+\/cancel$/.test(url.pathname)) {
       const { user } = requireUser(s);

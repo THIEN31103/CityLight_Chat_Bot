@@ -19,7 +19,7 @@ describe('confirm words (spec 6.4, >= 30 sentences)', () => {
   );
 });
 
-import { parseOrder } from '../src/guard/orders';
+import { parseAck, parseOrder } from '../src/guard/orders';
 import { PendingSlot } from '../src/guard/pending';
 import { cabinetRefused, CommandRate, controlUnavailable, MAX_COMMANDS_PER_MIN, PENDING_TTL_MS, tierFor, type GuardState } from '../src/guard/policy';
 
@@ -301,5 +301,18 @@ describe('voice test on the codespace (2026-11-23)', () => {
 describe('a question about the schedule is never an order (2026-11-23)', () => {
   it.each(['tủ nào lẽ ra phải tắt mà vẫn sáng', 'tủ nào đáng lẽ phải bật đèn mà chưa bật', 'đèn nào ban ngày mà vẫn sáng', 'có tủ nào lệch lịch không'])('%s', (q) => {
     expect(parseOrder(q, {})).toBeNull();
+  });
+});
+
+describe('parseAck (2026-11-23)', () => {
+  it.each([
+    ['xác nhận đã xem cảnh báo E201 tủ TL01.0026', { code: 'E201', cabinet: 'TL01.0026' }],
+    ['đánh dấu đã xem lỗi E202', { code: 'E202' }],
+    ['ack cảnh báo E204', { code: 'E204' }],
+    ['xác nhận cảnh báo của tủ đó', { cabinet: 'tủ đó' }],
+    ['ghi nhận đã biết cảnh báo E301 tủ DM0010', { code: 'E301', cabinet: 'DM0010' }],
+  ])('%s', (q, want) => expect(parseAck(q)).toEqual(want));
+  it.each(['xác nhận', 'cảnh báo E201 đã xác nhận chưa?', 'ai xác nhận cảnh báo đó', 'có cảnh báo gì không', 'xác nhận bật đèn'])('"%s" is no ack request', (q) => {
+    expect(parseAck(q)).toBeNull();
   });
 });

@@ -157,6 +157,14 @@ export function route(raw: string, focus: Focus = {}): Routed | null {
     // the cabinet answer carries its open alarms too ("tủ đó có cảnh báo gì không")
     if (/(bi gi|the nao|sao roi|tinh trang|trang thai|co sang|co tat|dang sang|dang tat|sang khong|tat khong|loi gi|kiem tra|ra sao|ok khong|on khong|canh bao|bao dong|co loi|bi loi|da bat|da tat|bat (den )?chua|tat (den )?chua|sang chua)/.test(f)) return { name: 'get_cabinet', input: { cabinet: cab } };
   }
+  // alarm trends over weeks (2026-11-23): "30 ngày qua khu vực nào nhiều lỗi nhất", "xu hướng cảnh báo quận 1"
+  if (!cab && /(xu huong|\d+ ngay qua|thang qua|tuan qua|so voi tuan truoc|\d+ thang qua)/.test(f)) {
+    const area = areaWords(f);
+    const n = /(\d+) ngay/.exec(f)?.[1];
+    const m = /(\d+) thang/.exec(f)?.[1];
+    const days = n ? Number(n) : m ? Number(m) * 30 : 30;
+    return { name: 'get_alarm_trends', input: { ...(area ? { area } : {}), days } };
+  }
   // the shift report (2026-11-23): before incidents and alarms, a report of the shift names them too
   if (!cab && SHIFT.test(f)) {
     const area = areaWords(f);
@@ -190,7 +198,9 @@ export function route(raw: string, focus: Focus = {}): Routed | null {
   return null;
 }
 
-const AREA_STOP = new Set(['the', 'nao', 'sao', 'ra', 'co', 'thi', 'nhu', 'bao', 'dang', 'hom', 'bi', 'gi', 'ntn', 'roi', 'nhieu', 'it', 'khong', 'va', 'voi', 'cua', 'tinh', 'tong', 'hien', 'luc', 'nay', 'oi', 'nhe', 'a', 'cung', 'thoi']);
+const AREA_STOP = new Set(['the', 'nao', 'sao', 'ra', 'co', 'thi', 'nhu', 'bao', 'dang', 'hom', 'bi', 'gi', 'ntn', 'roi', 'nhieu', 'it', 'khong', 'va', 'voi', 'cua', 'tinh', 'tong', 'hien', 'luc', 'nay', 'oi', 'nhe', 'a', 'cung', 'thoi',
+  // time words end the area name too: "quận 1 tháng qua", "phường 2 tuần này" (2026-11-23)
+  'thang', 'tuan', 'ngay', 'qua', 'truoc', 'xu', 'so']);
 
 /** the area words after "khu vực", "quận", "phường", "TP" ("khu vuc thu dich the nao" -> "thu dich"); null when none */
 function areaWords(f: string): string | null {

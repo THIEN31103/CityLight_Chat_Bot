@@ -11,7 +11,7 @@ export type AuditKind =
   | 'user_text' | 'assistant_text' | 'tool_call'
   | 'access_change' | 'settings_change' | 'view_chat' | 'delete_chat'
   | 'delete_all_chats'
-  | 'rename_chat' | 'token_cap_hit' | 'rate_limited'
+  | 'rename_chat' | 'token_cap_hit' | 'rate_limited' | 'reauth' | 'proactive'
   // milestone 4: every pending action, who confirmed it how, and what the command did
   | 'pending_created' | 'pending_confirmed' | 'pending_cancelled' | 'pending_refused' | 'action_refused' | 'command_result';
 

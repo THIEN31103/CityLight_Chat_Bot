@@ -76,7 +76,22 @@ export function describeCommand(c: ActionCommand): string {
       return 'Bật tạm cả hai nhánh 15 phút (xung)';
     case 'DIAG':
       return 'Gửi lệnh tự kiểm tra RS485';
+    case 'ACK_ALARM':
+      return `Xác nhận đã xem cảnh báo ${c.params.alarmCode ?? ''}`.trim();
   }
+}
+
+/**
+ * "Xác nhận đã xem cảnh báo E201 tủ TL01.0026", "đánh dấu đã xem lỗi đó", "ack cảnh báo E202" (spec 5.3, 2026-11-23):
+ * the alarm code and the cabinet words if said; null when the text is no such request (a question about it is not one).
+ */
+export function parseAck(raw: string): { code?: string; cabinet?: string } | null {
+  const f = wordsToDigits(fold(markCabinetWord(raw)));
+  if (!/\b(ack|(xac nhan|danh dau|ghi nhan) (la )?(da (xem|biet|nhan) )?(canh bao|loi)|da xem (canh bao|loi))\b/.test(f)) return null;
+  if (/(\?|\bchua\b|\bkhong\b|\bai\b|bao gio|luc nao)/.test(f)) return null;
+  const code = /\b(e\d{3})\b/.exec(f)?.[1]?.toUpperCase();
+  const cab = /\b([a-z]{2,4}\d{2}\.\d{1,4}|[a-z]{2}\d{4})\b/.exec(normalizeCodes(f))?.[1]?.toUpperCase();
+  return { ...(code ? { code } : {}), ...(cab ? { cabinet: cab } : /\btucab (do|nay)\b|\bloi (do|nay)\b|\bcanh bao (do|nay)\b/.test(f) ? { cabinet: 'tủ đó' } : {}) };
 }
 
 /**

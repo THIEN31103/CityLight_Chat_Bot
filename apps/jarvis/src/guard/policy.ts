@@ -3,12 +3,12 @@
 import type { RoleKey } from '@citylight/shared';
 import { hasPermission } from '@citylight/shared';
 
-/** The single-cabinet commands Jarvis can propose (batch control and alarm ack come later). */
-export type ActionType = 'MANUAL_ALL' | 'MANUAL_BRANCH' | 'AUTO' | 'PULSE_ON' | 'DIAG';
+/** The single-cabinet commands Jarvis can propose; ACK_ALARM marks one open alarm as seen (spec 5.3, 2026-11-23). */
+export type ActionType = 'MANUAL_ALL' | 'MANUAL_BRANCH' | 'AUTO' | 'PULSE_ON' | 'DIAG' | 'ACK_ALARM';
 
 export interface ActionCommand {
   type: ActionType;
-  params: { on?: boolean; branch?: 1 | 2 };
+  params: { on?: boolean; branch?: 1 | 2; alarmId?: string; alarmCode?: string };
 }
 
 /**
@@ -16,7 +16,8 @@ export interface ActionCommand {
  * Switching off is always T2 (lights going dark in a street is the costly mistake); so is anything proposed while the
  * user has not touched the console for 10 minutes.
  */
-export type Tier = 'T1' | 'T2';
+// T3 (2026-11-23): a batch over several cabinets: the button on the console only, with the OTP when the account has 2FA
+export type Tier = 'T1' | 'T2' | 'T3';
 export const IDLE_FOR_T2_MS = 10 * 60_000;
 
 export function tierFor(cmd: ActionCommand, idleMs = 0): Tier {
