@@ -421,7 +421,11 @@ async function turn({ text, pcm, confirmId, otp }) {
   // a turn that created a confirmation card keeps the CARD in view: scrolling to the answer text used to push the
   // card below the screen, so it looked like it came late (user report, 2026-11-15)
   let card = null;
-  const keepInView = () => (card ?? bubble).scrollIntoView({ block: 'end' });
+  // the number buttons sit under the answer and come before its text: keep THEM in view (test 2026-11-24)
+  const keepInView = () => {
+    const next = bubble.nextElementSibling;
+    (card ?? (next?.classList.contains('choices') ? next : bubble)).scrollIntoView({ block: 'end' });
+  };
   const reveal = (t) => {
     shown = shown ? `${shown} ${t}` : t;
     body.textContent = shown;

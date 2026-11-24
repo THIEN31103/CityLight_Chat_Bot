@@ -298,7 +298,7 @@ describe('area names said in a shift report (user test 2026-11-23)', () => {
   });
   it.each(['phường 2 quận 3', 'Phường 2, Quận 3', 'phường 2 của quận 3', 'Phường 2 (Quận 3)'])('"%s" is that ward', async (q) => {
     const out = await run(q);
-    expect(out.khu_vuc).toBe('Phường 2');
+    expect(out.khu_vuc).toBe('Phường 2 (Quận 3)');
     expect(out.tu.tong_so).toBe(1);
   });
   it('"phường 2 quận 2": no such district, said plainly', async () => {

@@ -96,10 +96,13 @@ export function alarmLabel(a: { code: string; message: string }, titles?: Map<st
   return detail && fold(detail) !== fold(title) ? `${a.code} ${title} (${detail})` : `${a.code} ${title}`;
 }
 
-const alarmBrief = (a: Alarm) => ({
+const alarmBrief = (a: Alarm, titles?: Map<string, string>) => ({
   code: a.code, severity: SEVERITY_VI[a.severity], cabinet: a.cabinetCode, cabinetName: a.cabinetName, district: a.districtName,
-  message: viText(a.message), since: vnTime(a.startedAt), acked: !!a.ackedAt,
+  // the alarm's name, not the raw device fields ("LCLI=4, …" was read out, test 2026-11-24)
+  message: alarmLabel(a, titles).slice(a.code.length + 1), since: vnTime(a.startedAt), acked: !!a.ackedAt,
 });
+/** the alarm names, or none when the rules cannot be read (a test double without them, no right) */
+const titlesOf = (ctx: ToolContext) => Promise.resolve().then(() => ctx.reads.alarmTitles({ signal: ctx.signal })).catch(() => undefined);
 
 // ---------------------------------------------------------------- tools
 
@@ -115,12 +118,13 @@ const getSystemOverview: ToolDef<Record<string, never>> = {
     // all 486 open alarms were critical (2026-11-15)
     const count = (severity: 'critical' | 'major' | 'minor') =>
       ctx.reads.alarms({ active: true, severity, size: 1 }, { signal: ctx.signal }).then((p) => p.total, noRight);
-    const [stats, alarms, critical, major, minor] = await Promise.all([
+    const [stats, alarms, critical, major, minor, titles] = await Promise.all([
       ctx.reads.mapStats({ signal: ctx.signal }),
       ctx.reads.alarms({ active: true, size: 100 }, { signal: ctx.signal }).catch(noRight),
       count('critical'),
       count('major'),
       count('minor'),
+      titlesOf(ctx),
     ]);
     const c = stats.cabinets;
     const bySeverity = { critical: critical ?? 0, major: major ?? 0, minor: minor ?? 0 };
@@ -130,7 +134,7 @@ const getSystemOverview: ToolDef<Record<string, never>> = {
       // Vietnamese keys: with "offline" the model copied the English word into its answer (2026-11-17)
       tu: { tong_so: c.total, truc_tuyen: c.total - c.offline, mat_ket_noi: c.offline, dang_sang: c.on, dang_tat: c.off, dang_loi: c.fault, tiet_giam: c.dimming, chua_ro: c.unknown },
       ty_le_truc_tuyen_phan_tram: Math.round(stats.onlinePct * 10) / 10,
-      openAlarms: alarms ? { total: alarms.total, bySeverity: { nghiem_trong: bySeverity.critical, quan_trong: bySeverity.major, nhe: bySeverity.minor }, top: top.map(alarmBrief) } : 'không có quyền xem cảnh báo',
+      openAlarms: alarms ? { total: alarms.total, bySeverity: { nghiem_trong: bySeverity.critical, quan_trong: bySeverity.major, nhe: bySeverity.minor }, top: top.map((a) => alarmBrief(a, titles)) } : 'không có quyền xem cảnh báo',
       overdueIncidents: stats.overdueIncidents,
     };
   },
@@ -323,10 +327,11 @@ const listAlarms: ToolDef<{ severity?: 'critical' | 'major' | 'minor'; district?
       items.push(...next.items);
     }
     const page = { total: first.total, items };
+    const titles = await titlesOf(ctx);
     const groups = new Map<string, { code: string; severity: string; district: string; count: number; cabinets: string[]; since: string; message: string }>();
     for (const a of page.items) {
       const k = `${a.code}|${a.districtName}`;
-      const g = groups.get(k) ?? { code: a.code, severity: SEVERITY_VI[a.severity], district: a.districtName, count: 0, cabinets: [], since: a.startedAt, message: viText(a.message) };
+      const g = groups.get(k) ?? { code: a.code, severity: SEVERITY_VI[a.severity], district: a.districtName, count: 0, cabinets: [], since: a.startedAt, message: alarmLabel(a, titles).slice(a.code.length + 1) };
       g.count++;
       if (g.cabinets.length < 5) g.cabinets.push(a.cabinetCode);
       if (a.startedAt < g.since) g.since = a.startedAt;
@@ -581,7 +586,7 @@ const findScheduleMismatch: ToolDef<MismatchInput> = {
       if ('error' in found) return found.error;
       const id = found.pick.id;
       inArea = (c) => c.districtId === id || c.wardId === id;
-      where = { khu_vuc: found.pick.name, ...(found.heardAs ? { ghi_chu_ten: `Không có khu vực "${area}", hiểu là ${found.heardAs}. Nói rõ điều này.` } : {}) };
+      where = { khu_vuc: withParent(found.pick, found.areas), ...(found.heardAs ? { ghi_chu_ten: `Không có khu vực "${area}", hiểu là ${found.heardAs}. Nói rõ điều này.` } : {}) };
     }
     const scope = cabinets.filter(inArea);
     const byId = new Map(scope.map((c) => [c.id, c]));
@@ -657,7 +662,7 @@ const getShiftReport: ToolDef<{ area?: string }> = {
       if ('error' in found) return found.error;
       const id = found.pick.id;
       inArea = (c) => c.districtId === id || c.wardId === id;
-      where = { khu_vuc: found.pick.name, ...(found.heardAs ? { ghi_chu_ten: `Không có khu vực "${area}", hiểu là ${found.heardAs}. Nói rõ điều này.` } : {}) };
+      where = { khu_vuc: withParent(found.pick, found.areas), ...(found.heardAs ? { ghi_chu_ten: `Không có khu vực "${area}", hiểu là ${found.heardAs}. Nói rõ điều này.` } : {}) };
     }
     const scope = cabinets.filter(inArea);
     const ids = new Set(scope.map((c) => c.id));
@@ -668,12 +673,13 @@ const getShiftReport: ToolDef<{ area?: string }> = {
     let lech_lich: unknown = 'không có quyền xem cảnh báo';
     let khu_vuc_nhieu_canh_bao: unknown;
     if (alarms) {
+      const titles = await titlesOf(ctx);
       const open = alarms.items.filter((a) => a.active && ids.has(a.cabinetId)).sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || b.startedAt.localeCompare(a.startedAt));
       const sev = (s: Alarm['severity']) => open.filter((a) => a.severity === s).length;
       canh_bao = {
         tong_so: open.length,
         nghiem_trong: sev('critical'), quan_trong: sev('major'), nhe: sev('minor'),
-        nang_nhat: open.slice(0, 3).map(alarmBrief),
+        nang_nhat: open.slice(0, 3).map((a) => alarmBrief(a, titles)),
         ...(alarms.items.length < alarms.total ? { ghi_chu: `Chỉ tính trên ${alarms.items.length} / ${alarms.total} cảnh báo mới nhất.` } : {}),
       };
       const mismatch = open.filter((a) => a.type === 'schedule_mismatch');
@@ -846,7 +852,7 @@ const getAlarmTrends: ToolDef<{ area?: string; days: number }> = {
       // inside a district: by ward; inside a ward: by cabinet
       const names = new Map(found.areas.map((x) => [x.id, x.name]));
       groupBy = found.pick.kind === 'district' ? (a) => names.get(inArea.get(a.cabinetId)?.wardId ?? '') ?? 'phường khác' : (a) => a.cabinetCode;
-      where = { khu_vuc: found.pick.name, ...(found.heardAs ? { ghi_chu_ten: `Không có khu vực "${area}", hiểu là ${found.heardAs}. Nói rõ điều này.` } : {}) };
+      where = { khu_vuc: withParent(found.pick, found.areas), ...(found.heardAs ? { ghi_chu_ten: `Không có khu vực "${area}", hiểu là ${found.heardAs}. Nói rõ điều này.` } : {}) };
     }
     const top = (key: (a: Alarm) => string, n: number) => {
       const m = new Map<string, number>();
