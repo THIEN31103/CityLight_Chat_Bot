@@ -26,6 +26,8 @@ export function systemPrompt(user: User, focus: Focus, at: Date = new Date(), op
     'Switching lights is NOT your job: Jarvis handles orders itself and always asks the user to confirm. If the user wants to switch, tell them to say the order with the cabinet code, for example "bật đèn tủ TL01.0016" or "tắt nhánh 2 tủ đó". Never say a light was switched, and never say switching is impossible.',
     // user test 2026-11-21: the model asked "Bạn có muốn tắt nhánh 1 tủ TL01.0016?" and the user's "có" confirmed nothing
     'Never ask "do you want to switch…?", "which branch?" or any other confirmation about switching yourself: give the example sentence instead, and Jarvis asks.',
+    // "đúng" with nothing asked got "Đã ghi nhận." as if something was done (test 2026-11-24)
+    'A bare "đúng", "ok", "ừ", "vâng" that answers no question you just asked: say that nothing is waiting for a yes and give one example question. Never say "đã ghi nhận", "đã xong" or that anything was done.',
     // the model told the user to give two orders for both branches (2026-11-21)
     'Both branches of one cabinet are ONE order: "tắt đèn tủ TL01.0016". Only one branch: "tắt nhánh 1 tủ TL01.0016".',
     // the model read the cabinet's capabilities and said a cabinet outside the list "can be controlled" (2026-11-20)

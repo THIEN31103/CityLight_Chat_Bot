@@ -103,6 +103,20 @@ describe('pending actions (spec 6.2)', () => {
     expect(slot.take(p.id, 'voice', PENDING_TTL_MS)).toMatchObject({ ok: false, reason: expect.stringMatching(/hết hạn/) });
     expect(slot.active(PENDING_TTL_MS)).toBeNull();
   });
+  it('the one that ran out is still told once after something read active() (test 2026-11-24)', () => {
+    const slot = new PendingSlot();
+    const p = slot.create(draft(true), 0).pending;
+    expect(slot.active(PENDING_TTL_MS + 1)).toBeNull();
+    expect(slot.take(p.id, 'button', PENDING_TTL_MS + 2)).toMatchObject({ ok: false, reason: expect.stringMatching(/hết hạn/) });
+    expect(slot.expired(PENDING_TTL_MS + 3)?.id).toBe(p.id);
+    expect(slot.expired(PENDING_TTL_MS + 4)).toBeNull();
+    // a new card forgets the old one
+    const q = slot.create(draft(true), 0).pending;
+    slot.active(PENDING_TTL_MS + 1);
+    slot.create(draft(true), PENDING_TTL_MS + 2);
+    expect(slot.expired(PENDING_TTL_MS + 3)).toBeNull();
+    expect(q.id).not.toBe(p.id);
+  });
   it('T2 (switch off): voice and typed words are refused, the action keeps waiting for the button', () => {
     const slot = new PendingSlot();
     const p = slot.create(draft(false), 0).pending;

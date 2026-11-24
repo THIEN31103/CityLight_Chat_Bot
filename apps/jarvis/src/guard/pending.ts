@@ -30,24 +30,33 @@ export type Via = 'voice' | 'text' | 'button';
 /** One pending action per console session; a new one replaces the old (spec 6.2). */
 export class PendingSlot {
   private current: PendingAction | null = null;
+  /** the last one that ran out unconfirmed, until told once (test 2026-11-24: any read of active() dropped it) */
+  private lapsed: PendingAction | null = null;
   private readonly used = new Set<string>();
 
   create(p: Omit<PendingAction, 'id' | 'createdAt' | 'expiresAt'>, now = Date.now()): { pending: PendingAction; replaced: PendingAction | null } {
     const replaced = this.active(now);
     const pending: PendingAction = { ...p, id: `jv-${randomBytes(12).toString('base64url')}`, createdAt: now, expiresAt: now + PENDING_TTL_MS };
     this.current = pending;
+    this.lapsed = null;
     return { pending, replaced };
   }
 
   /** the waiting action, or null when there is none or it ran out */
   active(now = Date.now()): PendingAction | null {
-    if (this.current && now >= this.current.expiresAt) this.current = null;
+    if (this.current && now >= this.current.expiresAt) {
+      this.lapsed = this.current;
+      this.current = null;
+    }
     return this.current;
   }
 
-  /** the expired one, if it ran out unconfirmed (to tell the user "lệnh đã hết hạn") */
+  /** the one that ran out unconfirmed (to tell the user "lệnh đã hết hạn"), once: the next call returns null */
   expired(now = Date.now()): PendingAction | null {
-    return this.current && now >= this.current.expiresAt ? this.current : null;
+    this.active(now);
+    const e = this.lapsed;
+    this.lapsed = null;
+    return e;
   }
 
   /**
@@ -57,6 +66,8 @@ export class PendingSlot {
   /** explicit: the user said "xác nhận" / "đồng ý" (isExplicitConfirm), which may confirm T2 too */
   take(id: string, via: Via, now = Date.now(), explicit = false): { ok: true; pending: PendingAction } | { ok: false; reason: string } {
     if (this.used.has(id)) return { ok: false, reason: 'Lệnh này đã được xử lý rồi.' };
+    this.active(now);
+    if (this.lapsed?.id === id) return { ok: false, reason: 'Lệnh đã hết hạn 60 giây, bạn ra lệnh lại nếu vẫn cần.' };
     const p = this.current;
     if (!p || p.id !== id) return { ok: false, reason: 'Không có lệnh nào đang chờ xác nhận.' };
     if (now >= p.expiresAt) {
@@ -81,6 +92,7 @@ export class PendingSlot {
 
   clear() {
     this.current = null;
+    this.lapsed = null;
   }
 }
 

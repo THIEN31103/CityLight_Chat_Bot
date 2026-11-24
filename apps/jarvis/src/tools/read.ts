@@ -96,6 +96,26 @@ export function alarmLabel(a: { code: string; message: string }, titles?: Map<st
   return detail && fold(detail) !== fold(title) ? `${a.code} ${title} (${detail})` : `${a.code} ${title}`;
 }
 
+/**
+ * A schedule in Vietnamese words for the model ("Offset", "manual" were copied into answers, test 2026-11-24). The
+ * offsets move the sunset / sunrise times, so they only mean something for an astronomical schedule.
+ */
+function scheduleVi(s: Record<string, unknown>) {
+  const astro = s.source === 'astronomical';
+  const two = s.mode === 2;
+  const minutes = (n: unknown) => (typeof n === 'number' ? `${n > 0 ? '+' : ''}${n} phút` : null);
+  return {
+    loai_lich: astro ? 'lịch thiên văn (theo giờ mặt trời lặn / mọc)' : 'lịch giờ cố định',
+    so_khung_gio: two ? 2 : 1,
+    khung_1: { bat: s.on1, tat: s.off1 },
+    ...(two ? { khung_2: { bat: s.on2, tat: s.off2 } } : {}),
+    nhanh_1: s.branch1Enabled === false ? 'không chạy theo lịch' : 'chạy theo lịch',
+    nhanh_2: s.branch2Enabled === false ? 'không chạy theo lịch' : 'chạy theo lịch',
+    ...(astro ? { bat_lech_so_voi_mat_troi_lan: minutes(s.offsetOnMin), tat_lech_so_voi_mat_troi_moc: minutes(s.offsetOffMin) } : {}),
+    lay_tu_lich_vung: s.inheritedFromZone === true ? 'có' : 'không',
+  };
+}
+
 const alarmBrief = (a: Alarm, titles?: Map<string, string>) => ({
   code: a.code, severity: SEVERITY_VI[a.severity], cabinet: a.cabinetCode, cabinetName: a.cabinetName, district: a.districtName,
   // the alarm's name, not the raw device fields ("LCLI=4, …" was read out, test 2026-11-24)
@@ -193,8 +213,10 @@ const getCabinet: ToolDef<{ cabinet: string }> = {
       powerKw: num('pTotalKw'), leakMa: num('leakMa'), tempC: num('tempC'), cua_tu: st.doorOpen === true ? 'đang mở' : st.doorOpen === false ? 'đóng' : null,
       openAlarms: (alarms as Alarm[]).filter((a) => a.active).slice(0, 5).map((a) => ({ code: a.code, severity: SEVERITY_VI[a.severity], message: viText(a.message), since: vnTime(a.startedAt) })),
       diagnostics: problems.slice(0, 6).map((d: DiagnosticItem) => ({ part: d.subsystem, status: d.status, code: d.code, evidence: d.evidence, detail: d.detail })),
-      diagnosticsOk: diag ? diag.items.length - problems.length : null,
-      schedule: sched ? { mode: sched.mode, on1: sched.on1, off1: sched.off1, on2: sched.on2, off2: sched.off2, source: sched.source, fromZone: sched.inheritedFromZone } : null,
+      // "12 mục OK" (test 2026-11-24): a Vietnamese key
+      so_muc_chan_doan_binh_thuong: diag ? diag.items.length - problems.length : null,
+      // Vietnamese words: with source "manual" the model said "chế độ theo lịch (manual)" (test 2026-11-24)
+      lich: sched ? scheduleVi(sched) : null,
       // capabilities ("manual_control"…) left out: the model read them as "Jarvis can switch this cabinet" (2026-11-20)
     };
   },
@@ -328,10 +350,10 @@ const listAlarms: ToolDef<{ severity?: 'critical' | 'major' | 'minor'; district?
     }
     const page = { total: first.total, items };
     const titles = await titlesOf(ctx);
-    const groups = new Map<string, { code: string; severity: string; district: string; count: number; cabinets: string[]; since: string; message: string }>();
+    const groups = new Map<string, { code: string; severity: string; district: string; count: number; cabinets: string[]; since: string; y_nghia: string }>();
     for (const a of page.items) {
       const k = `${a.code}|${a.districtName}`;
-      const g = groups.get(k) ?? { code: a.code, severity: SEVERITY_VI[a.severity], district: a.districtName, count: 0, cabinets: [], since: a.startedAt, message: alarmLabel(a, titles).slice(a.code.length + 1) };
+      const g = groups.get(k) ?? { code: a.code, severity: SEVERITY_VI[a.severity], district: a.districtName, count: 0, cabinets: [], since: a.startedAt, y_nghia: alarmLabel(a, titles).slice(a.code.length + 1) };
       g.count++;
       if (g.cabinets.length < 5) g.cabinets.push(a.cabinetCode);
       if (a.startedAt < g.since) g.since = a.startedAt;
@@ -347,6 +369,8 @@ const listAlarms: ToolDef<{ severity?: 'critical' | 'major' | 'minor'; district?
       ghi_chu: page.items.length >= page.total
         ? `Số lượng cảnh báo là tong_so_canh_bao = ${page.total}. Các nhóm dưới đây đếm đủ mọi cảnh báo (chỉ liệt kê ${list.length} nhóm lớn nhất).`
         : `Số lượng cảnh báo là tong_so_canh_bao = ${page.total}. Các nhóm dưới đây chỉ tính trên ${page.items.length} cảnh báo mới nhất, đừng cộng chúng lại.`,
+      // the meaning was left out ("E204, nghiêm trọng, Quận 1, tủ TL01.0039", test 2026-11-24)
+      cach_noi: 'Mỗi nhóm nói: mã, ý nghĩa (y_nghia, ngắn gọn), quận, tủ.',
       nhom_lon_nhat: list,
     };
   },
@@ -744,7 +768,7 @@ const getShiftReport: ToolDef<{ area?: string }> = {
       ...(lo_lenh_12_gio ? { lo_lenh_12_gio } : {}),
       ...(khu_vuc_nhieu_canh_bao ? { khu_vuc_nhieu_canh_bao } : {}),
       ghi_chu:
-        'Đây là bản tin đầu ca. Bắt đầu bằng tên khu vực (khu_vuc). Nói theo thứ tự: số tủ và số mất kết nối; cảnh báo: số theo mức, rồi từng cảnh báo trong nang_nhat (mã, tên lỗi, tủ); sự cố quá hạn; tủ lệch lịch; lệnh và lô lệnh 12 giờ qua (bao nhiêu, mấy cái lỗi). Phần nào bằng 0 thì nói gọn "không có". Không nói ai gửi lệnh. Không đoán nguyên nhân.',
+        'Đây là bản tin đầu ca. Bắt đầu bằng tên khu vực (khu_vuc). Nói theo thứ tự: số tủ và số mất kết nối; cảnh báo: số theo mức, rồi từng cảnh báo trong nang_nhat (mã, tên lỗi, tủ); sự cố quá hạn; tủ lệch lịch; lệnh 12 giờ qua (bao nhiêu, mấy cái lỗi), rồi lô lệnh riêng nếu có lo_lenh_12_gio (số lô, lô gần nhất làm gì và kết quả). Phần nào bằng 0 thì nói gọn "không có". Không nói ai gửi lệnh. Không đoán nguyên nhân.',
     };
   },
 };
@@ -895,12 +919,7 @@ const getSchedule: ToolDef<{ cabinet: string }> = {
     const detail = await ctx.reads.cabinet(r.cabinet.id, { signal: ctx.signal });
     setFocus(ctx.focus, r.cabinet);
     const s = detail.schedule as Record<string, unknown>;
-    return {
-      cabinet: r.cabinet.code, mode: s.mode === 2 ? '2 khung giờ' : '1 khung giờ', source: s.source === 'astronomical' ? 'thiên văn' : 'cố định',
-      on1: s.on1, off1: s.off1, on2: s.mode === 2 ? s.on2 : undefined, off2: s.mode === 2 ? s.off2 : undefined,
-      branch1Enabled: s.branch1Enabled, branch2Enabled: s.branch2Enabled, offsetOnMin: s.offsetOnMin, offsetOffMin: s.offsetOffMin,
-      fromZone: s.inheritedFromZone, appliedAt: vnTime(s.appliedAt as string | null),
-    };
+    return { cabinet: r.cabinet.code, ...scheduleVi(s), da_ap_dung_luc: vnTime(s.appliedAt as string | null) ?? 'tủ chưa xác nhận đã nhận lịch' };
   },
 };
 
