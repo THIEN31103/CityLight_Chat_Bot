@@ -61,6 +61,11 @@ export class ApiClient {
     return this.cookie(SESSION_COOKIE, '/') !== undefined;
   }
 
+  /** the cookie header for the live socket (/socket.io, live.ts); '' when signed out. Never logged. */
+  socketCookie(): string {
+    return this.signedIn ? this.cookieHeader('/socket.io/') : '';
+  }
+
   // ---------- auth ----------
 
   async login(email: string, password: string, signal?: AbortSignal): Promise<LoginResult> {

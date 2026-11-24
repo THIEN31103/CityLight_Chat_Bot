@@ -102,6 +102,8 @@ const Env = z.object({
   // keep each spoken sentence as data/voice-debug/*.wav + what was heard, to tune speech recognition; off by default,
   // the folder is gitignored and should be emptied after the test (it holds the user's voice)
   JARVIS_DEBUG_AUDIO: bool(false),
+  // the server's socket.io events (alarms, commands) instead of waiting for the next look; off = looks only
+  JARVIS_LIVE_EVENTS: bool(true),
 });
 
 export type Config = ReturnType<typeof loadConfig>;
@@ -153,5 +155,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     },
     dataDir: path.resolve(APP_DIR, e.JARVIS_DATA_DIR ?? 'data'),
     debugAudio: e.JARVIS_DEBUG_AUDIO,
+    liveEvents: e.JARVIS_LIVE_EVENTS,
   };
 }

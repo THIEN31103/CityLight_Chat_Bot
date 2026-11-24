@@ -131,7 +131,7 @@ Câu hỏi về trạng thái ("tủ đó đã bật đèn chưa?") chỉ là c�
 
 ### Jarvis tự lên tiếng
 
-Khi đang mở Jarvis, cứ 20 giây Jarvis xem có cảnh báo mới không. Có thì hiện tin nhắn viền cam ("Cảnh báo mới: …"); cảnh báo nghiêm trọng có viền đỏ và tiếng bíp. Cảnh báo đã có từ trước khi mở Jarvis thì xem bằng nút **▶ Bắt đầu ca** (bản tin đầu ca). Jarvis không bao giờ tự gửi lệnh.
+Khi đang mở Jarvis, máy chủ báo ngay cho Jarvis mỗi khi có cảnh báo mới; nếu đường báo đó bị đứt, cứ 20 giây Jarvis tự xem lại. Có thì hiện tin nhắn viền cam ("Cảnh báo mới: …"); cảnh báo nghiêm trọng có viền đỏ và tiếng bíp. Cảnh báo đã có từ trước khi mở Jarvis thì xem bằng nút **▶ Bắt đầu ca** (bản tin đầu ca). Jarvis không bao giờ tự gửi lệnh.
 
 - **Đang bật giọng nói** thì Jarvis đọc to câu báo. Jarvis chờ bạn nói xong và chờ đọc xong câu trả lời trước mới báo.
 - **Cảnh báo nghiêm trọng** chưa ai trả lời thì 2 phút sau Jarvis nhắc lại, tối đa 3 lần. Bạn hỏi hay bấm gì đó, hoặc cảnh báo đã được xác nhận / đã hết, thì Jarvis thôi nhắc.

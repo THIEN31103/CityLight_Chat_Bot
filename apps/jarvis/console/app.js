@@ -200,8 +200,9 @@ $('#start-shift').addEventListener('click', () => ask('Bản tin đầu ca'));
  */
 let noticeTimer = null;
 let looking = false;
+const canLook = () => !looking && session?.signedIn && !busy && !viewingId && !player.playing && !$('#voice-btn').classList.contains('hot');
 async function lookNotices() {
-  if (looking || !session?.signedIn || busy || viewingId || player.playing || $('#voice-btn').classList.contains('hot')) return;
+  if (!canLook()) return;
   looking = true;
   try {
     const r = await api('GET', voiceIn.on ? '/api/notices?voice=1' : '/api/notices').catch(() => null);
@@ -217,7 +218,29 @@ async function lookNotices() {
     looking = false;
   }
 }
+/**
+ * The server's live events (GET /api/live): an alarm started or ended, look now instead of at the next 20 s look.
+ * Busy (an answer, the user talking): try again a little later. The 20 s looks stay as the fallback.
+ */
+let liveSrc = null;
+function nudge(tries = 0) {
+  if (canLook()) return void lookNotices();
+  if (tries < 10) setTimeout(() => nudge(tries + 1), 3000);
+}
+function startLive() {
+  if (liveSrc || !window.EventSource) return;
+  const src = new EventSource('/api/live');
+  liveSrc = src;
+  src.addEventListener('look', () => nudge());
+  src.onerror = () => {
+    // signed out or the server restarted: the browser gives up on a refused stream, so start again later
+    if (src.readyState !== EventSource.CLOSED) return;
+    if (liveSrc === src) liveSrc = null;
+    setTimeout(() => session?.signedIn && startLive(), 30_000);
+  };
+}
 function startNotices() {
+  startLive();
   if (noticeTimer) return;
   lookNotices();
   noticeTimer = setInterval(lookNotices, 20_000);

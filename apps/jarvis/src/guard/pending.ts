@@ -89,6 +89,18 @@ const ACK_IS_LAST: string[] = ['PULSE_ON', 'DIAG'];
 export const FOLLOW_MS = 60_000;
 export const POLL_MS = 2_000;
 
+export interface FollowOpts {
+  signal?: AbortSignal;
+  onStatus?: (s: CommandStatus) => void;
+  followMs?: number;
+  pollMs?: number;
+  otp?: string;
+  /** the live feed (api/live.ts): ends the wait between two reads early when the server tells about this id */
+  wait?: (id: string, ms: number) => Promise<void>;
+}
+
+const pause = (opts: FollowOpts, id: string) => (opts.wait ? opts.wait(id, opts.pollMs ?? POLL_MS) : new Promise<void>((r) => setTimeout(r, opts.pollMs ?? POLL_MS)));
+
 export interface Outcome {
   status: CommandStatus | 'not_sent';
   commandId?: string;
@@ -104,7 +116,7 @@ export interface Outcome {
  * (GET /commands/:id every 2 s; the socket event can replace the polling later). Never throws for an API refusal.
  */
 export async function sendAndFollow(
-  api: ApiClient, p: PendingAction, opts: { signal?: AbortSignal; onStatus?: (s: CommandStatus) => void; followMs?: number; pollMs?: number; otp?: string } = {},
+  api: ApiClient, p: PendingAction, opts: FollowOpts = {},
 ): Promise<Outcome> {
   if (p.batch) return sendBatch(api, p, opts);
   // marking an alarm as seen is one call with an answer at once, nothing to follow (2026-11-23)
@@ -130,7 +142,7 @@ export async function sendAndFollow(
   // PULSE_ON and DIAG end at "acked": the cabinet reports nothing that proves them (coreif confirmRule)
   const done = (s: CommandStatus) => DONE.includes(s) || (ACK_IS_LAST.includes(p.command.type) && s === 'acked');
   while (!done(last) && Date.now() < until) {
-    await new Promise((r) => setTimeout(r, opts.pollMs ?? POLL_MS));
+    await pause(opts, cmd.id);
     if (opts.signal?.aborted) break;
     try {
       cmd = await api.get<Command>(`commands/${encodeURIComponent(cmd.id)}`, undefined, { signal: opts.signal });
@@ -151,7 +163,7 @@ export async function sendAndFollow(
  * GET /command-batches/:id until it finishes or the time is up.
  */
 async function sendBatch(
-  api: ApiClient, p: PendingAction, opts: { signal?: AbortSignal; onStatus?: (s: CommandStatus) => void; followMs?: number; pollMs?: number; otp?: string },
+  api: ApiClient, p: PendingAction, opts: FollowOpts,
 ): Promise<Outcome> {
   type Batch = { id: string; total: number; succeeded: number; failed: number; offline: number; pending: number; finishedAt: string | null };
   const pick = (b: Batch) => ({ id: b.id, total: b.total, succeeded: b.succeeded, failed: b.failed, offline: b.offline, pending: b.pending });
@@ -167,7 +179,7 @@ async function sendBatch(
   opts.onStatus?.('sent');
   const until = Date.now() + (opts.followMs ?? FOLLOW_MS);
   while (!b.finishedAt && b.pending > 0 && Date.now() < until) {
-    await new Promise((r) => setTimeout(r, opts.pollMs ?? POLL_MS));
+    await pause(opts, b.id);
     if (opts.signal?.aborted) break;
     try {
       b = await api.get<Batch>(`command-batches/${encodeURIComponent(b.id)}`, undefined, { signal: opts.signal });

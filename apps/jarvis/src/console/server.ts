@@ -29,6 +29,7 @@ import { toSpeech } from '../voice/speech-text';
 import { pcmToWav } from '../voice/groq-stt';
 import { ConsoleSession, RateLimiter, SessionStore } from './session';
 import { parseMute } from './notices';
+import { LiveFeed, nodeWs, type WsFactory } from '../api/live';
 import { FILLER, Speaker } from './speaker';
 import { cabinetRefOf, isControlCapabilityQuestion } from '../brain/router';
 import { classifyReply, isExplicitConfirm } from '../guard/confirm-words';
@@ -39,6 +40,8 @@ import { CommandRate, controlUnavailable, type ActionCommand, type GuardState } 
 import { areaIn, matching, narrow, pickIn, stateIn, streetIn, type FindFilter, type Finding } from '../guard/finder';
 import { outcomeText, propose, proposeAck, STATUS_VI, type Proposal } from '../guard/propose';
 
+/** how often a command is read while the live feed is up (its events end the wait sooner) */
+const LIVE_POLL_MS = 6_000;
 const STATIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../console');
 const STATIC: Record<string, string> = {
   '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/voice.js': 'voice.js', '/mic-worklet.js': 'mic-worklet.js',
@@ -68,6 +71,8 @@ export interface ConsoleDeps {
   fetch?: typeof fetch;
   /** tests: how often a sent command is polled (default 2 s) */
   commandPollMs?: number;
+  /** the server's live events (socket.io over WebSocket); default: Node's WebSocket when JARVIS_LIVE_EVENTS is on, null = none */
+  liveWs?: WsFactory | null;
   /** speech engines; default: the local sidecar (voice/sidecar.py) when voice is enabled, none otherwise */
   voice?: (SttProvider & TtsProvider) | null;
 }
@@ -141,6 +146,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
   const voice = deps.voice !== undefined ? deps.voice : cfg.voice.enabled ? new SidecarVoice({ url: cfg.voice.url, voice: cfg.tts.voice }) : null;
   const sessions = new SessionStore(() => new ConsoleSession(cfg.apiBase, cfg.apiTimeoutMs, deps.fetch));
   const limiter = new RateLimiter();
+  const liveWs = deps.liveWs !== undefined ? deps.liveWs : cfg.liveEvents ? nodeWs : null;
   const settings = () => getSettings(db, cfg);
 
   const actorOf = (u: User): Actor => ({ id: u.id, role: u.role, access: getAccess(db, u.id) });
@@ -188,7 +194,28 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     }
     s.user = user;
     s.newConversation();
+    startLive(s);
     audit.write({ kind: 'login', userId: user.id, role: user.role });
+  }
+
+  /**
+   * Listens to the server's live events as this user (spec 7 / 11): a new or ended alarm tells the console to look now
+   * instead of at its next 20 s look; command and batch events end the wait between the reads that follow a command.
+   */
+  function startLive(s: ConsoleSession) {
+    s.endLive();
+    if (!liveWs) return;
+    const feed = new LiveFeed({
+      apiBase: cfg.apiBase, ws: liveWs, cookie: () => s.api.socketCookie(),
+      onEvent: (name) => {
+        if (name === 'alarm.raised' || name === 'alarm.cleared') for (const l of [...s.listeners]) l('look');
+      },
+      onUp: (up) => {
+        for (const l of [...s.listeners]) l(up ? 'live' : 'offline');
+      },
+    });
+    s.live = feed;
+    feed.start();
   }
 
   function requireUser(s: ConsoleSession | null): { s: ConsoleSession; user: User; actor: Actor } {
@@ -819,7 +846,9 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     // stop (a barge-in cut it 4 s after sending and the audit said "timeout" for a confirmed command, 2026-11-21).
     // sendAndFollow has its own time limit; the result goes into the history either way.
     // the OTP of a batch goes straight to the API: never audited, never in the history, never seen by the model
-    const outcome = await sendAndFollow(s.api, p, { pollMs: deps.commandPollMs, otp, onStatus: (st) => send('status', { state: 'command', label: STATUS_VI[st] ?? st }) });
+    // with the live feed up, the server's command event ends each wait early; the reads are only the fallback
+    const live = s.live?.up ? s.live : null;
+    const outcome = await sendAndFollow(s.api, p, { pollMs: live ? (deps.commandPollMs ?? LIVE_POLL_MS) : deps.commandPollMs, wait: live ? (id, ms) => live.waitFor(id, ms) : undefined, otp, onStatus: (st) => send('status', { state: 'command', label: STATUS_VI[st] ?? st }) });
     if (outcome.status !== 'not_sent') commandRate.record(user.id);
     audit.write({ kind: 'command_result', userId: user.id, pendingId: p.id, commandId: outcome.commandId, status: outcome.status, error: outcome.error, apiError: outcome.code });
     const after = outcome.status === 'confirmed' && p.command.type !== 'ACK_ALARM' ? ((await s.reads.cabinet(p.cabinet.id).catch(() => null))?.state as Record<string, unknown> | undefined) : undefined;
@@ -942,6 +971,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       const password = typeof b.password === 'string' ? b.password : '';
       if (!email || !password) throw new HttpError(422, 'missing', 'Nhập email và mật khẩu');
       s.user = null;
+      s.endLive();
       const r = await s.api.login(email, password);
       if (r.kind === 'challenge') {
         s.pending2fa = true;
@@ -1005,6 +1035,28 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       const { user } = requireUser(s);
       const said = await notices(s, user, url.searchParams.get('voice') === '1');
       return sendJson(res, 200, { notices: said, mutedUntil: s.notices.muted ? new Date(s.notices.mutedUntil).toISOString() : null });
+    }
+    // "look now" when the server tells about an alarm (live feed); the console still looks every 20 s without it
+    if (key === 'GET /api/live') {
+      requireUser(s);
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no', ...SECURITY_HEADERS,
+      });
+      res.flushHeaders();
+      res.write(`:${' '.repeat(2048)}\n\n`);
+      const tell = (event: string) => {
+        if (res.writableEnded) return;
+        if (event === 'end') return void res.end();
+        res.write(`event: ${event}\ndata: {}\n\n`);
+      };
+      tell(s.live?.up ? 'live' : 'offline');
+      s.listeners.add(tell);
+      const beat = setInterval(() => !res.writableEnded && res.write(': .\n\n'), 25_000);
+      res.on('close', () => {
+        clearInterval(beat);
+        s!.listeners.delete(tell);
+      });
+      return;
     }
     // the bell button: "im lặng 15 phút" on / off (critical alarms are still said)
     if (key === 'POST /api/notices/mute') {

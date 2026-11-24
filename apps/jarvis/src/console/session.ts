@@ -8,6 +8,7 @@ import { ShiftContext } from '../brain/context';
 import { PendingSlot } from '../guard/pending';
 import type { Finding } from '../guard/finder';
 import { NoticeState } from './notices';
+import type { LiveFeed } from '../api/live';
 
 export const SESSION_IDLE_MS = 12 * 3_600_000;
 
@@ -34,10 +35,22 @@ export class ConsoleSession {
   places: { at: number; names: string[]; districts: string[] } | null = null;
   /** what Jarvis already said on its own, the P0 repeats and the 15-minute mute (spec 7, 2026-11-23/24) */
   readonly notices = new NoticeState();
+  /** the server's live events for this user (api/live.ts), while signed in */
+  live: LiveFeed | null = null;
+  /** the console's open GET /api/live streams: told "look now" when an alarm starts or ends */
+  readonly listeners = new Set<(event: string) => void>();
 
   constructor(apiBase: string, timeoutMs: number, fetchImpl?: typeof fetch) {
     this.api = new ApiClient({ baseUrl: apiBase, timeoutMs, fetch: fetchImpl });
     this.reads = new CityLightReads(this.api);
+  }
+
+  /** signed out or gone: no more live events, the console's streams end */
+  endLive() {
+    this.live?.stop();
+    this.live = null;
+    for (const l of [...this.listeners]) l('end');
+    this.listeners.clear();
   }
 
   newConversation() {
@@ -74,6 +87,7 @@ export class SessionStore {
 
   drop(s: ConsoleSession) {
     s.busy?.abort();
+    s.endLive();
     this.sessions.delete(s.id);
     void s.api.logout().catch(() => undefined);
   }
