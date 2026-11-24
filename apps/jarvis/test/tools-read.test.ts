@@ -232,6 +232,8 @@ describe('get_shift_report (2026-11-23)', () => {
     expect(out.tu).toEqual({ tong_so: 6, truc_tuyen: 4, mat_ket_noi: 2, dang_sang: 2, dang_tat: 1, dang_loi: 1 });
     expect(out.canh_bao).toMatchObject({ tong_so: 4, nghiem_trong: 1, quan_trong: 2, nhe: 1 });
     expect(out.canh_bao.nang_nhat.map((a: any) => a.code)).toEqual(['E301', 'E303', 'E201']);
+    // a sentence the model reads out: it named one of the three, or none (tests 2026-11-24)
+    expect(out.canh_bao.cau_mau).toBe('4 cảnh báo đang mở (1 nghiêm trọng, 2 quan trọng, 1 nhẹ); nặng nhất: E301 x ở tủ TL01.0003; E303 x ở tủ TL01.0001; E201 x ở tủ TL01.0003.');
     expect(out.su_co).toMatchObject({ dang_mo: 3, qua_han: 2 });
     expect(out.su_co.qua_han_lau_nhat.map((i: any) => i.code)).toEqual(['SC-1', 'SC-3']);
     expect(out.lech_lich).toEqual({ so_tu: 1, tu: ['TL01.0001'] });
@@ -243,6 +245,8 @@ describe('get_shift_report (2026-11-23)', () => {
     expect(out.lenh_12_gio.gan_nhat.map((c: any) => c.lenh)).toEqual(['Bật tay cả hai nhánh', 'Tắt tay cả hai nhánh', 'Trả về chạy theo lịch']);
     expect(JSON.stringify(out)).not.toContain('Nguyễn Văn A');
     expect(out.lo_lenh_12_gio).toMatchObject({ so_lo: 1, gan_nhat: [{ lenh: 'Bật tay cả hai nhánh', so_tu: 4, thanh_cong: 3, loi: 1, xong: 'đã xong' }] });
+    expect(out.lenh_12_gio.cau_mau).toBe('12 giờ qua có 4 lệnh: 2 xong, 1 lỗi, 1 đang chờ.');
+    expect(out.lo_lenh_12_gio.cau_mau).toMatch(/^1 lô lệnh nhiều tủ; gần nhất lúc .+: bật tay cả hai nhánh 4 tủ, 3 tủ đã nhận, 1 lỗi, 0 mất kết nối.$/);
     const area = (await tool().run(ctx(), { area: 'Thủ Đức' })) as Record<string, any>;
     expect(area.lenh_12_gio).toMatchObject({ tong_so: 1, loi: 1 });
     expect(area.lo_lenh_12_gio).toBeUndefined();

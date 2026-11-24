@@ -265,7 +265,7 @@ export function outcomeText(p: PendingAction, o: Outcome, after?: Record<string,
     case 'acked':
       // PULSE_ON / DIAG: the cabinet took it, nothing in its data can prove more
       return cmd.type === 'DIAG'
-        ? `Tủ ${code} đã nhận lệnh tự kiểm tra RS485. Khoảng nửa phút nữa bạn hỏi "tủ ${code} thế nào?" để tôi đọc kết quả chẩn đoán.`
+        ? `Tủ ${code} đã nhận lệnh tự kiểm tra RS485. Khoảng nửa phút nữa bạn hỏi "chẩn đoán tủ ${code} thế nào?" để tôi đọc kết quả.`
         : `Tủ ${code} đã nhận lệnh bật tạm 15 phút. Tủ không báo xác nhận riêng cho lệnh này, hết 15 phút đèn về theo lịch.`;
     case 'acked_unconfirmed':
       return `Tủ ${code} đã nhận lệnh nhưng dữ liệu đo chưa đổi theo. Bạn kiểm tra lại trên web CityLight.`;

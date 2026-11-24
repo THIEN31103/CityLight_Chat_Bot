@@ -179,7 +179,7 @@ const findCabinets: ToolDef<{ query: string }> = {
 const getCabinet: ToolDef<{ cabinet: string }> = {
   name: 'get_cabinet',
   kind: 'read',
-  description: 'Current state of ONE cabinet: connection, branch 1 / 2 lit, manual mode, voltage, current, power, leakage, temperature, diagnostics (PLGO, PLC, LOGO), open alarms. Use for "tủ X bị gì", "tủ X thế nào", "tủ X có sáng không".',
+  description: 'Current state of ONE cabinet: connection, branch 1 / 2 lit, manual mode, voltage, current, power, leakage, temperature, diagnostics (PLGO, PLC, LOGO), open alarms. Use for "tủ X bị gì", "tủ X thế nào", "tủ X có sáng không", "chẩn đoán tủ X". Always say the chan_doan sentence in a few words.',
   schema: obj({ cabinet: CABINET_PROP }, ['cabinet']),
   input: z.object({ cabinet: ref }),
   async run(ctx, { cabinet }) {
@@ -215,6 +215,10 @@ const getCabinet: ToolDef<{ cabinet: string }> = {
       diagnostics: problems.slice(0, 6).map((d: DiagnosticItem) => ({ part: d.subsystem, status: d.status, code: d.code, evidence: d.evidence, detail: d.detail })),
       // "12 mục OK" (test 2026-11-24): a Vietnamese key
       so_muc_chan_doan_binh_thuong: diag ? diag.items.length - problems.length : null,
+      // asked right after a self-check, the answer left the diagnosis out (test 2026-11-24): a sentence to read
+      chan_doan: !diag ? 'chưa đọc được kết quả chẩn đoán'
+        : problems.length ? `${problems.length} mục chẩn đoán có vấn đề: ${problems.slice(0, 3).map((d: DiagnosticItem) => `${d.subsystem} (${d.detail ?? d.status})`).join('; ')}`
+        : `chẩn đoán bình thường cả ${diag.items.length} mục`,
       // Vietnamese words: with source "manual" the model said "chế độ theo lịch (manual)" (test 2026-11-24)
       lich: sched ? scheduleVi(sched) : null,
       // capabilities ("manual_control"…) left out: the model read them as "Jarvis can switch this cabinet" (2026-11-20)
@@ -704,6 +708,10 @@ const getShiftReport: ToolDef<{ area?: string }> = {
         tong_so: open.length,
         nghiem_trong: sev('critical'), quan_trong: sev('major'), nhe: sev('minor'),
         nang_nhat: open.slice(0, 3).map((a) => alarmBrief(a, titles)),
+        // the model named one of the three, or none (tests 2026-11-24): the sentence is built here
+        cau_mau: open.length
+          ? `${open.length} cảnh báo đang mở (${[['nghiêm trọng', sev('critical')], ['quan trọng', sev('major')], ['nhẹ', sev('minor')]].filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(', ')}); nặng nhất: ${open.slice(0, 3).map((a) => `${alarmLabel(a, titles).replace(/ \(.*\)$/, '')} ở tủ ${a.cabinetCode}`).join('; ')}.`
+          : 'Không có cảnh báo đang mở.',
         ...(alarms.items.length < alarms.total ? { ghi_chu: `Chỉ tính trên ${alarms.items.length} / ${alarms.total} cảnh báo mới nhất.` } : {}),
       };
       const mismatch = open.filter((a) => a.type === 'schedule_mismatch');
@@ -744,6 +752,9 @@ const getShiftReport: ToolDef<{ area?: string }> = {
         tong_so: mine.length,
         xong: st('confirmed', 'acked_unconfirmed'), loi: st('failed', 'timeout'), dang_cho: st('queued', 'sent', 'acked'),
         gan_nhat: mine.filter((c) => !c.batchId).slice(0, 3).map((c) => ({ tu: c.cabinetName, lenh: commandVi(c), ket_qua: COMMAND_STATUS_VI[c.status] ?? c.status, luc: vnTime(c.queuedAt) })),
+        cau_mau: mine.length
+          ? `12 giờ qua có ${mine.length} lệnh: ${st('confirmed', 'acked_unconfirmed')} xong, ${st('failed', 'timeout')} lỗi, ${st('queued', 'sent', 'acked')} đang chờ.`
+          : '12 giờ qua không có lệnh nào.',
       };
       if (wholeSystem(area)) {
         const lots = (await ctx.reads.batches(o)).filter((b) => b.kind === 'control' && Date.parse(b.createdAt) >= since).sort((p, q) => q.createdAt.localeCompare(p.createdAt));
@@ -752,6 +763,10 @@ const getShiftReport: ToolDef<{ area?: string }> = {
           gan_nhat: lots.slice(0, 3).map((b) => ({
             lenh: b.command ? commandVi(b.command) : b.kind, so_tu: b.total, thanh_cong: b.succeeded, loi: b.failed, mat_ket_noi: b.offline, xong: b.finishedAt ? 'đã xong' : 'đang chạy', luc: vnTime(b.createdAt),
           })),
+          // left out of the answer twice (tests 2026-11-24): the sentence is built here
+          ...(lots[0] ? {
+            cau_mau: `${lots.length} lô lệnh nhiều tủ; gần nhất lúc ${vnTime(lots[0].createdAt)}: ${lots[0].command ? commandVi(lots[0].command).toLowerCase() : lots[0].kind} ${lots[0].total} tủ, ${lots[0].succeeded} tủ đã nhận, ${lots[0].failed} lỗi, ${lots[0].offline} mất kết nối${lots[0].finishedAt ? '' : ', đang chạy'}.`,
+          } : {}),
         };
       }
     } catch (e) {
@@ -768,7 +783,7 @@ const getShiftReport: ToolDef<{ area?: string }> = {
       ...(lo_lenh_12_gio ? { lo_lenh_12_gio } : {}),
       ...(khu_vuc_nhieu_canh_bao ? { khu_vuc_nhieu_canh_bao } : {}),
       ghi_chu:
-        'Đây là bản tin đầu ca. Bắt đầu bằng tên khu vực (khu_vuc). Nói theo thứ tự: số tủ và số mất kết nối; cảnh báo: số theo mức, rồi từng cảnh báo trong nang_nhat (mã, tên lỗi, tủ); sự cố quá hạn; tủ lệch lịch; lệnh 12 giờ qua (bao nhiêu, mấy cái lỗi), rồi lô lệnh riêng nếu có lo_lenh_12_gio (số lô, lô gần nhất làm gì và kết quả). Phần nào bằng 0 thì nói gọn "không có". Không nói ai gửi lệnh. Không đoán nguyên nhân.',
+        'Đây là bản tin đầu ca. Bắt đầu bằng tên khu vực (khu_vuc). Nói theo thứ tự: số tủ và số mất kết nối; cảnh báo: đọc canh_bao.cau_mau gần như nguyên văn; sự cố quá hạn; tủ lệch lịch; đọc lenh_12_gio.cau_mau, rồi lo_lenh_12_gio.cau_mau nếu có. Phần nào bằng 0 thì nói gọn "không có". Không nói ai gửi lệnh. Không đoán nguyên nhân.',
     };
   },
 };
@@ -919,7 +934,7 @@ const getSchedule: ToolDef<{ cabinet: string }> = {
     const detail = await ctx.reads.cabinet(r.cabinet.id, { signal: ctx.signal });
     setFocus(ctx.focus, r.cabinet);
     const s = detail.schedule as Record<string, unknown>;
-    return { cabinet: r.cabinet.code, ...scheduleVi(s), da_ap_dung_luc: vnTime(s.appliedAt as string | null) ?? 'tủ chưa xác nhận đã nhận lịch' };
+    return { cabinet: r.cabinet.code, ...scheduleVi(s), ...(s.appliedAt ? { da_ap_dung_luc: vnTime(s.appliedAt as string) } : {}) };
   },
 };
 
