@@ -618,7 +618,7 @@ const getShiftReport: ToolDef<{ area?: string }> = {
   name: 'get_shift_report',
   kind: 'read',
   description:
-    'Shift report ("bản tin đầu ca", "giao ca", "tóm tắt ca") of one ward or district, or of the whole system when area is empty: cabinets by state, open alarms by severity with the worst ones, open and overdue field incidents, cabinets off schedule; for the whole system also the areas with the most alarms. Use when the user starts or hands over a shift.',
+    'Shift report ("bản tin đầu ca", "giao ca", "tóm tắt ca") of one ward or district, or of the whole system when area is empty: cabinets by state, open alarms by severity with the worst ones, open and overdue field incidents, cabinets off schedule, commands and batches of the last 12 hours; for the whole system also the areas with the most alarms. Use when the user starts or hands over a shift.',
   schema: obj({ area: { type: 'string', description: 'Tên phường hoặc quận; bỏ trống = toàn hệ thống' } }),
   input: z.object({ area: z.string().trim().max(100).optional() }),
   async run(ctx, { area }) {
@@ -685,15 +685,49 @@ const getShiftReport: ToolDef<{ area?: string }> = {
       };
     }
 
+    // commands and batches of the last 12 hours (spec 7 briefing); the log needs log.view, without it the part says so
+    const since = now - 12 * 3_600_000;
+    let lenh_12_gio: unknown = 'không có quyền xem nhật ký lệnh';
+    let lo_lenh_12_gio: unknown;
+    try {
+      const cmds: Command[] = [];
+      for (let p = 1; p <= 3; p++) {
+        const pg = await ctx.reads.commandLog(p, 100, o);
+        const fresh = pg.items.filter((c) => Date.parse(c.queuedAt) >= since);
+        cmds.push(...fresh);
+        if (fresh.length < pg.items.length || pg.items.length < 100) break;
+      }
+      const mine = cmds.filter((c) => ids.has(c.cabinetId) && c.type !== 'SET_SCHEDULE' && c.type !== 'SET_TIME');
+      const st = (...s: string[]) => mine.filter((c) => s.includes(c.status)).length;
+      lenh_12_gio = {
+        tong_so: mine.length,
+        xong: st('confirmed', 'acked_unconfirmed'), loi: st('failed', 'timeout'), dang_cho: st('queued', 'sent', 'acked'),
+        gan_nhat: mine.filter((c) => !c.batchId).slice(0, 3).map((c) => ({ tu: c.cabinetName, lenh: commandVi(c), ket_qua: COMMAND_STATUS_VI[c.status] ?? c.status, luc: vnTime(c.queuedAt) })),
+      };
+      if (wholeSystem(area)) {
+        const lots = (await ctx.reads.batches(o)).filter((b) => b.kind === 'control' && Date.parse(b.createdAt) >= since).sort((p, q) => q.createdAt.localeCompare(p.createdAt));
+        lo_lenh_12_gio = {
+          so_lo: lots.length,
+          gan_nhat: lots.slice(0, 3).map((b) => ({
+            lenh: b.command ? commandVi(b.command) : b.kind, so_tu: b.total, thanh_cong: b.succeeded, loi: b.failed, mat_ket_noi: b.offline, xong: b.finishedAt ? 'đã xong' : 'đang chạy', luc: vnTime(b.createdAt),
+          })),
+        };
+      }
+    } catch (e) {
+      if (!(e instanceof ApiProblem && e.status === 403)) lenh_12_gio = 'không đọc được nhật ký lệnh lúc này';
+    }
+
     return {
       ...where,
       tu: { tong_so: scope.length, truc_tuyen: scope.length - n('offline'), mat_ket_noi: n('offline'), dang_sang: n('on') + n('dimming'), dang_tat: n('off'), dang_loi: n('fault') },
       canh_bao,
       su_co,
       lech_lich,
+      lenh_12_gio,
+      ...(lo_lenh_12_gio ? { lo_lenh_12_gio } : {}),
       ...(khu_vuc_nhieu_canh_bao ? { khu_vuc_nhieu_canh_bao } : {}),
       ghi_chu:
-        'Đây là bản tin đầu ca. Nói theo thứ tự: số tủ và số mất kết nối; cảnh báo (nặng nhất trước); sự cố quá hạn; tủ lệch lịch. Phần nào bằng 0 thì nói gọn "không có". Không đoán nguyên nhân.',
+        'Đây là bản tin đầu ca. Nói theo thứ tự: số tủ và số mất kết nối; cảnh báo (nặng nhất trước); sự cố quá hạn; tủ lệch lịch; lệnh và lô lệnh 12 giờ qua (bao nhiêu, mấy cái lỗi). Phần nào bằng 0 thì nói gọn "không có". Không nói ai gửi lệnh. Không đoán nguyên nhân.',
     };
   },
 };

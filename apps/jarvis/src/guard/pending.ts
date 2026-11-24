@@ -86,6 +86,8 @@ export class PendingSlot {
 
 const DONE: CommandStatus[] = ['confirmed', 'acked_unconfirmed', 'failed', 'timeout', 'cancelled'];
 const ACK_IS_LAST: string[] = ['PULSE_ON', 'DIAG'];
+/** the command has its last status (PULSE_ON and DIAG end at "acked") */
+export const isDone = (type: string, s: CommandStatus) => DONE.includes(s) || (ACK_IS_LAST.includes(type) && s === 'acked');
 export const FOLLOW_MS = 60_000;
 export const POLL_MS = 2_000;
 
@@ -108,6 +110,8 @@ export interface Outcome {
   batch?: { id: string; total: number; succeeded: number; failed: number; offline: number; pending: number };
   /** the API's reason when it refused or the command failed */
   error?: string;
+  /** Jarvis stopped following before the command or batch ended (60 s): its result is told later (late.ts) */
+  unfinished?: true;
   code?: string;
 }
 
@@ -140,7 +144,7 @@ export async function sendAndFollow(
   const until = Date.now() + (opts.followMs ?? FOLLOW_MS);
   let last = cmd.status;
   // PULSE_ON and DIAG end at "acked": the cabinet reports nothing that proves them (coreif confirmRule)
-  const done = (s: CommandStatus) => DONE.includes(s) || (ACK_IS_LAST.includes(p.command.type) && s === 'acked');
+  const done = (s: CommandStatus) => isDone(p.command.type, s);
   while (!done(last) && Date.now() < until) {
     await pause(opts, cmd.id);
     if (opts.signal?.aborted) break;
@@ -154,7 +158,7 @@ export async function sendAndFollow(
     if (cmd.status !== last) opts.onStatus?.(cmd.status);
     last = cmd.status;
   }
-  return { status: done(last) ? last : 'timeout', commandId: cmd.id, error: cmd.error ?? undefined };
+  return done(last) ? { status: last, commandId: cmd.id, error: cmd.error ?? undefined } : { status: 'timeout', commandId: cmd.id, error: cmd.error ?? undefined, unfinished: true };
 }
 
 /**
@@ -188,7 +192,7 @@ async function sendBatch(
       if (!(e instanceof ApiProblem)) throw e;
     }
   }
-  return { status: b.finishedAt || b.pending === 0 ? 'confirmed' : 'timeout', batch: pick(b) };
+  return b.finishedAt || b.pending === 0 ? { status: 'confirmed', batch: pick(b) } : { status: 'timeout', batch: pick(b), unfinished: true };
 }
 
 export interface BatchPreview { total: number; offline: number; blocked: number; unsupported: number; max: number | null }

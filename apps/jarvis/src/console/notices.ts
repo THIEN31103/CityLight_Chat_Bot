@@ -15,7 +15,12 @@ export const MUTE_MS = 15 * 60_000;
 /** P0 groups said in one look; more are counted in one sentence */
 const MAX_P0 = 3;
 
-export interface Notice { level: 'P0' | 'P1'; text: string }
+export interface Notice {
+  level: 'P0' | 'P1';
+  text: string;
+  /** one cabinet told about: it becomes the cabinet in focus, so "tủ đó thế nào?" means it (spec 5.4) */
+  focus?: { cabinet: { id: string; code: string; name: string }; alarmCode: string };
+}
 
 const keyOf = (a: Alarm) => `${a.code}|${a.districtName}`;
 
@@ -24,6 +29,10 @@ function groupsOf(list: Alarm[]): Alarm[][] {
   for (const a of list) m.set(keyOf(a), [...(m.get(keyOf(a)) ?? []), a]);
   return [...m.values()];
 }
+
+/** the cabinet of a sentence about one cabinet */
+const focusOf = (g: Alarm[]): Notice['focus'] =>
+  g.length === 1 ? { cabinet: { id: g[0]!.cabinetId, code: g[0]!.cabinetCode, name: g[0]!.cabinetName }, alarmCode: g[0]!.code } : undefined;
 
 function sentence(head: string, g: Alarm[]): string {
   const a = g[0]!;
@@ -81,13 +90,13 @@ export class NoticeState {
     const p0: Notice[] = [];
     const critical = fresh.filter((a) => a.severity === 'critical');
     for (const g of groupsOf(critical)) {
-      p0.push({ level: 'P0', text: sentence('Cảnh báo nghiêm trọng mới', g) });
+      p0.push({ level: 'P0', text: sentence('Cảnh báo nghiêm trọng mới', g), focus: focusOf(g) });
       for (const a of g) this.p0.set(a.id, { times: 1, at: now });
     }
     const due = [...this.p0].filter(([id, t]) => now - t.at >= REPEAT_MS && !critical.some((a) => a.id === id));
     for (const g of groupsOf(due.map(([id]) => byId.get(id)!))) {
       const times = Math.max(...g.map((a) => this.p0.get(a.id)!.times)) + 1;
-      p0.push({ level: 'P0', text: sentence(`Nhắc lại lần ${times}/${P0_TIMES}, chưa ai xử lý cảnh báo nghiêm trọng`, g) });
+      p0.push({ level: 'P0', text: sentence(`Nhắc lại lần ${times}/${P0_TIMES}, chưa ai xử lý cảnh báo nghiêm trọng`, g), focus: focusOf(g) });
       for (const a of g) this.p0.set(a.id, { times, at: now });
     }
     const out = p0.slice(0, MAX_P0);
@@ -109,7 +118,8 @@ export class NoticeState {
       this.mutedCount = 0;
       if (out.some((n) => n.level === 'P1')) this.lastP1 = now;
     } else if (this.mutedUntil <= now && this.queue.length && now - this.lastP1 >= P1_GAP_MS) {
-      out.push({ level: 'P1', text: sentence('Cảnh báo mới', this.queue.shift()!) });
+      const g = this.queue.shift()!;
+      out.push({ level: 'P1', text: sentence('Cảnh báo mới', g), focus: focusOf(g) });
       this.lastP1 = now;
     }
     return { notices: out, fresh: fresh.length };

@@ -9,6 +9,7 @@ import { PendingSlot } from '../guard/pending';
 import type { Finding } from '../guard/finder';
 import { NoticeState } from './notices';
 import type { LiveFeed } from '../api/live';
+import { LateResults } from './late';
 
 export const SESSION_IDLE_MS = 12 * 3_600_000;
 
@@ -37,6 +38,8 @@ export class ConsoleSession {
   readonly notices = new NoticeState();
   /** the server's live events for this user (api/live.ts), while signed in */
   live: LiveFeed | null = null;
+  /** this session's commands still without a result when Jarvis stopped following them (late.ts) */
+  readonly late = new LateResults();
   /** the console's open GET /api/live streams: told "look now" when an alarm starts or ends */
   readonly listeners = new Set<(event: string) => void>();
 

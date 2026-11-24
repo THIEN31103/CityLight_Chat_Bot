@@ -23,7 +23,7 @@ Mọi con số đều lấy từ dữ liệu thật lúc bạn hỏi. Không có
 | Bạn muốn biết | Hỏi ví dụ |
 |---|---|
 | Tình hình chung | "Hệ thống thế nào rồi?", "Báo cáo tình hình" |
-| Bản tin đầu ca | "Bản tin đầu ca", "Báo cáo đầu ca ở quận 1", "Giao ca, có gì cần lưu ý?": tủ, cảnh báo nặng nhất, sự cố quá hạn, tủ lệch lịch trong một câu trả lời |
+| Bản tin đầu ca | "Bản tin đầu ca", "Báo cáo đầu ca ở quận 1", "Giao ca, có gì cần lưu ý?": tủ, cảnh báo nặng nhất, sự cố quá hạn, tủ lệch lịch, lệnh và lô lệnh 12 giờ qua (bao nhiêu, mấy cái lỗi; không nói ai gửi) trong một câu trả lời |
 | Danh sách khu vực | "Hệ thống có những khu vực nào?" |
 | Liệt kê tủ theo trạng thái | "Liệt kê 10 tủ đang hoạt động bình thường", "Tủ nào mất kết nối?", "Cho tui 5 tủ đang sáng" |
 | Tủ theo khu vực | "Tủ nào mất kết nối ở quận 1?", "Phường Bến Nghé có tủ nào lỗi?" |
@@ -136,6 +136,8 @@ Khi đang mở Jarvis, máy chủ báo ngay cho Jarvis mỗi khi có cảnh báo
 - **Đang bật giọng nói** thì Jarvis đọc to câu báo. Jarvis chờ bạn nói xong và chờ đọc xong câu trả lời trước mới báo.
 - **Cảnh báo nghiêm trọng** chưa ai trả lời thì 2 phút sau Jarvis nhắc lại, tối đa 3 lần. Bạn hỏi hay bấm gì đó, hoặc cảnh báo đã được xác nhận / đã hết, thì Jarvis thôi nhắc.
 - **Cảnh báo thường** mỗi 20 giây báo tối đa một câu; nhiều tủ cùng mã lỗi trong cùng quận gom thành một câu.
+- **Kết quả lệnh về muộn**: lệnh bạn gửi mà sau 60 giây tủ chưa xác nhận, Jarvis nói "Có kết quả trong 15 phút tới thì tôi báo lại" và báo "Kết quả lệnh … gửi lúc …" khi có (cả lệnh nhiều tủ).
+- **"Tủ đó" sau câu báo**: Jarvis vừa báo cảnh báo ở một tủ thì "tủ đó thế nào?", "xác nhận đã xem cảnh báo đó" hiểu là tủ / cảnh báo vừa báo.
 - **Im lặng 15 phút**: bấm nút **🔕 Im lặng 15 phút** ở thanh trên, hoặc nói / gõ "im lặng 15 phút", "tắt thông báo", "đừng báo nữa". Trong lúc im lặng, cảnh báo nghiêm trọng vẫn báo; cảnh báo thường được đếm, hết giờ Jarvis báo một câu "có N cảnh báo mới". Muốn thôi sớm: bấm nút 🔔 hoặc nói "hết im lặng", "bật lại thông báo".
 
 ## 4. Nói chuyện bằng giọng

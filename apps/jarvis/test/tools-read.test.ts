@@ -199,12 +199,28 @@ describe('get_shift_report (2026-11-23)', () => {
     { id: 'i2', code: 'SC-2', cabinetId: 'c3', cabinetName: 'Đường 3', category: 'Cháy bóng', status: 'new', deadline: '2099-01-01T00:00:00Z' },
     { id: 'i3', code: 'SC-3', cabinetId: 'c5', cabinetName: 'Đường 5', category: 'Nghiêng cột', status: 'assigned', deadline: '2026-11-21T00:00:00Z' },
   ];
+  const ago = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+  const cmd = (i: number, cabinet: number, type: string, on: boolean, status: string, h: number, batchId: string | null = null) => ({
+    id: `m${i}`, cabinetId: `c${cabinet}`, cabinetName: `Đường ${cabinet}`, type, params: { on }, batchId, status, requestedBy: 'Nguyễn Văn A', queuedAt: ago(h), sentAt: null, ackedAt: null, confirmedAt: null, error: null,
+  });
+  // newest first, like the API
+  const commands = [
+    cmd(1, 1, 'MANUAL_ALL', true, 'confirmed', 1), cmd(2, 5, 'MANUAL_ALL', false, 'failed', 2), cmd(3, 2, 'AUTO', false, 'queued', 3),
+    cmd(4, 1, 'SET_SCHEDULE', false, 'confirmed', 4), cmd(5, 3, 'MANUAL_ALL', true, 'confirmed', 5, 'b1'), cmd(6, 1, 'MANUAL_ALL', true, 'confirmed', 13),
+  ];
+  const batches = [
+    { id: 'b0', kind: 'control', command: { type: 'AUTO', params: {} }, scope: 'x', total: 9, succeeded: 9, failed: 0, offline: 0, pending: 0, requestedBy: 'x', createdAt: ago(20), finishedAt: ago(20) },
+    { id: 'b1', kind: 'control', command: { type: 'MANUAL_ALL', params: { on: true } }, scope: 'x', total: 4, succeeded: 3, failed: 1, offline: 0, pending: 0, requestedBy: 'x', createdAt: ago(5), finishedAt: ago(5) },
+    { id: 'b2', kind: 'schedule', command: null, scope: 'x', total: 2, succeeded: 2, failed: 0, offline: 0, pending: 0, requestedBy: 'x', createdAt: ago(1), finishedAt: null },
+  ];
   const areas = [{ id: 'd1', name: 'Quận 1', parentId: null, kind: 'district', cabinetCount: 4 }, { id: 'w1', name: 'Phường Bến Nghé', parentId: 'd1', kind: 'ward', cabinetCount: 4 }, { id: 'd2', name: 'TP Thủ Đức', parentId: null, kind: 'district', cabinetCount: 2 }, { id: 'w2', name: 'Phường Thảo Điền', parentId: 'd2', kind: 'ward', cabinetCount: 2 }];
   const ctx = (over: Record<string, unknown> = {}) => ({
     reads: {
       mapCabinets: async () => cabinets, areaTree: async () => ({ areas, unassigned: 0 }),
       alarms: async () => ({ items: alarms, total: alarms.length, page: 1, size: 100 }),
       incidents: async () => ({ items: incidents, total: incidents.length, page: 1, size: 100 }),
+      commandLog: async () => ({ items: commands, total: commands.length, page: 1, size: 100 }),
+      batches: async () => batches,
       ...over,
     },
     user: {}, focus: {},
@@ -220,6 +236,22 @@ describe('get_shift_report (2026-11-23)', () => {
     expect(out.su_co.qua_han_lau_nhat.map((i: any) => i.code)).toEqual(['SC-1', 'SC-3']);
     expect(out.lech_lich).toEqual({ so_tu: 1, tu: ['TL01.0001'] });
     expect(out.khu_vuc_nhieu_canh_bao[0]).toEqual({ khu_vuc: 'Quận 1', so_canh_bao: 3 });
+  });
+  it('commands of the last 12 hours (no schedule sends, never who sent them) and control batches', async () => {
+    const out = (await tool().run(ctx(), {})) as Record<string, any>;
+    expect(out.lenh_12_gio).toMatchObject({ tong_so: 4, xong: 2, loi: 1, dang_cho: 1 });
+    expect(out.lenh_12_gio.gan_nhat.map((c: any) => c.lenh)).toEqual(['Bật tay cả hai nhánh', 'Tắt tay cả hai nhánh', 'Trả về chạy theo lịch']);
+    expect(JSON.stringify(out)).not.toContain('Nguyễn Văn A');
+    expect(out.lo_lenh_12_gio).toMatchObject({ so_lo: 1, gan_nhat: [{ lenh: 'Bật tay cả hai nhánh', so_tu: 4, thanh_cong: 3, loi: 1, xong: 'đã xong' }] });
+    const area = (await tool().run(ctx(), { area: 'Thủ Đức' })) as Record<string, any>;
+    expect(area.lenh_12_gio).toMatchObject({ tong_so: 1, loi: 1 });
+    expect(area.lo_lenh_12_gio).toBeUndefined();
+  });
+  it('a role without the command log: that part says so', async () => {
+    const { ApiProblem } = await import('../src/api/client');
+    const out = (await tool().run(ctx({ commandLog: async () => { throw new ApiProblem(403, 'forbidden', 'x'); } }), {})) as Record<string, any>;
+    expect(out.lenh_12_gio).toBe('không có quyền xem nhật ký lệnh');
+    expect(out.tu.tong_so).toBe(6);
   });
   it('one area: only its cabinets, alarms and incidents', async () => {
     const out = (await tool().run(ctx(), { area: 'Thủ Đức' })) as Record<string, any>;

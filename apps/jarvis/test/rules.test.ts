@@ -157,6 +157,13 @@ describe('static guard (spec 6.10)', () => {
     },
   );
 
+  it('api/batch-log.ts only reads the batch log', () => {
+    const text = src('api/batch-log.ts');
+    expect(text).not.toMatch(/\.post\s*[<(]|\.put\s*[<(]|\.delete\s*[<(]|['"]POST['"]|['"]PUT['"]|['"]DELETE['"]/);
+    expect(text).not.toMatch(/idempotencyKey|\botp\b/i);
+    expect(text).toContain("api.get<CommandBatch[]>('command-batches', undefined, o)");
+  });
+
   // milestone 4: guard/pending.ts is the only file that sends a command; everything else reaches it through the guard
   const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? walk(path.join(dir, d.name)) : d.name.endsWith('.ts') ? [path.join(dir, d.name)] : []));
   it('only guard/pending.ts posts to a command endpoint', () => {

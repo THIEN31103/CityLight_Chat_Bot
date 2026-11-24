@@ -115,3 +115,16 @@ describe('parseMute', () => {
   it.each(['Chế độ im lặng là gì?', 'im lặng có tắt cảnh báo nghiêm trọng không', 'tắt đèn tủ TL01.0009', 'đang có cảnh báo gì?', 'bật đèn quận 1', 'thông báo mới nhất là gì'])(
     'not an order: %s', (text) => expect(parseMute(text)).toBeNull());
 });
+
+describe('the cabinet told about becomes the one in focus ("tủ đó", spec 5.4)', () => {
+  it('a sentence about one cabinet carries it; a sentence about several does not', () => {
+    const st = started();
+    const one = alarm({ severity: 'critical', code: 'E204', cabinetId: 'cx', cabinetCode: 'TL09.0001', cabinetName: 'Lê Lợi 1' });
+    const told = st.look([one], 0, T0 + 1000).notices;
+    expect(told[0]!.focus).toEqual({ cabinet: { id: 'cx', code: 'TL09.0001', name: 'Lê Lợi 1' }, alarmCode: 'E204' });
+    const st2 = started();
+    const many = st2.look([alarm({ code: 'E105', districtName: 'Quận 9' }), alarm({ code: 'E105', districtName: 'Quận 9' })], 0, T0 + 1000).notices;
+    expect(many[0]!.text).toMatch(/2 tủ/);
+    expect(many[0]!.focus).toBeUndefined();
+  });
+});

@@ -237,6 +237,9 @@ function stateNow(cmd: ActionCommand, st: Record<string, unknown>): string {
 }
 
 /** The sentence after the command: "đã xác nhận" only from the cabinet's own data (status confirmed). */
+/** said when Jarvis stops following a command that has not ended (its result comes later, late.ts) */
+const LATER = ' Có kết quả trong 15 phút tới thì tôi báo lại.';
+
 export function outcomeText(p: PendingAction, o: Outcome, after?: Record<string, unknown> | null): string {
   const code = p.cabinet.code;
   const cmd = p.command;
@@ -245,7 +248,7 @@ export function outcomeText(p: PendingAction, o: Outcome, after?: Record<string,
   if (p.batch && o.batch) {
     const b = o.batch;
     const head = `Lệnh nhiều tủ ở ${p.batch.area}: ${b.succeeded} tủ đã nhận, ${b.failed} lỗi, ${b.offline} mất kết nối`;
-    return o.status === 'confirmed' ? `${head}.` : `${head}, ${b.pending} tủ chưa xong sau 60 giây. Bạn theo dõi tiếp trên web CityLight.`;
+    return o.status === 'confirmed' ? `${head}.` : `${head}, ${b.pending} tủ chưa xong sau 60 giây. Bạn theo dõi tiếp trên web CityLight.${o.unfinished ? LATER : ''}`;
   }
   switch (o.status) {
     case 'confirmed': {
@@ -267,7 +270,7 @@ export function outcomeText(p: PendingAction, o: Outcome, after?: Record<string,
     case 'failed':
       return `Lệnh tới tủ ${code} thất bại${o.error ? `: ${o.error}` : ''}.`;
     case 'timeout':
-      return `Sau 60 giây tủ ${code} vẫn chưa xác nhận lệnh. Bạn theo dõi thêm trên web CityLight.`;
+      return `Sau 60 giây tủ ${code} vẫn chưa xác nhận lệnh. Bạn theo dõi thêm trên web CityLight.${o.unfinished ? LATER : ''}`;
     case 'cancelled':
       return `Lệnh tới tủ ${code} đã bị hủy.`;
     case 'not_sent':

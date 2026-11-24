@@ -3,6 +3,7 @@
 // Not here on purpose: /map/cabinets (10k cabinets ~3.4 MB) and every write endpoint.
 import type { Alarm, CabinetSummary, Command, DiagnosticItem, Incident, MapStats, Page, TelemetryPoint, User } from '@citylight/shared';
 import type { ApiClient, RequestOptions } from './client';
+import { readBatchLog } from './batch-log';
 
 /** Telemetry metrics the API accepts (apps/api/src/cabinets.ts METRIC); anything else is ignored there. */
 export const TELEMETRY_METRICS = ['vL1', 'vL2', 'vL3', 'iL1', 'iL2', 'iL3', 'pTotalKw', 'pfTotal', 'leakMa', 'tempC'] as const;
@@ -126,6 +127,16 @@ export class CityLightReads {
   /** Accounts of the organisation (admin.users: admin and manager); used by the Jarvis admin page only, never by the model. */
   users(o?: RequestOptions) {
     return this.api.get<(User & { active: boolean })[]>('users', undefined, o);
+  }
+
+  /** The command log of the user's scope, newest first (log.view; 403 for roles without it) */
+  commandLog(page: number, size: number, o?: RequestOptions) {
+    return this.api.get<Page<Command>>('commands', { page, size: Math.min(200, size) }, o);
+  }
+
+  /** Batches (log.view); read in batch-log.ts, which only reads */
+  batches(o?: RequestOptions) {
+    return readBatchLog(this.api, o);
   }
 
   command(id: string, o?: RequestOptions) {

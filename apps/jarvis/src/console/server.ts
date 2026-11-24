@@ -207,8 +207,10 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     if (!liveWs) return;
     const feed = new LiveFeed({
       apiBase: cfg.apiBase, ws: liveWs, cookie: () => s.api.socketCookie(),
-      onEvent: (name) => {
-        if (name === 'alarm.raised' || name === 'alarm.cleared') for (const l of [...s.listeners]) l('look');
+      onEvent: (name, data) => {
+        const id = (data as { id?: unknown } | null)?.id;
+        const mine = (name === 'command.updated' || name === 'batch.progress') && typeof id === 'string' && s.late.has(id);
+        if (name === 'alarm.raised' || name === 'alarm.cleared' || mine) for (const l of [...s.listeners]) l('look');
       },
       onUp: (up) => {
         for (const l of [...s.listeners]) l(up ? 'live' : 'offline');
@@ -561,6 +563,8 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     // "xác nhận đã xem cảnh báo E201 tủ TL01.0026" (spec 5.3, 2026-11-23): a T1 card like the orders
     const ack = parseAck(text);
     if (ack) {
+      // "xác nhận đã xem cảnh báo đó" right after Jarvis told one: that alarm's code, on that cabinet (focus)
+      if (!ack.code && ack.cabinet === 'tủ đó' && s.ctx.focus.alarmCode) ack.code = s.ctx.focus.alarmCode;
       send('status', { state: 'tool', label: 'tìm cảnh báo' });
       const prop = await proposeAck(ack, { reads: s.reads, user, focus: s.ctx.focus, userText: text, signal: ac.signal }, guardState(), user.role, Date.now() - s.lastInteraction);
       if (prop.kind === 'refused') return fixedTurn(s, user, text, prop.say, send, speaker, extra);
@@ -642,9 +646,15 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
    * other new ones one sentence per 20 s, held back while muted. With voice, each sentence comes with its audio.
    */
   async function notices(s: ConsoleSession, user: User, spoken: boolean): Promise<{ level: 'P0' | 'P1'; text: string; mime?: string; data?: string }[]> {
+    // the session's own commands that ended after Jarvis stopped following them (late.ts)
+    const late = s.late.size ? await s.late.check(s.api, s.reads).catch(() => [] as string[]) : [];
     const page = await s.reads.alarms({ active: true, size: 100 }).catch(() => null);
-    if (!page) return [];
-    const { notices: out, fresh } = s.notices.look(page.items.filter((a) => a.active), s.lastInteraction);
+    const looked = page ? s.notices.look(page.items.filter((a) => a.active), s.lastInteraction) : { notices: [], fresh: 0 };
+    // "tủ đó" after a notice about one cabinet means that cabinet (the first said: critical ones come first)
+    const told = looked.notices.find((n) => n.focus)?.focus;
+    if (told) Object.assign(s.ctx.focus, told);
+    const out = [...looked.notices.map(({ level, text }) => ({ level, text })), ...late.map((text) => ({ level: 'P1' as const, text }))];
+    const fresh = looked.fresh;
     if (!out.length) return [];
     audit.write({ kind: 'proactive', userId: user.id, count: fresh, said: out.map((n) => n.text) });
     if (!spoken || !voice) return out;
@@ -850,6 +860,9 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     const live = s.live?.up ? s.live : null;
     const outcome = await sendAndFollow(s.api, p, { pollMs: live ? (deps.commandPollMs ?? LIVE_POLL_MS) : deps.commandPollMs, wait: live ? (id, ms) => live.waitFor(id, ms) : undefined, otp, onStatus: (st) => send('status', { state: 'command', label: STATUS_VI[st] ?? st }) });
     if (outcome.status !== 'not_sent') commandRate.record(user.id);
+    // not ended after 60 s: its result is told at a later look (late.ts)
+    const lateId = outcome.unfinished ? (outcome.batch?.id ?? outcome.commandId) : undefined;
+    if (lateId) s.late.add(lateId, p);
     audit.write({ kind: 'command_result', userId: user.id, pendingId: p.id, commandId: outcome.commandId, status: outcome.status, error: outcome.error, apiError: outcome.code });
     const after = outcome.status === 'confirmed' && p.command.type !== 'ACK_ALARM' ? ((await s.reads.cabinet(p.cabinet.id).catch(() => null))?.state as Record<string, unknown> | undefined) : undefined;
     let result = outcomeText(p, outcome, after);
