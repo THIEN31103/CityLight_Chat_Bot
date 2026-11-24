@@ -414,3 +414,16 @@ describe('get_alarm_trends (2026-11-23)', () => {
     expect(out.nhieu_nhat_theo_khu_vuc).toEqual([{ ten: 'Phường Bến Nghé', so: 2 }, { ten: 'Phường Đa Kao', so: 2 }]);
   });
 });
+
+describe('alarmLabel: an alarm said to a person (test 2026-11-24)', () => {
+  it('the title from the rules, then the detail without the raw device fields', async () => {
+    const { alarmLabel } = await import('../src/tools/read');
+    const titles = new Map([['E202', 'Mất kết nối PM_KEY'], ['E405', 'Lệch tải giữa các pha'], ['E201', 'Mất kết nối PLC_KEY']]);
+    expect(alarmLabel({ code: 'E202', message: 'LCLI=2, MCON=0: LTE không đọc được PM_KEY' }, titles)).toBe('E202 Mất kết nối PM_KEY (LTE không đọc được PM_KEY)');
+    expect(alarmLabel({ code: 'E405', message: 'Dòng L1 19,9 · L2 22 · L3 14,6 A, lệch 34 %' }, titles)).toBe('E405 Lệch tải giữa các pha (Dòng L1 19,9 · L2 22 · L3 14,6 A, lệch 34 %)');
+    expect(alarmLabel({ code: 'E201', message: 'Mất kết nối PLC_KEY' }, titles)).toBe('E201 Mất kết nối PLC_KEY');
+    // no rules (no right, server down): the message as before, still without the raw fields
+    expect(alarmLabel({ code: 'E202', message: 'LCLI=2, MCON=0: LTE không đọc được PM_KEY' })).toBe('E202 LTE không đọc được PM_KEY');
+    expect(alarmLabel({ code: 'E101', message: 'Mất dữ liệu telemetry' })).toBe('E101 Mất dữ liệu đo');
+  });
+});

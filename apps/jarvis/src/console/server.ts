@@ -649,7 +649,8 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     // the session's own commands that ended after Jarvis stopped following them (late.ts)
     const late = s.late.size ? await s.late.check(s.api, s.reads).catch(() => [] as string[]) : [];
     const page = await s.reads.alarms({ active: true, size: 100 }).catch(() => null);
-    const looked = page ? s.notices.look(page.items.filter((a) => a.active), s.lastInteraction) : { notices: [], fresh: 0 };
+    const titles = page ? await s.reads.alarmTitles() : undefined;
+    const looked = page ? s.notices.look(page.items.filter((a) => a.active), s.lastInteraction, Date.now(), titles) : { notices: [], fresh: 0 };
     // "tủ đó" after a notice about one cabinet means that cabinet (the first said: critical ones come first)
     const told = looked.notices.find((n) => n.focus)?.focus;
     if (told) Object.assign(s.ctx.focus, told);

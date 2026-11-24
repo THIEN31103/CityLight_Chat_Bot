@@ -6,7 +6,7 @@
 import type { RoleKey } from '@citylight/shared';
 import { hasPermission } from '@citylight/shared';
 import type { Alarm, Incident } from '@citylight/shared';
-import { editDistance, INCIDENT_STATUS_VI, resolveCabinet, SEVERITY_VI, viText, vnTime } from '../tools/read';
+import { alarmLabel, editDistance, INCIDENT_STATUS_VI, resolveCabinet, SEVERITY_VI, viText, vnTime } from '../tools/read';
 import type { ToolContext } from '../tools/registry';
 import { areaIn } from './finder';
 import { describeCommand, type Order } from './orders';
@@ -116,7 +116,9 @@ export async function proposeAck(
   const cab = { id: a.cabinetId, code: a.cabinetCode, name: a.cabinetName };
   const cmd: ActionCommand = { type: 'ACK_ALARM', params: { alarmId: a.id, alarmCode: a.code } };
   const tier = tierFor(cmd, idleMs);
-  const what = `${summaryOf(cmd, cab)} (${viText(a.message)}, từ ${vnTime(a.startedAt)})`;
+  const titles = await Promise.resolve().then(() => ctx.reads.alarmTitles({ signal: ctx.signal })).catch(() => undefined);
+  const label = alarmLabel(a, titles).slice(a.code.length + 1);
+  const what = `${summaryOf(cmd, cab)}: ${label}, từ ${vnTime(a.startedAt)}`;
   return {
     kind: 'pending',
     draft: { command: cmd, cabinet: cab, summary: what, tier, note: 'Xác nhận chỉ ghi nhận là đã xem; cảnh báo vẫn mở cho tới khi lỗi hết.' },

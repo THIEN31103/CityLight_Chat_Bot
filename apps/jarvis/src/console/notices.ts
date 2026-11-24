@@ -6,7 +6,7 @@
 // - The first look only remembers what is open: those belong to the shift report. Alarms that ended are not told.
 import type { Alarm } from '@citylight/shared';
 import { fold } from '../tools/names';
-import { viText, vnTime } from '../tools/read';
+import { alarmLabel, vnTime } from '../tools/read';
 
 export const REPEAT_MS = 120_000;
 export const P0_TIMES = 3;
@@ -34,10 +34,10 @@ function groupsOf(list: Alarm[]): Alarm[][] {
 const focusOf = (g: Alarm[]): Notice['focus'] =>
   g.length === 1 ? { cabinet: { id: g[0]!.cabinetId, code: g[0]!.cabinetCode, name: g[0]!.cabinetName }, alarmCode: g[0]!.code } : undefined;
 
-function sentence(head: string, g: Alarm[]): string {
+function sentence(head: string, g: Alarm[], titles?: Map<string, string>): string {
   const a = g[0]!;
   const where = g.length === 1 ? `tủ ${a.cabinetCode}` : `${g.length} tủ (${g.slice(0, 3).map((x) => x.cabinetCode).join(', ')}${g.length > 3 ? '…' : ''})`;
-  return `${head}: ${a.code} ${viText(a.message)} ở ${where}${a.districtName ? `, ${a.districtName}` : ''}, từ ${vnTime(a.startedAt)}.`;
+  return `${head}: ${alarmLabel(a, titles)} ở ${where}${a.districtName ? `, ${a.districtName}` : ''}, từ ${vnTime(a.startedAt)}.`;
 }
 
 export class NoticeState {
@@ -71,7 +71,7 @@ export class NoticeState {
    * open: the open alarms now. lastInteraction: the user's last question or click; a P0 told before it was answered.
    * Returns what to say, critical first, and how many alarms were new.
    */
-  look(open: Alarm[], lastInteraction: number, now = Date.now()): { notices: Notice[]; fresh: number } {
+  look(open: Alarm[], lastInteraction: number, now = Date.now(), titles?: Map<string, string>): { notices: Notice[]; fresh: number } {
     if (!this.seen) {
       this.seen = new Set(open.map((a) => a.id));
       return { notices: [], fresh: 0 };
@@ -90,13 +90,13 @@ export class NoticeState {
     const p0: Notice[] = [];
     const critical = fresh.filter((a) => a.severity === 'critical');
     for (const g of groupsOf(critical)) {
-      p0.push({ level: 'P0', text: sentence('Cảnh báo nghiêm trọng mới', g), focus: focusOf(g) });
+      p0.push({ level: 'P0', text: sentence('Cảnh báo nghiêm trọng mới', g, titles), focus: focusOf(g) });
       for (const a of g) this.p0.set(a.id, { times: 1, at: now });
     }
     const due = [...this.p0].filter(([id, t]) => now - t.at >= REPEAT_MS && !critical.some((a) => a.id === id));
     for (const g of groupsOf(due.map(([id]) => byId.get(id)!))) {
       const times = Math.max(...g.map((a) => this.p0.get(a.id)!.times)) + 1;
-      p0.push({ level: 'P0', text: sentence(`Nhắc lại lần ${times}/${P0_TIMES}, chưa ai xử lý cảnh báo nghiêm trọng`, g), focus: focusOf(g) });
+      p0.push({ level: 'P0', text: sentence(`Nhắc lại lần ${times}/${P0_TIMES}, chưa ai xử lý cảnh báo nghiêm trọng`, g, titles), focus: focusOf(g) });
       for (const a of g) this.p0.set(a.id, { times, at: now });
     }
     const out = p0.slice(0, MAX_P0);
@@ -119,7 +119,7 @@ export class NoticeState {
       if (out.some((n) => n.level === 'P1')) this.lastP1 = now;
     } else if (this.mutedUntil <= now && this.queue.length && now - this.lastP1 >= P1_GAP_MS) {
       const g = this.queue.shift()!;
-      out.push({ level: 'P1', text: sentence('Cảnh báo mới', g), focus: focusOf(g) });
+      out.push({ level: 'P1', text: sentence('Cảnh báo mới', g, titles), focus: focusOf(g) });
       this.lastP1 = now;
     }
     return { notices: out, fresh: fresh.length };

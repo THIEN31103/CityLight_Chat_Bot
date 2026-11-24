@@ -159,7 +159,8 @@ export async function startStubApi(users: StubUser[]): Promise<StubApi> {
     }
     if (req.method === 'GET' && p === '/command-batches/batch-1') {
       const n = batches.length ? batches[batches.length - 1]!.codes.split(',').length : 0;
-      return json(200, { id: 'batch-1', total: n, succeeded: n, failed: 0, offline: 0, pending: 0, finishedAt: new Date().toISOString(), requestedBy: 'someone' });
+      // the real detail is { batch, items } (apps/api/src/schedules.ts; a bare batch here hid a bug, test 2026-11-24)
+      return json(200, { batch: { id: 'batch-1', total: n, succeeded: n, failed: 0, offline: 0, pending: 0, finishedAt: new Date().toISOString(), requestedBy: 'someone' }, items: [] });
     }
     // alarm ack (2026-11-23): the one open alarm of the stub, once
     if (req.method === 'POST' && p === '/alarms/a1/ack') {

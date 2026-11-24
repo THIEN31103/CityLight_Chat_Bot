@@ -105,6 +105,19 @@ export class CityLightReads {
     return this.api.get<AlarmRule[]>('alarm-rules', undefined, o);
   }
 
+  private titles: { at: number; map: Map<string, string> } | null = null;
+  /** code → title ("E202" → "Mất kết nối PM_KEY"), read at most every 10 minutes; empty when it cannot be read */
+  async alarmTitles(o?: RequestOptions): Promise<Map<string, string>> {
+    if (this.titles && Date.now() - this.titles.at < 600_000) return this.titles.map;
+    try {
+      const map = new Map((await this.alarmRules(o)).map((x) => [x.code, x.title] as [string, string]));
+      this.titles = { at: Date.now(), map };
+      return map;
+    } catch {
+      return this.titles?.map ?? new Map();
+    }
+  }
+
   areaTree(o?: RequestOptions) {
     return this.api.get<{ areas: AreaNode[]; unassigned: number }>('areas/tree', undefined, o);
   }

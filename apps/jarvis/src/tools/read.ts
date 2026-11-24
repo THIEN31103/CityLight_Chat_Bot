@@ -85,6 +85,17 @@ export const viText = (s: string | null | undefined): string => {
   return out;
 };
 
+/**
+ * An alarm said to a person: its title from the alarm rules, then the server's detail without the raw device fields
+ * ("E202 Mất kết nối PM_KEY (LTE không đọc được PM_KEY)" instead of "E202 LCLI=2, MCON=0: LTE …", test 2026-11-24).
+ */
+export function alarmLabel(a: { code: string; message: string }, titles?: Map<string, string>): string {
+  const title = titles?.get(a.code);
+  const detail = viText(a.message).replace(/^(?:[A-Z][A-Z0-9_]*=[^,:]*,s*)*[A-Z][A-Z0-9_]*=[^:]*:s*/, '').trim();
+  if (!title) return `${a.code} ${detail || viText(a.message)}`;
+  return detail && fold(detail) !== fold(title) ? `${a.code} ${title} (${detail})` : `${a.code} ${title}`;
+}
+
 const alarmBrief = (a: Alarm) => ({
   code: a.code, severity: SEVERITY_VI[a.severity], cabinet: a.cabinetCode, cabinetName: a.cabinetName, district: a.districtName,
   message: viText(a.message), since: vnTime(a.startedAt), acked: !!a.ackedAt,
@@ -727,7 +738,7 @@ const getShiftReport: ToolDef<{ area?: string }> = {
       ...(lo_lenh_12_gio ? { lo_lenh_12_gio } : {}),
       ...(khu_vuc_nhieu_canh_bao ? { khu_vuc_nhieu_canh_bao } : {}),
       ghi_chu:
-        'Đây là bản tin đầu ca. Nói theo thứ tự: số tủ và số mất kết nối; cảnh báo (nặng nhất trước); sự cố quá hạn; tủ lệch lịch; lệnh và lô lệnh 12 giờ qua (bao nhiêu, mấy cái lỗi). Phần nào bằng 0 thì nói gọn "không có". Không nói ai gửi lệnh. Không đoán nguyên nhân.',
+        'Đây là bản tin đầu ca. Bắt đầu bằng tên khu vực (khu_vuc). Nói theo thứ tự: số tủ và số mất kết nối; cảnh báo: số theo mức, rồi từng cảnh báo trong nang_nhat (mã, tên lỗi, tủ); sự cố quá hạn; tủ lệch lịch; lệnh và lô lệnh 12 giờ qua (bao nhiêu, mấy cái lỗi). Phần nào bằng 0 thì nói gọn "không có". Không nói ai gửi lệnh. Không đoán nguyên nhân.',
     };
   },
 };
@@ -860,7 +871,8 @@ const getAlarmTrends: ToolDef<{ area?: string; days: number }> = {
       bay_ngay_qua_so_voi_bay_ngay_truoc: { bay_ngay_qua: last7, bay_ngay_truoc: prev7, xu_huong: last7 > prev7 * 1.2 && last7 - prev7 >= 2 ? 'tăng' : prev7 > last7 * 1.2 && prev7 - last7 >= 2 ? 'giảm' : 'gần như không đổi' },
       thoi_gian_mo_trung_vi_gio: hours.length ? Math.round(hours[Math.floor(hours.length / 2)]! * 10) / 10 : null,
       con_mo: rows.filter((a) => a.active).length,
-      ghi_chu: 'Chỉ có số cảnh báo; không có số giờ mất kết nối hay điện năng theo ngày. Nói con số, không đoán nguyên nhân.',
+      // "khu vực Phú Nhuận có nhiều lỗi nhất" with no number (test 2026-11-24)
+      ghi_chu: 'Chỉ có số cảnh báo; không có số giờ mất kết nối hay điện năng theo ngày. Trả lời kèm con số: khu vực (hoặc mã) đứng đầu với số cảnh báo, 2 cái tiếp theo, và xu hướng 7 ngày. Không đoán nguyên nhân.',
     };
   },
 };

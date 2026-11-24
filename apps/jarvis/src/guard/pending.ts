@@ -186,7 +186,8 @@ async function sendBatch(
     await pause(opts, b.id);
     if (opts.signal?.aborted) break;
     try {
-      b = await api.get<Batch>(`command-batches/${encodeURIComponent(b.id)}`, undefined, { signal: opts.signal });
+      // GET /command-batches/:id answers { batch, items } (apps/api/src/schedules.ts detail); POST answers the batch itself
+      b = unwrapBatch(await api.get<Batch | { batch: Batch }>(`command-batches/${encodeURIComponent(b.id)}`, undefined, { signal: opts.signal }));
     } catch (e) {
       if (opts.signal?.aborted) break;
       if (!(e instanceof ApiProblem)) throw e;
@@ -194,6 +195,9 @@ async function sendBatch(
   }
   return b.finishedAt || b.pending === 0 ? { status: 'confirmed', batch: pick(b) } : { status: 'timeout', batch: pick(b), unfinished: true };
 }
+
+/** the batch out of GET /command-batches/:id ({ batch, items }), or the batch itself */
+export const unwrapBatch = <B>(r: B | { batch: B }): B => (r && typeof r === 'object' && 'batch' in r ? r.batch : r);
 
 export interface BatchPreview { total: number; offline: number; blocked: number; unsupported: number; max: number | null }
 export type PreviewBatch = (body: { kind: 'control'; command: { type: string; params: Record<string, unknown> }; codes: string }) => Promise<BatchPreview | null>;

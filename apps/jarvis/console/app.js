@@ -350,6 +350,8 @@ function showChoices(bubble, items) {
     row.append(b);
   }
   bubble.after(row);
+  // the buttons sit under the answer: bring them into view (test 2026-11-24: they were hidden below the fold)
+  row.scrollIntoView({ block: 'end' });
 }
 
 /**

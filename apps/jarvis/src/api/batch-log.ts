@@ -8,6 +8,9 @@ export function readBatchLog(api: ApiClient, o?: RequestOptions): Promise<Comman
 }
 
 /** one batch's progress (GET /command-batches/:id), to tell its result after Jarvis stopped following it */
-export function readBatch(api: ApiClient, id: string, o?: RequestOptions) {
-  return api.get<{ id: string; total: number; succeeded: number; failed: number; offline: number; pending: number; finishedAt: string | null }>(`command-batches/${encodeURIComponent(id)}`, undefined, o);
+export async function readBatch(api: ApiClient, id: string, o?: RequestOptions) {
+  type B = { id: string; total: number; succeeded: number; failed: number; offline: number; pending: number; finishedAt: string | null };
+  // the server answers { batch, items } (apps/api/src/schedules.ts detail)
+  const r = await api.get<B | { batch: B }>(`command-batches/${encodeURIComponent(id)}`, undefined, o);
+  return 'batch' in r ? r.batch : r;
 }
