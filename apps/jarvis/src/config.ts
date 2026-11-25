@@ -107,6 +107,8 @@ const Env = z.object({
   // every role that can switch lights must have 2FA to sign in to Jarvis, even when the server does not enforce it
   // (AUTH_REQUIRE_2FA=false on the codespace); false only for tests without 2FA
   JARVIS_REQUIRE_2FA: bool(true),
+  // encrypts the secrets of Jarvis's own 2FA (32 bytes, hex or base64); empty: a key file created once in the data folder
+  JARVIS_SECRET_KEY: z.string().optional(),
 });
 
 export type Config = ReturnType<typeof loadConfig>;
@@ -160,5 +162,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     debugAudio: e.JARVIS_DEBUG_AUDIO,
     liveEvents: e.JARVIS_LIVE_EVENTS,
     require2fa: e.JARVIS_REQUIRE_2FA,
+    secretKey: e.JARVIS_SECRET_KEY,
   };
 }

@@ -20,6 +20,11 @@ export class ConsoleSession {
   readonly reads: CityLightReads;
   user: User | null = null;
   pending2fa = false;
+  /**
+   * Jarvis's own second factor, between the password and the chat (2026-11-25): 'setup' shows a new key for the
+   * authenticator app, 'code' asks its code. The account is not signed in to Jarvis until it is answered.
+   */
+  jarvis2fa: { user: User; mode: 'setup' | 'code'; secret?: Buffer; tries: number } | null = null;
   readonly ctx = new ShiftContext();
   conversationId: string | null = null;
   busy: AbortController | null = null;

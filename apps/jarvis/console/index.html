@@ -19,7 +19,13 @@
         <label>Mật khẩu<input id="password" type="password" autocomplete="current-password" required></label>
       </div>
       <div id="step-2fa" hidden>
-        <p class="hint">Nhập mã 6 số trong ứng dụng xác thực (hoặc mã khôi phục).</p>
+        <!-- Jarvis's own second factor, first sign-in (2026-11-25): the key to add to the authenticator app -->
+        <div id="setup-2fa" class="setup-2fa" hidden>
+          <p><strong>Bật xác thực 2 lớp cho Jarvis</strong> (một lần). Mở ứng dụng xác thực trên điện thoại (Google Authenticator, Microsoft Authenticator…), chọn <em>Thêm → Nhập khóa thiết lập</em>, đặt tên "Jarvis CityLight", loại <em>theo thời gian</em>, rồi nhập khóa:</p>
+          <code id="setup-key" class="setup-key"></code>
+          <p class="small">Đang mở Jarvis trên chính điện thoại đó: <a id="setup-link" href="#">bấm vào đây để thêm</a>.</p>
+        </div>
+        <p id="hint-2fa" class="hint">Nhập mã 6 số trong ứng dụng xác thực (hoặc mã khôi phục).</p>
         <label>Mã xác thực<input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="20"></label>
       </div>
       <p id="login-error" class="error" role="alert"></p>
@@ -95,7 +101,7 @@
       </nav>
       <div class="pane" id="pane-access">
         <p class="hint">Quản trị viên luôn dùng được Jarvis. Thu quyền một quản lý không thu quyền những người quản lý đó đã cấp.</p>
-        <div class="table-wrap"><table id="access-table"><thead><tr><th>Người dùng</th><th>Vai trò</th><th>Dùng Jarvis</th><th>Được cấp quyền</th><th>Xem chat</th></tr></thead><tbody></tbody></table></div>
+        <div class="table-wrap"><table id="access-table"><thead><tr><th>Người dùng</th><th>Vai trò</th><th>Dùng Jarvis</th><th>Được cấp quyền</th><th>Xem chat</th><th title="Xác thực 2 lớp riêng của Jarvis, cho tài khoản chưa bật 2 lớp trên CityLight">2 lớp Jarvis</th></tr></thead><tbody></tbody></table></div>
         <p id="access-msg" class="hint"></p>
       </div>
       <div class="pane" id="pane-settings" hidden>

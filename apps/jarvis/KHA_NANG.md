@@ -11,7 +11,10 @@ Tài liệu này dành cho người dùng (vận hành viên, quản lý, quản
 1. Đăng nhập web CityLight như bình thường.
 2. Bấm nút **✦** để mở Jarvis. Jarvis dùng chính tài khoản và quyền của bạn trên CityLight.
 3. Quản trị viên luôn dùng được. Các vai trò khác cần được cấp quyền trong mục **Quản trị → Quyền dùng Jarvis**.
-4. **Tài khoản điều khiển được đèn (quản trị viên, quản lý, vận hành viên) phải bật xác thực 2 lớp** trên web CityLight (tên ở góc phải → Tài khoản cá nhân) mới vào được Jarvis; khi đăng nhập Jarvis hỏi thêm mã 6 số trong ứng dụng xác thực. Tài khoản chỉ xem thì không bắt buộc.
+4. **Đăng nhập Jarvis luôn có xác thực 2 lớp**, ngay trên trang Jarvis:
+   - Tài khoản đã bật 2 lớp trên CityLight: nhập mã của CityLight như trên web.
+   - Tài khoản chưa bật: lần đầu, Jarvis hiện một **khóa thiết lập**. Mở ứng dụng xác thực trên điện thoại (Google Authenticator, Microsoft Authenticator…) → Thêm → Nhập khóa thiết lập, đặt tên "Jarvis CityLight", nhập khóa, rồi gõ mã 6 số ứng dụng hiện. Các lần sau chỉ cần gõ mã "Jarvis CityLight". Mã này cũng là mã OTP cho lệnh nhiều tủ.
+   - Gõ sai mã 5 lần liền thì bị khóa 15 phút. Mất điện thoại: nhờ quản trị viên bấm **Đặt lại** ở cột "2 lớp Jarvis" (Quản trị → Quyền dùng Jarvis), lần đăng nhập sau sẽ thiết lập khóa mới.
 
 Jarvis chỉ thấy những tủ, khu vực mà tài khoản của bạn được xem trên CityLight. Jarvis không bao giờ thấy được nhiều hơn.
 
@@ -74,7 +77,7 @@ Nói hoặc gõ "xác nhận đã xem cảnh báo E201 tủ TL01.0026" (hoặc "
 
 ### Lệnh nhiều tủ
 
-Nói "tắt hết đèn quận 1", "bật hết đèn phường Bến Nghé". Jarvis chỉ lấy các tủ được phép trong khu vực đó, nói số tủ, số tủ mất kết nối, rồi hiện thẻ **lệnh nhiều tủ**: nhập mã **OTP 6 số** trong ứng dụng xác thực và bấm **Xác nhận** (ô để trống thì không gửi). Tài khoản phải bật xác thực 2 lớp trên web CityLight (tên góc phải → Tài khoản cá nhân), rồi đăng nhập lại Jarvis; chưa bật thì Jarvis không tạo thẻ lệnh nhiều tủ. Nói hay gõ "xác nhận" không gửi được lệnh nhiều tủ. Mã sai thì thẻ hiện lại để nhập lại. Cần quyền chạy lệnh hàng loạt.
+Nói "tắt hết đèn quận 1", "bật hết đèn phường Bến Nghé". Jarvis chỉ lấy các tủ được phép trong khu vực đó, nói số tủ, số tủ mất kết nối, rồi hiện thẻ **lệnh nhiều tủ**: nhập mã **OTP 6 số** trong ứng dụng xác thực và bấm **Xác nhận** (ô để trống thì không gửi). Mã là của CityLight nếu tài khoản bật 2 lớp trên CityLight, còn lại là mã "Jarvis CityLight" (mục 1). Nói hay gõ "xác nhận" không gửi được lệnh nhiều tủ. Mã sai thì thẻ hiện lại để nhập lại. Cần quyền chạy lệnh hàng loạt.
 
 ### Không nhớ mã tủ
 

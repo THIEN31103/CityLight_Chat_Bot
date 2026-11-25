@@ -104,10 +104,21 @@ function render() {
   if (!session?.signedIn) {
     $('#app').hidden = true;
     $('#login').hidden = false;
-    $('#step-password').hidden = !!session?.pending2fa;
-    $('#step-2fa').hidden = !session?.pending2fa;
-    $('#login-btn').textContent = session?.pending2fa ? 'Xác nhận' : 'Đăng nhập';
-    (session?.pending2fa ? $('#code') : $('#email')).focus();
+    // CityLight's 2FA challenge, or Jarvis's own (a new key to add first, or only the code)
+    const j = session?.jarvis2fa;
+    const asking = !!session?.pending2fa || !!j;
+    $('#step-password').hidden = asking;
+    $('#step-2fa').hidden = !asking;
+    $('#setup-2fa').hidden = j?.mode !== 'setup';
+    if (j?.mode === 'setup') {
+      $('#setup-key').textContent = j.key;
+      $('#setup-link').href = j.uri;
+    }
+    $('#hint-2fa').textContent = j?.mode === 'setup'
+      ? 'Rồi nhập mã 6 số ứng dụng vừa hiện cho "Jarvis CityLight".'
+      : j ? 'Nhập mã 6 số của "Jarvis CityLight" trong ứng dụng xác thực.' : 'Nhập mã 6 số trong ứng dụng xác thực (hoặc mã khôi phục).';
+    $('#login-btn').textContent = asking ? 'Xác nhận' : 'Đăng nhập';
+    (asking ? $('#code') : $('#email')).focus();
     return;
   }
   $('#login').hidden = true;
@@ -131,7 +142,7 @@ $('#login-form').addEventListener('submit', async (e) => {
   $('#login-btn').disabled = true;
   try {
     if (!session?.csrf) await refresh();
-    if (session.pending2fa) {
+    if (session.pending2fa || session.jarvis2fa) {
       session = await api('POST', '/api/2fa', { code: $('#code').value.trim() });
     } else {
       const r = await api('POST', '/api/login', { email: $('#email').value.trim(), password: $('#password').value });
@@ -144,9 +155,11 @@ $('#login-form').addEventListener('submit', async (e) => {
     render();
   } catch (err) {
     $('#login-error').textContent = err.message;
-    if (['challenge_expired', 'no_challenge', 'account_locked', 'jarvis_not_granted', 'totp_setup_required'].includes(err.code)) {
+    if (['challenge_expired', 'no_challenge', 'account_locked', 'jarvis_not_granted', 'totp_setup_required', 'jarvis_2fa_locked', 'jarvis_2fa_failed'].includes(err.code)) {
       session.pending2fa = false;
+      session.jarvis2fa = null;
       render();
+      $('#login-error').textContent = err.message;
     }
   } finally {
     $('#login-btn').disabled = false;
@@ -857,9 +870,25 @@ async function loadAccess() {
           });
           return el('td', {}, cb);
         };
+        // Jarvis's own 2FA (2026-11-25): on or not; a reset (lost phone) makes the next sign-in set up a new key
+        const twofaCell = el('td', {}, u.jarvis2fa ? 'Đã bật' : 'Chưa');
+        if (u.jarvis2fa && u.canReset2fa) {
+          const reset = el('button', { type: 'button', class: 'ghost small-btn' }, 'Đặt lại');
+          reset.addEventListener('click', async () => {
+            if (!confirm(`Đặt lại xác thực 2 lớp Jarvis của ${u.fullName}? Lần đăng nhập sau, tài khoản này phải thêm khóa mới vào ứng dụng xác thực.`)) return;
+            try {
+              await api('POST', `/api/admin/users/${encodeURIComponent(u.id)}/reset-2fa`, {});
+              twofaCell.replaceChildren('Chưa');
+              msg.textContent = `Đã đặt lại xác thực 2 lớp Jarvis của ${u.fullName}.`;
+            } catch (err) {
+              msg.textContent = err.message;
+            }
+          });
+          twofaCell.append(' ', reset);
+        }
         return el('tr', {},
           el('td', {}, u.fullName, u.self ? ' (bạn)' : '', el('span', { class: 'sub' }, u.email)),
-          el('td', {}, u.roleLabel), box('canUse'), box('canGrant'), box('canViewChats'));
+          el('td', {}, u.roleLabel), box('canUse'), box('canGrant'), box('canViewChats'), twofaCell);
       }),
     );
   } catch (err) {

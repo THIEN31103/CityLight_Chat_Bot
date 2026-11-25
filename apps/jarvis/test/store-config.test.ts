@@ -5,9 +5,9 @@ import { addTokenUsage, openDb, purgeHistory, schemaVersion, tokensToday, vnDay 
 describe('store (node:sqlite)', () => {
   it('migrates a fresh database to the latest schema', () => {
     const db = openDb(':memory:');
-    expect(schemaVersion(db)).toBe(2);
+    expect(schemaVersion(db)).toBe(3);
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as { name: string }[]).map((t) => t.name);
-    expect(tables).toEqual(expect.arrayContaining(['access', 'conversations', 'messages', 'settings', 'token_usage', 'users_seen']));
+    expect(tables).toEqual(expect.arrayContaining(['access', 'conversations', 'messages', 'settings', 'token_usage', 'users_seen', 'jarvis_totp']));
   });
 
   it('counts tokens per Vietnam day: 23:30 UTC is already the next day in Vietnam', () => {

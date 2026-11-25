@@ -34,7 +34,7 @@ beforeAll(async () => {
   llm = new FakeLlm();
   auditDir = mkdtempSync(path.join(tmpdir(), 'jarvis-audit-'));
   const cfg = loadConfig({ CITYLIGHT_API_BASE: stub.base, LLM_PROVIDER: 'fake', JARVIS_DAILY_TOKEN_CAP_MAX: '0' });
-  const { server } = createConsoleServer({ cfg, db, llm, audit: new AuditLog(auditDir) });
+  const { server } = createConsoleServer({ cfg, db, llm, audit: new AuditLog(auditDir), secretKey: Buffer.alloc(32, 7) });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   close = () => server.close();
@@ -110,19 +110,53 @@ describe('console', () => {
     expect((await b.call('GET', '/api/session')).data.signedIn).toBe(false);
   });
 
-  it('a role that can switch lights needs 2FA for Jarvis even when the server lets it in without (user report 2026-11-25)', async () => {
-    for (const [email, password] of [['op-no2fa@demo.vn', 'mat-khau-op-2'], ['adm-no2fa@demo.vn', 'mat-khau-adm-2']]) {
-      const b = new Browser();
-      const r = await b.signIn(email!, password!);
-      expect(r.status).toBe(403);
-      expect(r.data.code).toBe('totp_setup_required');
-      expect(r.data.message).toMatch(/bật xác thực 2 lớp trên web CityLight/);
-      expect((await b.call('GET', '/api/session')).data.signedIn).toBe(false);
-    }
-    // a viewer cannot switch anything: not asked for 2FA here (the grant decides if it may use Jarvis)
+  it('no CityLight 2FA: Jarvis asks its own right on its sign-in page, first a key to add, then a code (user request 2026-11-25)', async () => {
+    const { base32Decode, hotp, totpStep } = await import('../src/auth/totp');
+    const b = new Browser();
+    const first = await b.signIn('adm-no2fa@demo.vn', 'mat-khau-adm-2');
+    expect(first.status).toBe(200);
+    expect(first.data.signedIn).toBe(false);
+    expect(first.data.jarvis2fa).toMatchObject({ mode: 'setup', key: expect.stringMatching(/^[A-Z2-7]{4}( [A-Z2-7]{4})+$/), uri: expect.stringMatching(/^otpauth:\/\/totp\/Jarvis%20CityLight%3Aadm-no2fa%40demo\.vn\?secret=/) });
+    // nothing works before the code
+    expect((await b.chat('Hệ thống thế nào?')).status).toBe(401);
+    const secret = base32Decode(first.data.jarvis2fa.key);
+    const step = totpStep(Date.now());
+    const wrong = await b.call('POST', '/api/2fa', { code: hotp(secret, step + 5) });
+    expect(wrong.status).toBe(422);
+    expect(wrong.data.code).toBe('invalid_totp');
+    const ok = await b.call('POST', '/api/2fa', { code: hotp(secret, step) });
+    expect(ok.data.signedIn).toBe(true);
+    // the next sign-in only asks the code; a code works once
+    await b.call('POST', '/api/logout', {});
+    const again = await b.signIn('adm-no2fa@demo.vn', 'mat-khau-adm-2');
+    expect(again.data.jarvis2fa).toEqual({ mode: 'code' });
+    expect((await b.call('POST', '/api/2fa', { code: hotp(secret, step) })).data.code).toBe('invalid_totp');
+    expect((await b.call('POST', '/api/2fa', { code: hotp(secret, step + 1) })).data.signedIn).toBe(true);
+    // nothing about the secret in the audit log
+    expect(readdirSync(auditDir).map((f) => readFileSync(path.join(auditDir, f), 'utf8')).join('')).not.toContain(first.data.jarvis2fa.key.replace(/ /g, ''));
+  });
+
+  it('Jarvis 2FA: 5 wrong codes lock it 15 minutes; an admin resets it and the next sign-in sets up a new key', async () => {
+    const b = new Browser();
+    await b.call('POST', '/api/logout', {}).catch(() => undefined);
+    await b.signIn('adm-no2fa@demo.vn', 'mat-khau-adm-2');
+    let last: { status: number; data: any } = { status: 0, data: null };
+    for (let k = 0; k < 5; k++) last = await b.call('POST', '/api/2fa', { code: '000000' });
+    expect(last.status).toBe(423);
+    expect(last.data.code).toBe('jarvis_2fa_locked');
+    const locked = await b.signIn('adm-no2fa@demo.vn', 'mat-khau-adm-2');
+    expect(locked.status).toBe(423);
+    // the admin's list says it is on, and may reset it
+    const adm = new Browser();
+    await adm.signIn('admin@demo.vn', 'mat-khau-admin-1', '111111');
+    const row = (await adm.call('GET', '/api/admin/users')).data.find((u: any) => u.id === 'adm-no2fa');
+    expect(row).toMatchObject({ jarvis2fa: true, canReset2fa: true });
+    expect((await adm.call('POST', '/api/admin/users/adm-no2fa/reset-2fa', {})).data).toEqual({ jarvis2fa: false, removed: true });
+    const fresh = await b.signIn('adm-no2fa@demo.vn', 'mat-khau-adm-2');
+    expect(fresh.data.jarvis2fa.mode).toBe('setup');
+    // a user who may not grant cannot reset
     const v = new Browser();
-    const rv = await v.signIn('view@demo.vn', 'mat-khau-view-1');
-    expect(rv.data.code).not.toBe('totp_setup_required');
+    expect((await v.call('POST', '/api/admin/users/adm-no2fa/reset-2fa', {})).status).toBeGreaterThanOrEqual(400);
   });
 
   it('an operator without a grant passes 2FA but cannot open Jarvis', async () => {

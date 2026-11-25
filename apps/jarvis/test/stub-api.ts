@@ -152,7 +152,8 @@ export async function startStubApi(users: StubUser[]): Promise<StubApi> {
     }
     if (req.method === 'POST' && p === '/command-batches') {
       const b = await body(req);
-      if (b.otp !== '123456') return problem(res, 422, 'invalid_otp', 'Mã xác thực không đúng hoặc đã dùng');
+      // like reauthTotp with AUTH_REQUIRE_2FA=false: an account without 2FA is not asked for a code
+      if (user.totp && b.otp !== '123456') return problem(res, 422, 'invalid_otp', 'Mã xác thực không đúng hoặc đã dùng');
       batches.push({ codes: String(b.codes), command: b.command });
       const n = String(b.codes).split(',').length;
       return json(202, { id: 'batch-1', total: n, succeeded: 0, failed: 0, offline: 0, pending: n, finishedAt: null, requestedBy: 'someone' });

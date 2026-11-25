@@ -12,6 +12,7 @@ export type AuditKind =
   | 'access_change' | 'settings_change' | 'view_chat' | 'delete_chat'
   | 'delete_all_chats'
   | 'rename_chat' | 'token_cap_hit' | 'rate_limited' | 'reauth' | 'proactive'
+  | 'jarvis_2fa_asked' | 'jarvis_2fa_setup' | 'jarvis_2fa_wrong' | 'jarvis_2fa_reset'
   // milestone 4: every pending action, who confirmed it how, and what the command did
   | 'pending_created' | 'pending_confirmed' | 'pending_cancelled' | 'pending_refused' | 'action_refused' | 'command_result';
 

@@ -29,6 +29,8 @@ import { toSpeech } from '../voice/speech-text';
 import { pcmToWav } from '../voice/groq-stt';
 import { ConsoleSession, RateLimiter, SessionStore } from './session';
 import { parseMute } from './notices';
+import { Jarvis2fa, MAX_FAILS as MAX_2FA_FAILS, secretKey } from '../store/jarvis2fa';
+import { groupedKey, otpauthUrl } from '../auth/totp';
 import { LiveFeed, nodeWs, type WsFactory } from '../api/live';
 import { FILLER, Speaker } from './speaker';
 import { cabinetRefOf, isControlCapabilityQuestion } from '../brain/router';
@@ -71,6 +73,8 @@ export interface ConsoleDeps {
   fetch?: typeof fetch;
   /** tests: how often a sent command is polled (default 2 s) */
   commandPollMs?: number;
+  /** tests: the key that encrypts Jarvis's own 2FA secrets (default: JARVIS_SECRET_KEY or a key file in the data folder) */
+  secretKey?: Buffer;
   /** the server's live events (socket.io over WebSocket); default: Node's WebSocket when JARVIS_LIVE_EVENTS is on, null = none */
   liveWs?: WsFactory | null;
   /** speech engines; default: the local sidecar (voice/sidecar.py) when voice is enabled, none otherwise */
@@ -151,9 +155,22 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
 
   const actorOf = (u: User): Actor => ({ id: u.id, role: u.role, access: getAccess(db, u.id) });
 
+  const twofa = new Jarvis2fa(db, (() => {
+    let key: Buffer | null = deps.secretKey ?? null;
+    return () => (key ??= secretKey(cfg.dataDir, cfg.secretKey));
+  })());
+
+  /** Jarvis's own second factor as the sign-in page shows it: a new key to add, or only the code box */
+  function jarvis2faView(s: ConsoleSession) {
+    const j = s.jarvis2fa!;
+    return j.mode === 'setup'
+      ? { mode: 'setup' as const, key: groupedKey(j.secret!), uri: otpauthUrl(j.user.email, j.secret!) }
+      : { mode: 'code' as const };
+  }
+
   function sessionView(s: ConsoleSession | null) {
     const st = settings();
-    if (!s?.user) return { signedIn: false, pending2fa: !!s?.pending2fa, notice: ADMIN_NOTICE, csrf: s?.csrf ?? null };
+    if (!s?.user) return { signedIn: false, pending2fa: !!s?.pending2fa, ...(s?.jarvis2fa ? { jarvis2fa: jarvis2faView(s) } : {}), notice: ADMIN_NOTICE, csrf: s?.csrf ?? null };
     const a = actorOf(s.user);
     const r = rights(a);
     return {
@@ -182,9 +199,8 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       await s.api.logout().catch(() => undefined);
       throw new HttpError(403, 'password_change_required', 'Tài khoản đang dùng mật khẩu tạm: đăng nhập web CityLight để đổi mật khẩu trước khi dùng Jarvis');
     }
-    // 2FA for every role that can switch lights, whatever the server enforces (user report 2026-11-25: on the codespace,
-    // AUTH_REQUIRE_2FA=false, the admin signed in with the password alone)
-    if (!user.totpEnabled && (user.totpRequired || (cfg.require2fa && hasPermission(user.role, 'cabinet.control')))) {
+    // the server itself requires 2FA for this account and it is not set up: the API refuses everything until it is
+    if (user.totpRequired && !user.totpEnabled) {
       await s.api.logout().catch(() => undefined);
       throw new HttpError(403, 'totp_setup_required', 'Tài khoản cần bật xác thực 2 lớp trên web CityLight trước khi dùng Jarvis (tên ở góc phải → Tài khoản cá nhân), rồi đăng nhập lại.');
     }
@@ -195,11 +211,55 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       await s.api.logout().catch(() => undefined);
       throw new HttpError(403, 'jarvis_not_granted', 'Tài khoản chưa được cấp quyền dùng Jarvis. Liên hệ quản trị viên.');
     }
+    // no CityLight 2FA (the server does not enforce it, AUTH_REQUIRE_2FA=false on the codespace): Jarvis asks its own
+    // second factor right here, on the Jarvis sign-in page (user request 2026-11-25)
+    if (cfg.require2fa && !user.totpEnabled) {
+      const locked = twofa.lockedFor(user.id);
+      if (locked) {
+        await s.api.logout().catch(() => undefined);
+        throw new HttpError(423, 'jarvis_2fa_locked', `Nhập sai mã xác thực quá nhiều lần. Thử lại sau ${locked} phút.`);
+      }
+      s.jarvis2fa = twofa.enabled(user.id) ? { user, mode: 'code', tries: 0 } : { user, mode: 'setup', secret: twofa.newSecret(), tries: 0 };
+      audit.write({ kind: 'jarvis_2fa_asked', userId: user.id, role: user.role, mode: s.jarvis2fa.mode });
+      return;
+    }
+    completeLogin(s, user);
+  }
+
+  function completeLogin(s: ConsoleSession, user: User) {
+    s.jarvis2fa = null;
     s.user = user;
     s.newConversation();
     startLive(s);
     audit.write({ kind: 'login', userId: user.id, role: user.role });
   }
+
+  /** the code of Jarvis's own second factor at sign-in: the first one confirms a new key, later ones are checked */
+  async function answerJarvis2fa(s: ConsoleSession, code: string) {
+    const j = s.jarvis2fa!;
+    const giveUp = async (status: number, errCode: string, message: string) => {
+      s.jarvis2fa = null;
+      await s.api.logout().catch(() => undefined);
+      throw new HttpError(status, errCode, message);
+    };
+    if (j.mode === 'setup') {
+      if (twofa.confirmSetup(j.user.id, j.secret!, code)) {
+        audit.write({ kind: 'jarvis_2fa_setup', userId: j.user.id, role: j.user.role });
+        return completeLogin(s, j.user);
+      }
+      audit.write({ kind: 'jarvis_2fa_wrong', userId: j.user.id, mode: 'setup' });
+      if (++j.tries >= MAX_2FA_FAILS) return giveUp(401, 'jarvis_2fa_failed', 'Sai mã nhiều lần. Đăng nhập lại để lấy khóa mới.');
+      throw new HttpError(422, 'invalid_totp', 'Mã chưa đúng. Kiểm tra đã thêm đúng khóa, giờ trên điện thoại đúng, rồi nhập mã đang hiện.');
+    }
+    const r = twofa.check(j.user.id, code);
+    if (r === 'ok') return completeLogin(s, j.user);
+    audit.write({ kind: 'jarvis_2fa_wrong', userId: j.user.id, mode: 'code' });
+    if (r === 'locked') return giveUp(423, 'jarvis_2fa_locked', `Nhập sai mã xác thực quá nhiều lần. Thử lại sau ${twofa.lockedFor(j.user.id) || 15} phút.`);
+    throw new HttpError(422, 'invalid_totp', 'Mã xác thực không đúng. Nhập mã đang hiện trong ứng dụng (mục Jarvis CityLight).');
+  }
+
+  /** the account as the action guard sees it: Jarvis's own 2FA counts as 2FA (a batch needs one, D85) */
+  const with2fa = (user: User): User => (user.totpEnabled || !twofa.enabled(user.id) ? user : { ...user, totpEnabled: true });
 
   /**
    * Listens to the server's live events as this user (spec 7 / 11): a new or ended alarm tells the console to look now
@@ -635,7 +695,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     }
     if (!order) return false;
     send('status', { state: 'tool', label: 'chuẩn bị lệnh' });
-    const prop = await propose(order, { reads: s.reads, user, focus: s.ctx.focus, userText: text, signal: ac.signal }, guardState(), user.role, Date.now() - s.lastInteraction, Date.now(), batchPreviewer(s.api, ac.signal));
+    const prop = await propose(order, { reads: s.reads, user: with2fa(user), focus: s.ctx.focus, userText: text, signal: ac.signal }, guardState(), user.role, Date.now() - s.lastInteraction, Date.now(), batchPreviewer(s.api, ac.signal));
     if (prop.kind === 'refused') {
       if (prop.askCabinet) s.finding = { command: order.command, filter: {}, choices: [], at: Date.now() };
       audit.write({ kind: 'action_refused', userId: user.id, text, reason: prop.say });
@@ -903,8 +963,24 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         return {
           id: p.id, fullName: p.fullName, email: p.email, role: p.role, roleLabel: ROLE_LABELS[p.role], self: p.id === actor.id, access: effective,
           editable: Object.fromEntries(flags.map((f) => [f, p.role !== 'admin' && canGrant(actor, { id: p.id, role: p.role }, f)])),
+          // Jarvis's own 2FA (2026-11-25): set up or not, and whether this actor may reset it (lost phone)
+          jarvis2fa: twofa.enabled(p.id),
+          canReset2fa: may2faReset(actor, { id: p.id, role: p.role }),
         };
       });
+  }
+
+  /** an admin for anyone, a manager with the right to grant for those it may grant Jarvis to */
+  const may2faReset = (actor: Actor, target: { id: string; role: RoleKey }) => actor.role === 'admin' || canGrant(actor, target, 'canUse');
+
+  async function adminReset2fa(s: ConsoleSession, targetId: string) {
+    const { actor, user } = requireUser(s);
+    const target = (await s.reads.users()).find((p) => p.id === targetId);
+    if (!target) throw new HttpError(404, 'not_found', 'Không tìm thấy tài khoản');
+    if (!may2faReset(actor, target)) throw new HttpError(403, 'forbidden', 'Bạn không được đặt lại xác thực Jarvis cho tài khoản này');
+    const removed = twofa.reset(target.id);
+    audit.write({ kind: 'jarvis_2fa_reset', userId: user.id, role: user.role, target: target.id, targetRole: target.role, removed });
+    return { jarvis2fa: false, removed };
   }
 
   async function adminSetAccess(s: ConsoleSession, targetId: string, body: Record<string, unknown>) {
@@ -990,6 +1066,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       const password = typeof b.password === 'string' ? b.password : '';
       if (!email || !password) throw new HttpError(422, 'missing', 'Nhập email và mật khẩu');
       s.user = null;
+      s.jarvis2fa = null;
       s.endLive();
       const r = await s.api.login(email, password);
       if (r.kind === 'challenge') {
@@ -1002,6 +1079,10 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     if (key === 'POST /api/2fa') {
       const b = await readJson(req);
       const code = typeof b.code === 'string' ? b.code.replace(/\s+/g, '') : '';
+      if (s.jarvis2fa && !s.pending2fa) {
+        await answerJarvis2fa(s, code);
+        return sendJson(res, 200, sessionView(s));
+      }
       if (!s.pending2fa) throw new HttpError(409, 'no_challenge', 'Hãy đăng nhập lại');
       const user = /^\d{6}$/.test(code) ? await s.api.verify2fa({ code }) : await s.api.verify2fa({ recoveryCode: code });
       await finishLogin(s, user);
@@ -1036,12 +1117,19 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         if (!commandRate.allow(user.id)) await fixedTurn(s, user, asked, 'Jarvis đã gửi 6 lệnh trong một phút qua, bạn đợi một chút rồi xác nhận lại.', send, speaker);
         // a batch never goes without its 6-digit code; the card stays for the code (user test 2026-11-25)
         else if (waiting?.id === id && waiting.batch && !otp) await fixedTurn(s, user, asked, 'Nhập mã OTP 6 số từ ứng dụng xác thực vào ô trên thẻ rồi bấm Xác nhận. Lệnh chưa được gửi.', send, speaker);
-        else {
+        // no CityLight 2FA: Jarvis checks the code of its own entry before anything is sent (the server would not)
+        else if (waiting?.id === id && waiting.batch && !user.totpEnabled && twofa.check(user.id, otp!) !== 'ok') {
+          const locked = twofa.lockedFor(user.id);
+          audit.write({ kind: 'jarvis_2fa_wrong', userId: user.id, mode: 'batch' });
+          await fixedTurn(s, user, asked, locked
+            ? `Nhập sai mã quá nhiều lần, lệnh nhiều tủ bị khóa ${locked} phút. Lệnh chưa được gửi.`
+            : 'Mã OTP không đúng (dùng mã "Jarvis CityLight" trong ứng dụng xác thực, mỗi mã dùng một lần). Nhập mã đang hiện rồi bấm Xác nhận. Lệnh chưa được gửi.', send, speaker);
+        } else {
           const t = s.pending.take(id, 'button');
           if (!t.ok) {
             send('pending_closed', { id, state: 'gone' });
             await fixedTurn(s, user, asked, t.reason, send, speaker);
-          } else await execute(s, user, asked, t.pending, 'button', send, ac, speaker, {}, otp);
+          } else await execute(s, user, asked, t.pending, 'button', send, ac, speaker, {}, user.totpEnabled ? otp : undefined);
         }
       } catch (e) {
         send('error', { code: 'failed', message: (e as Error).message });
@@ -1162,6 +1250,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
 
     if (key === 'GET /api/admin/users') return sendJson(res, 200, await adminUsers(s));
     if (method === 'PUT' && url.pathname.startsWith('/api/admin/access/')) return sendJson(res, 200, await adminSetAccess(s, idOf('/api/admin/access/'), await readJson(req)));
+    if (method === 'POST' && /^\/api\/admin\/users\/[^/]+\/reset-2fa$/.test(url.pathname)) return sendJson(res, 200, await adminReset2fa(s, decodeURIComponent(url.pathname.split('/')[4]!)));
     if (key === 'GET /api/admin/settings') {
       const { actor } = requireUser(s);
       const st = settings();

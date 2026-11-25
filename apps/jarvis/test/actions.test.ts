@@ -22,10 +22,12 @@ beforeAll(async () => {
   stub = await startStubApi([
     { id: 'adm', email: 'admin@demo.vn', password: 'mat-khau-admin-1', role: 'admin', totp: '111111' },
     { id: 'op', email: 'op@demo.vn', password: 'mat-khau-op-1', role: 'operator', totp: '333333' },
+    // no CityLight 2FA: signs in with Jarvis's own and gives its code for a batch (2026-11-25)
+    { id: 'op3', email: 'op3@demo.vn', password: 'mat-khau-op-3', role: 'operator' },
   ]);
   auditDir = mkdtempSync(path.join(tmpdir(), 'jarvis-actions-'));
   const cfg = loadConfig({ CITYLIGHT_API_BASE: stub.base, LLM_PROVIDER: 'fake', JARVIS_DAILY_TOKEN_CAP_MAX: '0', JARVIS_CABINET_ALLOWLIST: 'DM0001..DM0010', JARVIS_ACTIONS_ENABLED: 'true' });
-  const { server } = createConsoleServer({ cfg, db: openDb(':memory:'), llm: new FakeLlm(), audit: new AuditLog(auditDir), voice: null, commandPollMs: 20 });
+  const { server } = createConsoleServer({ cfg, db: openDb(':memory:'), llm: new FakeLlm(), audit: new AuditLog(auditDir), voice: null, commandPollMs: 20, secretKey: Buffer.alloc(32, 9) });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   close = () => server.close();
@@ -471,6 +473,27 @@ describe('batches, T3 (2026-11-23)', () => {
     const { proposeBatch } = await import('../src/guard/propose');
     const r = await proposeBatch({ type: 'MANUAL_ALL', params: { on: true } }, { reads: {}, focus: {}, userText: 'bật hết đèn quận 1' } as never, { envEnabled: true, settingsEnabled: true, allowlist: ['DM0010'] }, 'viewer');
     expect(r).toMatchObject({ kind: 'refused', say: 'Tài khoản của bạn không có quyền chạy lệnh nhiều tủ.' });
+  });
+  it('no CityLight 2FA: the batch takes the code of Jarvis\'s own 2FA, checked by Jarvis before anything is sent (2026-11-25)', async () => {
+    const { base32Decode, hotp, totpStep } = await import('../src/auth/totp');
+    expect((await admin.call('PUT', '/api/admin/access/op3', { canUse: true })).status).toBe(200);
+    const op3 = new Browser();
+    await op3.call('GET', '/api/session');
+    const first = await op3.call('POST', '/api/login', { email: 'op3@demo.vn', password: 'mat-khau-op-3' });
+    const secret = base32Decode(first.data.jarvis2fa.key);
+    const step = totpStep(Date.now());
+    expect((await op3.call('POST', '/api/2fa', { code: hotp(secret, step) })).data.signedIn).toBe(true);
+    const before = stub.batches.length;
+    const r = await op3.say('tắt hết đèn quận 1');
+    expect(r.pending).toMatchObject({ tier: 'T3' });
+    // a wrong code: nothing sent, the card waits
+    const wrong = await op3.call('POST', `/api/pending/${r.pending!.id}/confirm`, { otp: hotp(secret, step + 7) });
+    expect(wrong.events.find((e) => e.event === 'done')?.data.text).toMatch(/^Mã OTP không đúng/);
+    expect(stub.batches.length).toBe(before);
+    // the right code (a new one: each works once) sends the batch
+    const right = await op3.call('POST', `/api/pending/${r.pending!.id}/confirm`, { otp: hotp(secret, step + 1) });
+    expect(right.events.find((e) => e.event === 'done')?.data.text).toMatch(/Lệnh nhiều tủ ở Quận 1: 2 tủ đã nhận/);
+    expect(stub.batches.length).toBe(before + 1);
   });
   it('an account without 2FA gets no batch card: no code could be checked (user test 2026-11-25)', async () => {
     const { proposeBatch, BATCH_NEEDS_OTP } = await import('../src/guard/propose');

@@ -88,6 +88,9 @@ label.row input { width: auto; }
 .login { min-height: 100%; display: grid; place-items: center; padding: 24px 16px; }
 .login-card { width: min(400px, 100%); padding: 28px; display: grid; gap: 16px; }
 .login-card #step-password, .login-card #step-2fa { display: grid; gap: 12px; }
+.setup-2fa { display: grid; gap: 8px; font-size: 13px; }
+.setup-2fa p { margin: 0; }
+.setup-key { display: block; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 8px; font-size: 16px; letter-spacing: 1px; word-break: break-all; user-select: all; }
 
 /* app shell */
 .app { height: 100%; display: grid; grid-template-rows: auto auto 1fr; }

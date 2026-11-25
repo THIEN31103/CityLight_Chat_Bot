@@ -64,6 +64,16 @@ const MIGRATIONS: string[] = [
      role      TEXT NOT NULL,
      last_seen TEXT NOT NULL
    );`,
+  // 3: Jarvis's own second factor for accounts without CityLight 2FA (2026-11-25); the secret is AES-GCM encrypted
+  `CREATE TABLE jarvis_totp (
+     user_id      TEXT PRIMARY KEY,
+     secret       TEXT NOT NULL,
+     enabled      INTEGER NOT NULL DEFAULT 0,
+     last_step    INTEGER,
+     fails        INTEGER NOT NULL DEFAULT 0,
+     locked_until INTEGER,
+     created_at   TEXT NOT NULL
+   );`,
 ];
 
 export type Db = DatabaseSyncT;
