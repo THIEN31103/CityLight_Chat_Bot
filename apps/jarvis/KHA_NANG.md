@@ -131,9 +131,9 @@ Câu hỏi về trạng thái ("tủ đó đã bật đèn chưa?") chỉ là c�
 
 ### Jarvis tự lên tiếng
 
-Khi đang mở Jarvis, máy chủ báo ngay cho Jarvis mỗi khi có cảnh báo mới; nếu đường báo đó bị đứt, cứ 20 giây Jarvis tự xem lại. Có thì hiện tin nhắn viền cam ("Cảnh báo mới: …"); cảnh báo nghiêm trọng có viền đỏ và tiếng bíp. Cảnh báo đã có từ trước khi mở Jarvis thì xem bằng nút **▶ Bắt đầu ca** (bản tin đầu ca). Jarvis không bao giờ tự gửi lệnh.
+Khi đang mở Jarvis, máy chủ báo ngay cho Jarvis mỗi khi có cảnh báo mới; nếu đường báo đó bị đứt, cứ 20 giây Jarvis tự xem lại. Có thì hiện tin nhắn viền cam ("Cảnh báo mới: …") **và Jarvis đọc to câu đó** (không cần bật 🎙); cảnh báo nghiêm trọng có viền đỏ. Lần đầu mở trang, trình duyệt chỉ cho phát tiếng sau khi bạn đã bấm vào trang (đăng nhập là đủ); nếu máy không đọc được, cảnh báo nghiêm trọng kêu bíp thay. Cảnh báo đã có từ trước khi mở Jarvis thì xem bằng nút **▶ Bắt đầu ca** (bản tin đầu ca). Jarvis không bao giờ tự gửi lệnh.
 
-- **Đang bật giọng nói** thì Jarvis đọc to câu báo. Jarvis chờ bạn nói xong và chờ đọc xong câu trả lời trước mới báo.
+- Jarvis chờ bạn nói xong và chờ đọc xong câu trả lời đang đọc rồi mới đọc câu báo. Không muốn nghe cảnh báo thường: dùng **🔕 Im lặng 15 phút** (cảnh báo nghiêm trọng vẫn đọc).
 - **Cảnh báo nghiêm trọng** chưa ai trả lời thì 2 phút sau Jarvis nhắc lại, tối đa 3 lần. Bạn hỏi hay bấm gì đó, hoặc cảnh báo đã được xác nhận / đã hết, thì Jarvis thôi nhắc.
 - **Cảnh báo thường** mỗi 20 giây báo tối đa một câu; nhiều tủ cùng mã lỗi trong cùng quận gom thành một câu.
 - **Kết quả lệnh về muộn**: lệnh bạn gửi mà sau 60 giây tủ chưa xác nhận, Jarvis nói "Có kết quả trong 15 phút tới thì tôi báo lại" và báo "Kết quả lệnh … gửi lúc …" khi có (cả lệnh nhiều tủ).

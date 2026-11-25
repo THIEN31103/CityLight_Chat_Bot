@@ -19,7 +19,11 @@ async function api(method, path, body) {
   if (method !== 'GET' && session?.csrf) headers['x-jarvis-csrf'] = session.csrf;
   const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin' });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.message || `Lỗi ${res.status}`), { code: data.code, status: res.status });
+  // no answer from Jarvis itself (no JSON message): on Codespaces a sleeping codespace answers 404 / 502 (test 2026-11-25,
+  // the login page only said "Lỗi 404")
+  const away = !data.message && (res.status === 404 || res.status >= 502);
+  const said = data.message || (away ? 'Không kết nối được Jarvis: máy chạy Jarvis có thể đang ngủ hoặc khởi động lại. Mở lại codespace (github.com/codespaces), chờ 1–2 phút rồi tải lại trang.' : `Lỗi ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(said), { code: data.code, status: res.status });
   return data;
 }
 
@@ -194,7 +198,7 @@ $('#new-chat').addEventListener('click', newChat);
 $('#start-shift').addEventListener('click', () => ask('Bản tin đầu ca'));
 
 /**
- * Jarvis speaks up (spec 7): every 20 s the console asks what to say. Critical ones (P0) beep, and come back after
+ * Jarvis speaks up (spec 7): every 20 s the console asks what to say, and reads it aloud. Critical ones (P0) come back after
  * 2 minutes while nobody answers (the server decides). In voice mode they are read aloud too. Not while an answer
  * streams or is read, while the user talks, or while an old chat is open: they wait for the next look.
  */
@@ -205,14 +209,16 @@ async function lookNotices() {
   if (!canLook()) return;
   looking = true;
   try {
-    const r = await api('GET', voiceIn.on ? '/api/notices?voice=1' : '/api/notices').catch(() => null);
+    // every notice is read aloud, microphone on or not (user request 2026-11-25: a voice says more than a beep); the
+    // beep stays only for a critical one that came without audio (voice engine off or failed)
+    const r = await api('GET', session.voice ? '/api/notices?voice=1' : '/api/notices').catch(() => null);
     if (!r) return;
     showMute(r.mutedUntil);
     for (const n of r.notices ?? []) {
       const b = addBubble('assistant', n.text);
       b.classList.add('notice', n.level === 'P0' ? 'p0' : 'p1');
-      if (n.level === 'P0') beep();
-      if (n.data && voiceIn.on) player.enqueue(n.data, n.mime);
+      if (n.data) player.enqueue(n.data, n.mime);
+      else if (n.level === 'P0') beep();
     }
   } finally {
     looking = false;
