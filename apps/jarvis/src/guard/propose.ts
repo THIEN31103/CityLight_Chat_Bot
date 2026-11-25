@@ -50,9 +50,15 @@ export function summaryOf(cmd: ActionCommand, c: { code: string; name: string })
  * control (the allowlist still applies: the others are left out and counted), previewed by the API
  * (POST /command-batches/preview) and offered as a T3 card. Sent only from the console's button with the OTP.
  */
+export const BATCH_NEEDS_OTP =
+  'Lệnh nhiều tủ chỉ gửi được với mã OTP 6 số từ ứng dụng xác thực. Muốn dùng, bật xác thực 2 lớp trên web CityLight (tên ở góc phải → Tài khoản cá nhân), rồi ra lệnh lại. Lệnh cho từng tủ vẫn dùng được như bình thường.';
+
 export async function proposeBatch(cmd: ActionCommand, ctx: ToolContext, guard: GuardState, role: RoleKey, preview?: PreviewBatch): Promise<Proposal> {
   if (!hasPermission(role, 'batch.run')) return { kind: 'refused', say: 'Tài khoản của bạn không có quyền chạy lệnh nhiều tủ.' };
   if (cmd.type === 'DIAG' || cmd.type === 'ACK_ALARM') return { kind: 'refused', say: 'Lệnh này không chạy được cho nhiều tủ cùng lúc.' };
+  // a batch always needs an OTP (spec 6.3 T3): a server set up without 2FA (AUTH_REQUIRE_2FA=false, the codespace)
+  // checks no code for an account without it, and an empty box sent the batch (user test 2026-11-25)
+  if (!ctx.user.totpEnabled) return { kind: 'refused', say: BATCH_NEEDS_OTP };
   const o = { signal: ctx.signal };
   const lists = await Promise.all([ctx.reads.mapCabinets(o), ctx.reads.areaTree(o)]).catch(() => null);
   if (!lists) return { kind: 'refused', say: 'Tôi chưa đọc được danh sách tủ, bạn thử lại sau.' };

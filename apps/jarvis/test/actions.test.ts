@@ -449,6 +449,11 @@ describe('batches, T3 (2026-11-23)', () => {
     const said = await op.say('xác nhận');
     expect(said.text).toMatch(/chỉ gửi bằng nút "Xác nhận"/);
     expect(stub.batches.length).toBe(0);
+    // the button with an empty OTP box: nothing sent, the same card keeps waiting for the code (user test 2026-11-25)
+    const empty = await op.call('POST', `/api/pending/${r.pending!.id}/confirm`, {});
+    expect(empty.events.find((e) => e.event === 'done')?.data.text).toBe('Nhập mã OTP 6 số từ ứng dụng xác thực vào ô trên thẻ rồi bấm Xác nhận. Lệnh chưa được gửi.');
+    expect(empty.events.some((e) => e.event === 'pending_closed')).toBe(false);
+    expect(stub.batches.length).toBe(0);
     // a wrong OTP: nothing sent, a new card to try again
     const wrong = await op.call('POST', `/api/pending/${r.pending!.id}/confirm`, { otp: '000000' });
     const again = wrong.events.find((e) => e.event === 'pending')?.data;
@@ -466,6 +471,12 @@ describe('batches, T3 (2026-11-23)', () => {
     const { proposeBatch } = await import('../src/guard/propose');
     const r = await proposeBatch({ type: 'MANUAL_ALL', params: { on: true } }, { reads: {}, focus: {}, userText: 'bật hết đèn quận 1' } as never, { envEnabled: true, settingsEnabled: true, allowlist: ['DM0010'] }, 'viewer');
     expect(r).toMatchObject({ kind: 'refused', say: 'Tài khoản của bạn không có quyền chạy lệnh nhiều tủ.' });
+  });
+  it('an account without 2FA gets no batch card: no code could be checked (user test 2026-11-25)', async () => {
+    const { proposeBatch, BATCH_NEEDS_OTP } = await import('../src/guard/propose');
+    const ctx = { reads: {}, focus: {}, user: { totpEnabled: false }, userText: 'bật hết đèn quận 1' } as never;
+    const r = await proposeBatch({ type: 'MANUAL_ALL', params: { on: true } }, ctx, { envEnabled: true, settingsEnabled: true, allowlist: ['DM0010'] }, 'admin');
+    expect(r).toEqual({ kind: 'refused', say: BATCH_NEEDS_OTP });
   });
 });
 

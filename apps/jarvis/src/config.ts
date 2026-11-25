@@ -104,6 +104,9 @@ const Env = z.object({
   JARVIS_DEBUG_AUDIO: bool(false),
   // the server's socket.io events (alarms, commands) instead of waiting for the next look; off = looks only
   JARVIS_LIVE_EVENTS: bool(true),
+  // every role that can switch lights must have 2FA to sign in to Jarvis, even when the server does not enforce it
+  // (AUTH_REQUIRE_2FA=false on the codespace); false only for tests without 2FA
+  JARVIS_REQUIRE_2FA: bool(true),
 });
 
 export type Config = ReturnType<typeof loadConfig>;
@@ -156,5 +159,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     dataDir: path.resolve(APP_DIR, e.JARVIS_DATA_DIR ?? 'data'),
     debugAudio: e.JARVIS_DEBUG_AUDIO,
     liveEvents: e.JARVIS_LIVE_EVENTS,
+    require2fa: e.JARVIS_REQUIRE_2FA,
   };
 }

@@ -7,7 +7,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RoleKey, User } from '@citylight/shared';
-import { ROLE_LABELS } from '@citylight/shared';
+import { hasPermission, ROLE_LABELS } from '@citylight/shared';
 import { ApiProblem } from '../api/client';
 import type { AuditLog } from '../audit/log';
 import { looksLikeSmallTalk, runTurn } from '../brain/agent';
@@ -176,14 +176,17 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
   /** After CityLight accepted the password (and 2FA): Jarvis's own gate (G4). */
   async function finishLogin(s: ConsoleSession, user: User) {
     s.pending2fa = false;
-    if (user.totpRequired && !user.totpEnabled) {
-      await s.api.logout().catch(() => undefined);
-      throw new HttpError(403, 'totp_setup_required', 'Tài khoản cần bật xác thực 2 lớp trên web CityLight trước khi dùng Jarvis');
-    }
     // a new or reset account has a temporary password: the API refuses everything until it is changed on the web
+    // (first: 2FA is set up after that)
     if (user.passwordChangeRequired) {
       await s.api.logout().catch(() => undefined);
       throw new HttpError(403, 'password_change_required', 'Tài khoản đang dùng mật khẩu tạm: đăng nhập web CityLight để đổi mật khẩu trước khi dùng Jarvis');
+    }
+    // 2FA for every role that can switch lights, whatever the server enforces (user report 2026-11-25: on the codespace,
+    // AUTH_REQUIRE_2FA=false, the admin signed in with the password alone)
+    if (!user.totpEnabled && (user.totpRequired || (cfg.require2fa && hasPermission(user.role, 'cabinet.control')))) {
+      await s.api.logout().catch(() => undefined);
+      throw new HttpError(403, 'totp_setup_required', 'Tài khoản cần bật xác thực 2 lớp trên web CityLight trước khi dùng Jarvis (tên ở góc phải → Tài khoản cá nhân), rồi đăng nhập lại.');
     }
     rememberUser(db, user);
     if (bootstrapAdmin(db, user)) audit.write({ kind: 'bootstrap_admin', userId: user.id, role: user.role });
@@ -1029,7 +1032,10 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
         const asked = '(bấm nút Xác nhận)';
         // only a 6-digit code is passed on, and only to the API
         const otp = typeof b.otp === 'string' && /^\d{6}$/.test(b.otp) ? b.otp : undefined;
+        const waiting = s.pending.active();
         if (!commandRate.allow(user.id)) await fixedTurn(s, user, asked, 'Jarvis đã gửi 6 lệnh trong một phút qua, bạn đợi một chút rồi xác nhận lại.', send, speaker);
+        // a batch never goes without its 6-digit code; the card stays for the code (user test 2026-11-25)
+        else if (waiting?.id === id && waiting.batch && !otp) await fixedTurn(s, user, asked, 'Nhập mã OTP 6 số từ ứng dụng xác thực vào ô trên thẻ rồi bấm Xác nhận. Lệnh chưa được gửi.', send, speaker);
         else {
           const t = s.pending.take(id, 'button');
           if (!t.ok) {

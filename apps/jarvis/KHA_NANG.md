@@ -11,6 +11,7 @@ Tài liệu này dành cho người dùng (vận hành viên, quản lý, quản
 1. Đăng nhập web CityLight như bình thường.
 2. Bấm nút **✦** để mở Jarvis. Jarvis dùng chính tài khoản và quyền của bạn trên CityLight.
 3. Quản trị viên luôn dùng được. Các vai trò khác cần được cấp quyền trong mục **Quản trị → Quyền dùng Jarvis**.
+4. **Tài khoản điều khiển được đèn (quản trị viên, quản lý, vận hành viên) phải bật xác thực 2 lớp** trên web CityLight (tên ở góc phải → Tài khoản cá nhân) mới vào được Jarvis; khi đăng nhập Jarvis hỏi thêm mã 6 số trong ứng dụng xác thực. Tài khoản chỉ xem thì không bắt buộc.
 
 Jarvis chỉ thấy những tủ, khu vực mà tài khoản của bạn được xem trên CityLight. Jarvis không bao giờ thấy được nhiều hơn.
 
@@ -73,7 +74,7 @@ Nói hoặc gõ "xác nhận đã xem cảnh báo E201 tủ TL01.0026" (hoặc "
 
 ### Lệnh nhiều tủ
 
-Nói "tắt hết đèn quận 1", "bật hết đèn phường Bến Nghé". Jarvis chỉ lấy các tủ được phép trong khu vực đó, nói số tủ, số tủ mất kết nối, rồi hiện thẻ **lệnh nhiều tủ**: nhập mã **OTP 6 số** trong ứng dụng xác thực (nếu tài khoản bật 2 lớp) và bấm **Xác nhận**. Nói hay gõ "xác nhận" không gửi được lệnh nhiều tủ. Mã sai thì thẻ hiện lại để nhập lại. Cần quyền chạy lệnh hàng loạt.
+Nói "tắt hết đèn quận 1", "bật hết đèn phường Bến Nghé". Jarvis chỉ lấy các tủ được phép trong khu vực đó, nói số tủ, số tủ mất kết nối, rồi hiện thẻ **lệnh nhiều tủ**: nhập mã **OTP 6 số** trong ứng dụng xác thực và bấm **Xác nhận** (ô để trống thì không gửi). Tài khoản phải bật xác thực 2 lớp trên web CityLight (tên góc phải → Tài khoản cá nhân), rồi đăng nhập lại Jarvis; chưa bật thì Jarvis không tạo thẻ lệnh nhiều tủ. Nói hay gõ "xác nhận" không gửi được lệnh nhiều tủ. Mã sai thì thẻ hiện lại để nhập lại. Cần quyền chạy lệnh hàng loạt.
 
 ### Không nhớ mã tủ
 
@@ -119,7 +120,7 @@ Chỉ những tủ quản trị viên cho phép trong cấu hình Jarvis. Bản 
 - Tủ không nằm trong danh sách được phép.
 - Tài khoản của bạn không có quyền điều khiển tủ.
 - Quản trị viên đã tắt "Cho phép điều khiển tủ" (công tắc khẩn).
-- Lệnh cho nhiều tủ cùng lúc ("tắt hết đèn quận 1"). Việc này cần mã OTP nên phải làm trên web.
+- Lệnh cho nhiều tủ cùng lúc ("tắt hết đèn quận 1") khi tài khoản chưa bật xác thực 2 lớp: lệnh này luôn cần mã OTP 6 số.
 - Đã gửi quá **6 lệnh trong một phút**.
 - Câu lệnh không nói tủ nào. Jarvis sẽ hỏi lại tủ nào.
 

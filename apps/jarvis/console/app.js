@@ -549,7 +549,7 @@ function showPendingCard(p) {
     ? el('input', { class: 'pc-otp', type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '6', placeholder: 'Mã OTP 6 số', 'aria-label': 'Mã OTP 6 số' })
     : null;
   const how = p.tier === 'T3'
-    ? 'Lệnh nhiều tủ: nhập mã OTP trong ứng dụng xác thực (nếu tài khoản bật 2 lớp) rồi bấm Xác nhận. Nói hay gõ "xác nhận" không gửi được.'
+    ? 'Lệnh nhiều tủ: nhập mã OTP 6 số trong ứng dụng xác thực rồi bấm Xác nhận. Nói hay gõ "xác nhận" không gửi được.'
     : p.tier === 'T2' ? 'Lệnh tắt: nói hoặc gõ đúng chữ "xác nhận", hoặc bấm nút.' : 'Nói hoặc gõ "xác nhận" / "hủy lệnh", hoặc bấm nút.';
   const card = el('div', { class: `msg pending-card ${p.tier === 'T1' ? 't1' : 't2'}`, role: 'group', 'aria-label': 'Lệnh chờ xác nhận' },
     el('div', { class: 'pc-head' }, el('strong', {}, '⚠ Lệnh chờ xác nhận'), left),
@@ -574,7 +574,8 @@ function showPendingCard(p) {
   ok.addEventListener('click', () => {
     if (busy) return;
     const code = otp ? otp.value.trim() : '';
-    if (otp && code && !/^\d{6}$/.test(code)) {
+    // a batch never goes without its 6-digit code (an empty box sent it, user test 2026-11-25)
+    if (otp && !/^\d{6}$/.test(code)) {
       otp.setCustomValidity('Mã OTP gồm 6 chữ số');
       otp.reportValidity();
       return;

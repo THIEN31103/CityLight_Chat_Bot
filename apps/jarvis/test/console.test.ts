@@ -26,6 +26,9 @@ beforeAll(async () => {
     { id: 'op', email: 'op@demo.vn', password: 'mat-khau-op-1', role: 'operator', totp: '333333' },
     { id: 'view', email: 'view@demo.vn', password: 'mat-khau-view-1', role: 'viewer' },
     { id: 'newmgr', email: 'new-mgr@demo.vn', password: 'mat-khau-tam-1', role: 'manager', tempPassword: true },
+    // a server that does not enforce 2FA (AUTH_REQUIRE_2FA=false, like the codespace) lets these in with a password
+    { id: 'op-no2fa', email: 'op-no2fa@demo.vn', password: 'mat-khau-op-2', role: 'operator' },
+    { id: 'adm-no2fa', email: 'adm-no2fa@demo.vn', password: 'mat-khau-adm-2', role: 'admin' },
   ]);
   db = openDb(':memory:');
   llm = new FakeLlm();
@@ -105,6 +108,21 @@ describe('console', () => {
     expect(r.status).toBe(403);
     expect(r.data.code).toBe('password_change_required');
     expect((await b.call('GET', '/api/session')).data.signedIn).toBe(false);
+  });
+
+  it('a role that can switch lights needs 2FA for Jarvis even when the server lets it in without (user report 2026-11-25)', async () => {
+    for (const [email, password] of [['op-no2fa@demo.vn', 'mat-khau-op-2'], ['adm-no2fa@demo.vn', 'mat-khau-adm-2']]) {
+      const b = new Browser();
+      const r = await b.signIn(email!, password!);
+      expect(r.status).toBe(403);
+      expect(r.data.code).toBe('totp_setup_required');
+      expect(r.data.message).toMatch(/bật xác thực 2 lớp trên web CityLight/);
+      expect((await b.call('GET', '/api/session')).data.signedIn).toBe(false);
+    }
+    // a viewer cannot switch anything: not asked for 2FA here (the grant decides if it may use Jarvis)
+    const v = new Browser();
+    const rv = await v.signIn('view@demo.vn', 'mat-khau-view-1');
+    expect(rv.data.code).not.toBe('totp_setup_required');
   });
 
   it('an operator without a grant passes 2FA but cannot open Jarvis', async () => {

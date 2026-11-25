@@ -26,7 +26,7 @@ const voice: SttProvider & TtsProvider = {
 };
 
 beforeAll(async () => {
-  stub = await startStubApi([{ id: 'adm', email: 'admin@demo.vn', password: 'mat-khau-admin-1', role: 'admin' }]);
+  stub = await startStubApi([{ id: 'adm', email: 'admin@demo.vn', password: 'mat-khau-admin-1', role: 'admin', totp: '111111' }]);
   const cfg = loadConfig({ CITYLIGHT_API_BASE: stub.base, LLM_PROVIDER: 'fake' });
   const { server } = createConsoleServer({ cfg, db: openDb(':memory:'), llm: new FakeLlm(), audit: new AuditLog(mkdtempSync(path.join(tmpdir(), 'jv-'))), voice });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -63,7 +63,8 @@ async function speak(seconds: number) {
 describe('voice turn', () => {
   it('signs in and reports voice as available', async () => {
     await call('GET', '/api/session');
-    const r = await call('POST', '/api/login', { email: 'admin@demo.vn', password: 'mat-khau-admin-1' });
+    await call('POST', '/api/login', { email: 'admin@demo.vn', password: 'mat-khau-admin-1' });
+    const r = await call('POST', '/api/2fa', { code: '111111' });
     expect(r.data.voice).toBe(true);
     expect((await call('GET', '/api/voice/status')).data).toMatchObject({ enabled: true, ready: true });
   });
