@@ -116,7 +116,7 @@ describe('console', () => {
     const first = await b.signIn('adm-no2fa@demo.vn', 'mat-khau-adm-2');
     expect(first.status).toBe(200);
     expect(first.data.signedIn).toBe(false);
-    expect(first.data.jarvis2fa).toMatchObject({ mode: 'setup', key: expect.stringMatching(/^[A-Z2-7]{4}( [A-Z2-7]{4})+$/), uri: expect.stringMatching(/^otpauth:\/\/totp\/Jarvis%20CityLight%3Aadm-no2fa%40demo\.vn\?secret=/) });
+    expect(first.data.jarvis2fa).toMatchObject({ mode: 'setup', key: expect.stringMatching(/^[A-Z2-7]{4}( [A-Z2-7]{4})+$/), uri: expect.stringMatching(/^otpauth:\/\/totp\/Jarvis%20CityLight%3Aadm-no2fa%40demo\.vn\?secret=/), qr: expect.stringMatching(/^data:image\/svg\+xml;base64,/) });
     // nothing works before the code
     expect((await b.chat('Hệ thống thế nào?')).status).toBe(401);
     const secret = base32Decode(first.data.jarvis2fa.key);

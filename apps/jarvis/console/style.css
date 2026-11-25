@@ -90,6 +90,9 @@ label.row input { width: auto; }
 .login-card #step-password, .login-card #step-2fa { display: grid; gap: 12px; }
 .setup-2fa { display: grid; gap: 8px; font-size: 13px; }
 .setup-2fa p { margin: 0; }
+.setup-qr { justify-self: center; width: 244px; max-width: 100%; height: auto; background: #fff; border-radius: 8px; image-rendering: pixelated; }
+.setup-manual summary { cursor: pointer; color: var(--muted); }
+.setup-manual { display: grid; gap: 8px; }
 .setup-key { display: block; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 8px; font-size: 16px; letter-spacing: 1px; word-break: break-all; user-select: all; }
 
 /* app shell */

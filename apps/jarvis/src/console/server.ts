@@ -31,6 +31,7 @@ import { ConsoleSession, RateLimiter, SessionStore } from './session';
 import { parseMute } from './notices';
 import { Jarvis2fa, MAX_FAILS as MAX_2FA_FAILS, secretKey } from '../store/jarvis2fa';
 import { groupedKey, otpauthUrl } from '../auth/totp';
+import { qrSvg } from '../auth/qr';
 import { LiveFeed, nodeWs, type WsFactory } from '../api/live';
 import { FILLER, Speaker } from './speaker';
 import { cabinetRefOf, isControlCapabilityQuestion } from '../brain/router';
@@ -164,7 +165,11 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
   function jarvis2faView(s: ConsoleSession) {
     const j = s.jarvis2fa!;
     return j.mode === 'setup'
-      ? { mode: 'setup' as const, key: groupedKey(j.secret!), uri: otpauthUrl(j.user.email, j.secret!) }
+      ? (() => {
+        const uri = otpauthUrl(j.user.email, j.secret!);
+        // a QR code to scan with the phone (user request 2026-11-25); the key in text stays for typing it in
+        return { mode: 'setup' as const, key: groupedKey(j.secret!), uri, qr: `data:image/svg+xml;base64,${Buffer.from(qrSvg(uri)).toString('base64')}` };
+      })()
       : { mode: 'code' as const };
   }
 

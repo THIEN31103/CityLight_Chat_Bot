@@ -13,7 +13,7 @@ Tài liệu này dành cho người dùng (vận hành viên, quản lý, quản
 3. Quản trị viên luôn dùng được. Các vai trò khác cần được cấp quyền trong mục **Quản trị → Quyền dùng Jarvis**.
 4. **Đăng nhập Jarvis luôn có xác thực 2 lớp**, ngay trên trang Jarvis:
    - Tài khoản đã bật 2 lớp trên CityLight: nhập mã của CityLight như trên web.
-   - Tài khoản chưa bật: lần đầu, Jarvis hiện một **khóa thiết lập**. Mở ứng dụng xác thực trên điện thoại (Google Authenticator, Microsoft Authenticator…) → Thêm → Nhập khóa thiết lập, đặt tên "Jarvis CityLight", nhập khóa, rồi gõ mã 6 số ứng dụng hiện. Các lần sau chỉ cần gõ mã "Jarvis CityLight". Mã này cũng là mã OTP cho lệnh nhiều tủ.
+   - Tài khoản chưa bật: lần đầu, Jarvis hiện **mã QR**. Mở ứng dụng xác thực trên điện thoại (Google Authenticator, Microsoft Authenticator…) → Thêm → **Quét mã QR**, rồi gõ mã 6 số ứng dụng hiện cho "Jarvis CityLight". Không quét được thì bấm "Nhập khóa bằng tay" để thấy khóa thiết lập. Các lần sau chỉ cần gõ mã "Jarvis CityLight". Mã này cũng là mã OTP cho lệnh nhiều tủ.
    - Gõ sai mã 5 lần liền thì bị khóa 15 phút. Mất điện thoại: nhờ quản trị viên bấm **Đặt lại** ở cột "2 lớp Jarvis" (Quản trị → Quyền dùng Jarvis), lần đăng nhập sau sẽ thiết lập khóa mới.
 
 Jarvis chỉ thấy những tủ, khu vực mà tài khoản của bạn được xem trên CityLight. Jarvis không bao giờ thấy được nhiều hơn.

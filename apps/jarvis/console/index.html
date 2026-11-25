@@ -21,9 +21,14 @@
       <div id="step-2fa" hidden>
         <!-- Jarvis's own second factor, first sign-in (2026-11-25): the key to add to the authenticator app -->
         <div id="setup-2fa" class="setup-2fa" hidden>
-          <p><strong>Bật xác thực 2 lớp cho Jarvis</strong> (một lần). Mở ứng dụng xác thực trên điện thoại (Google Authenticator, Microsoft Authenticator…), chọn <em>Thêm → Nhập khóa thiết lập</em>, đặt tên "Jarvis CityLight", loại <em>theo thời gian</em>, rồi nhập khóa:</p>
-          <code id="setup-key" class="setup-key"></code>
-          <p class="small">Đang mở Jarvis trên chính điện thoại đó: <a id="setup-link" href="#">bấm vào đây để thêm</a>.</p>
+          <p><strong>Bật xác thực 2 lớp cho Jarvis</strong> (một lần). Mở ứng dụng xác thực trên điện thoại (Google Authenticator, Microsoft Authenticator…), chọn <em>Thêm → Quét mã QR</em> và quét mã này:</p>
+          <img id="setup-qr" class="setup-qr" alt="Mã QR để thêm Jarvis CityLight vào ứng dụng xác thực" width="244" height="244">
+          <details class="setup-manual">
+            <summary>Không quét được? Nhập khóa bằng tay</summary>
+            <p>Chọn <em>Thêm → Nhập khóa thiết lập</em>, đặt tên "Jarvis CityLight", loại <em>theo thời gian</em>, rồi nhập khóa:</p>
+            <code id="setup-key" class="setup-key"></code>
+            <p class="small">Đang mở Jarvis trên chính điện thoại đó: <a id="setup-link" href="#">bấm vào đây để thêm</a>.</p>
+          </details>
         </div>
         <p id="hint-2fa" class="hint">Nhập mã 6 số trong ứng dụng xác thực (hoặc mã khôi phục).</p>
         <label>Mã xác thực<input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="20"></label>

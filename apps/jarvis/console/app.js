@@ -113,6 +113,7 @@ function render() {
     if (j?.mode === 'setup') {
       $('#setup-key').textContent = j.key;
       $('#setup-link').href = j.uri;
+      $('#setup-qr').src = j.qr;
     }
     $('#hint-2fa').textContent = j?.mode === 'setup'
       ? 'Rồi nhập mã 6 số ứng dụng vừa hiện cho "Jarvis CityLight".'
