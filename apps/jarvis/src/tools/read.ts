@@ -11,6 +11,8 @@ const STATUS_VI: Record<CabinetStatus, string> = {
   on: 'đang sáng', off: 'đang tắt', fault: 'có lỗi', offline: 'mất kết nối', dimming: 'tiết giảm', unknown: 'chưa rõ',
 };
 const MAX_ALARM_PAGES = 10;
+/** online cabinets read one by one for the manual-mode count of a shift report (8 at a time) */
+const MANUAL_READS = 100;
 export const SEVERITY_VI = { critical: 'nghiêm trọng', major: 'quan trọng', minor: 'nhẹ' } as const;
 const COMMAND_STATUS_VI: Record<string, string> = {
   queued: 'đang chờ gửi', sent: 'đã gửi', acked: 'tủ đã nhận, chờ xác nhận đèn', confirmed: 'đã xác nhận (đèn đã đổi)',
@@ -773,9 +775,33 @@ const getShiftReport: ToolDef<{ area?: string }> = {
       if (!(e instanceof ApiProblem && e.status === 403)) lenh_12_gio = 'không đọc được nhật ký lệnh lúc này';
     }
 
+    // cabinets left in manual mode (spec 7 briefing, 2026-11-25): only a cabinet's own state has it, and only an
+    // online cabinet's is current, so the online ones are read, 8 at a time, at most MANUAL_READS of them
+    const online = scope.filter((c) => c.status !== 'offline');
+    let chay_tay: unknown;
+    if (online.length > MANUAL_READS) chay_tay = `không đếm: ${online.length} tủ trực tuyến, quá nhiều để đọc từng tủ`;
+    else {
+      const manual: CabinetSummary[] = [];
+      let unread = 0;
+      for (let k = 0; k < online.length; k += 8) {
+        const part = online.slice(k, k + 8);
+        const states = await Promise.all(part.map((c) => Promise.resolve().then(() => ctx.reads.cabinet(c.id, o)).then((d) => (d.state as Record<string, unknown> | undefined)?.manualMode, () => undefined)));
+        states.forEach((m, j) => (m === true ? manual.push(part[j]!) : m === undefined ? unread++ : undefined));
+      }
+      chay_tay = {
+        so_tu: manual.length,
+        tu: manual.slice(0, 5).map((c) => c.code),
+        cau_mau: manual.length
+          ? `${manual.length} tủ đang chạy tay (sẽ tự về lịch ở mốc bật / tắt kế tiếp): ${manual.slice(0, 5).map((c) => c.code).join(', ')}${manual.length > 5 ? '…' : ''}.`
+          : 'Không có tủ nào đang chạy tay.',
+        ...(unread ? { ghi_chu: `${unread} tủ không đọc được trạng thái.` } : {}),
+      };
+    }
+
     return {
       ...where,
       tu: { tong_so: scope.length, truc_tuyen: scope.length - n('offline'), mat_ket_noi: n('offline'), dang_sang: n('on') + n('dimming'), dang_tat: n('off'), dang_loi: n('fault') },
+      chay_tay,
       canh_bao,
       su_co,
       lech_lich,
@@ -783,7 +809,7 @@ const getShiftReport: ToolDef<{ area?: string }> = {
       ...(lo_lenh_12_gio ? { lo_lenh_12_gio } : {}),
       ...(khu_vuc_nhieu_canh_bao ? { khu_vuc_nhieu_canh_bao } : {}),
       ghi_chu:
-        'Đây là bản tin đầu ca. Bắt đầu bằng tên khu vực (khu_vuc). Nói theo thứ tự: số tủ và số mất kết nối; cảnh báo: đọc canh_bao.cau_mau gần như nguyên văn; sự cố quá hạn; tủ lệch lịch; đọc lenh_12_gio.cau_mau, rồi lo_lenh_12_gio.cau_mau nếu có. Phần nào bằng 0 thì nói gọn "không có". Không nói ai gửi lệnh. Không đoán nguyên nhân.',
+        'Đây là bản tin đầu ca. Bắt đầu bằng tên khu vực (khu_vuc). Nói theo thứ tự: số tủ và số mất kết nối; chay_tay.cau_mau nếu có; cảnh báo: đọc canh_bao.cau_mau gần như nguyên văn; sự cố quá hạn; tủ lệch lịch; đọc lenh_12_gio.cau_mau, rồi lo_lenh_12_gio.cau_mau nếu có. Phần nào bằng 0 thì nói gọn "không có". Không nói ai gửi lệnh. Không đoán nguyên nhân.',
     };
   },
 };

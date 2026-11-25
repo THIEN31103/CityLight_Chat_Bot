@@ -251,6 +251,20 @@ describe('get_shift_report (2026-11-23)', () => {
     expect(area.lenh_12_gio).toMatchObject({ tong_so: 1, loi: 1 });
     expect(area.lo_lenh_12_gio).toBeUndefined();
   });
+  it('cabinets left in manual mode: only online ones are read, one that cannot be read is said (2026-11-25)', async () => {
+    const asked: string[] = [];
+    const cabinet = async (id: string) => {
+      asked.push(id);
+      if (id === 'c3') throw new Error('down');
+      return { state: { manualMode: id === 'c1' || id === 'c5' } };
+    };
+    const out = (await tool().run(ctx({ cabinet }), {})) as Record<string, any>;
+    expect(asked.sort()).toEqual(['c1', 'c2', 'c3', 'c5']);
+    expect(out.chay_tay).toMatchObject({ so_tu: 2, tu: ['TL01.0001', 'TL01.0005'], ghi_chu: '1 tủ không đọc được trạng thái.' });
+    expect(out.chay_tay.cau_mau).toBe('2 tủ đang chạy tay (sẽ tự về lịch ở mốc bật / tắt kế tiếp): TL01.0001, TL01.0005.');
+    const area = (await tool().run(ctx({ cabinet }), { area: 'Thủ Đức' })) as Record<string, any>;
+    expect(area.chay_tay).toMatchObject({ so_tu: 1, tu: ['TL01.0005'] });
+  });
   it('a role without the command log: that part says so', async () => {
     const { ApiProblem } = await import('../src/api/client');
     const out = (await tool().run(ctx({ commandLog: async () => { throw new ApiProblem(403, 'forbidden', 'x'); } }), {})) as Record<string, any>;

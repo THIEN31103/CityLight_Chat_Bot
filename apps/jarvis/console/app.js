@@ -223,9 +223,18 @@ async function lookNotices() {
  * Busy (an answer, the user talking): try again a little later. The 20 s looks stay as the fallback.
  */
 let liveSrc = null;
-function nudge(tries = 0) {
-  if (canLook()) return void lookNotices();
-  if (tries < 10) setTimeout(() => nudge(tries + 1), 3000);
+// many events at once (64 cabinets dropping together) make ONE look: a nudge while one waits is dropped (2026-11-25)
+let nudgeTimer = null;
+function nudge() {
+  if (nudgeTimer) return;
+  const run = (tries) => {
+    if (canLook()) {
+      nudgeTimer = null;
+      lookNotices();
+    } else nudgeTimer = tries < 10 ? setTimeout(() => run(tries + 1), 3000) : null;
+  };
+  // a short wait gathers the events of one burst
+  nudgeTimer = setTimeout(() => run(0), 500);
 }
 function startLive() {
   if (liveSrc || !window.EventSource) return;
