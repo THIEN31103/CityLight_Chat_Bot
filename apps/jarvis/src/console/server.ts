@@ -859,11 +859,13 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     // the OTP of a batch goes straight to the API: never audited, never in the history, never seen by the model
     // with the live feed up, the server's command event ends each wait early; the reads are only the fallback
     const live = s.live?.up ? s.live : null;
+    // when it was sent: the late result says this time (it said when following stopped, test 2026-11-25)
+    const sentAt = Date.now();
     const outcome = await sendAndFollow(s.api, p, { pollMs: live ? (deps.commandPollMs ?? LIVE_POLL_MS) : deps.commandPollMs, wait: live ? (id, ms) => live.waitFor(id, ms) : undefined, otp, onStatus: (st) => send('status', { state: 'command', label: STATUS_VI[st] ?? st }) });
     if (outcome.status !== 'not_sent') commandRate.record(user.id);
     // not ended after 60 s: its result is told at a later look (late.ts)
     const lateId = outcome.unfinished ? (outcome.batch?.id ?? outcome.commandId) : undefined;
-    if (lateId) s.late.add(lateId, p);
+    if (lateId) s.late.add(lateId, p, sentAt);
     audit.write({ kind: 'command_result', userId: user.id, pendingId: p.id, commandId: outcome.commandId, status: outcome.status, error: outcome.error, apiError: outcome.code });
     const after = outcome.status === 'confirmed' && p.command.type !== 'ACK_ALARM' ? ((await s.reads.cabinet(p.cabinet.id).catch(() => null))?.state as Record<string, unknown> | undefined) : undefined;
     let result = outcomeText(p, outcome, after);

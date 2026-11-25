@@ -16,6 +16,8 @@ describe('sendAndFollow says when it stopped before the end', () => {
     const cut = await sendAndFollow(api('sent'), one, { followMs: 30, pollMs: 10 });
     expect(cut).toMatchObject({ status: 'timeout', commandId: 'cmd-1', unfinished: true });
     expect(outcomeText(one, cut)).toMatch(/Có kết quả trong 15 phút tới thì tôi báo lại\.$/);
+    // one promise, not two ("theo dõi trên web" next to "tôi báo lại", test 2026-11-25)
+    expect(outcomeText(one, cut)).not.toMatch(/web CityLight/);
     const ended = await sendAndFollow(api('timeout'), one, { followMs: 30, pollMs: 10 });
     expect(ended.unfinished).toBeUndefined();
     expect(outcomeText(one, ended)).not.toMatch(/báo lại/);

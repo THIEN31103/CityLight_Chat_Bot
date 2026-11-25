@@ -250,7 +250,7 @@ export function outcomeText(p: PendingAction, o: Outcome, after?: Record<string,
   if (p.batch && o.batch) {
     const b = o.batch;
     const head = `Lệnh nhiều tủ ở ${p.batch.area}: ${b.succeeded} tủ đã nhận, ${b.failed} lỗi, ${b.offline} mất kết nối`;
-    return o.status === 'confirmed' ? `${head}.` : `${head}, ${b.pending} tủ chưa xong sau 60 giây. Bạn theo dõi tiếp trên web CityLight.${o.unfinished ? LATER : ''}`;
+    return o.status === 'confirmed' ? `${head}.` : `${head}, ${b.pending} tủ chưa xong sau 60 giây.${o.unfinished ? LATER : ' Bạn theo dõi tiếp trên web CityLight.'}`;
   }
   switch (o.status) {
     case 'confirmed': {
@@ -272,7 +272,7 @@ export function outcomeText(p: PendingAction, o: Outcome, after?: Record<string,
     case 'failed':
       return `Lệnh tới tủ ${code} thất bại${o.error ? `: ${o.error}` : ''}.`;
     case 'timeout':
-      return `Sau 60 giây tủ ${code} vẫn chưa xác nhận lệnh. Bạn theo dõi thêm trên web CityLight.${o.unfinished ? LATER : ''}`;
+      return `Sau 60 giây tủ ${code} vẫn chưa xác nhận lệnh.${o.unfinished ? LATER : ' Bạn theo dõi thêm trên web CityLight.'}`;
     case 'cancelled':
       return `Lệnh tới tủ ${code} đã bị hủy.`;
     case 'not_sent':
