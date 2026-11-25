@@ -40,11 +40,40 @@ function sentence(head: string, g: Alarm[], titles?: Map<string, string>): strin
   return `${head}: ${alarmLabel(a, titles)} ở ${where}${a.districtName ? `, ${a.districtName}` : ''}, từ ${vnTime(a.startedAt)}.`;
 }
 
+/** areas from which one code is said as a single sentence (64 cabinets dropping together made 8 sentences in 11 s) */
+const SPREAD = 3;
+
+/**
+ * Critical alarms as sentences: per code; a code in one or two areas gets a sentence per area (a single cabinet
+ * becomes the one in focus), a code spread over more areas one sentence with the count per area.
+ */
+function p0Sentences(head: string, list: Alarm[], titles?: Map<string, string>): Notice[] {
+  const byCode = new Map<string, Alarm[]>();
+  for (const a of list) byCode.set(a.code, [...(byCode.get(a.code) ?? []), a]);
+  const out: Notice[] = [];
+  for (const same of byCode.values()) {
+    const areas = groupsOf(same).sort((x, y) => y.length - x.length);
+    if (areas.length < SPREAD) {
+      for (const g of areas) out.push({ level: 'P0', text: sentence(head, g, titles), focus: focusOf(g) });
+      continue;
+    }
+    const a = same[0]!;
+    const counts = areas.slice(0, 4).map((g) => `${g[0]!.districtName || 'chưa có khu vực'} ${g.length}`).join(', ');
+    out.push({ level: 'P0', text: `${head}: ${alarmLabel(a, titles)} ở ${same.length} tủ thuộc ${areas.length} khu vực (${counts}${areas.length > 4 ? ', …' : ''}), từ ${vnTime(a.startedAt)}.` });
+  }
+  return out;
+}
+
+/** a code said as a new critical alarm: more of it within this time are added to that sentence, told once after */
+const GATHER_MS = 60_000;
+
 export class NoticeState {
   /** open alarms at the last look; null until the first look */
   private seen: Set<string> | null = null;
   /** critical alarms told: how many times, and when last */
   private readonly p0 = new Map<string, { times: number; at: number }>();
+  /** codes just said as new critical alarms: when, and the alarms of that code that came after it */
+  private readonly gathering = new Map<string, { at: number; more: Alarm[] }>();
   /** other new alarms waiting for their turn (one group per 20 s) */
   private queue: Alarm[][] = [];
   private lastP1 = 0;
@@ -89,16 +118,33 @@ export class NoticeState {
 
     const p0: Notice[] = [];
     const critical = fresh.filter((a) => a.severity === 'critical');
-    for (const g of groupsOf(critical)) {
-      p0.push({ level: 'P0', text: sentence('Cảnh báo nghiêm trọng mới', g, titles), focus: focusOf(g) });
-      for (const a of g) this.p0.set(a.id, { times: 1, at: now });
+    // a code said less than a minute ago: its new alarms join that sentence (and its repeats), told once afterwards
+    const newCodes: Alarm[] = [];
+    for (const a of critical) {
+      const g = this.gathering.get(a.code);
+      if (g && now - g.at < GATHER_MS) {
+        g.more.push(a);
+        this.p0.set(a.id, { times: 1, at: g.at });
+      } else newCodes.push(a);
+    }
+    for (const [code, g] of this.gathering) {
+      if (now - g.at < GATHER_MS) continue;
+      const still = g.more.filter((a) => byId.has(a.id));
+      if (still.length) {
+        const total = [...this.p0.keys()].map((id) => byId.get(id)).filter((a) => a?.code === code).length;
+        p0.push({ level: 'P0', text: `Thêm ${still.length} tủ có cảnh báo nghiêm trọng ${alarmLabel(still[0]!, titles).replace(/ \(.*\)$/, '')} từ câu báo trước, tổng ${Math.max(total, still.length)} tủ đang có cảnh báo này.` });
+      }
+      this.gathering.delete(code);
+    }
+    p0.push(...p0Sentences('Cảnh báo nghiêm trọng mới', newCodes, titles));
+    for (const a of newCodes) {
+      this.p0.set(a.id, { times: 1, at: now });
+      if (!this.gathering.has(a.code)) this.gathering.set(a.code, { at: now, more: [] });
     }
     const due = [...this.p0].filter(([id, t]) => now - t.at >= REPEAT_MS && !critical.some((a) => a.id === id));
-    for (const g of groupsOf(due.map(([id]) => byId.get(id)!))) {
-      const times = Math.max(...g.map((a) => this.p0.get(a.id)!.times)) + 1;
-      p0.push({ level: 'P0', text: sentence(`Nhắc lại lần ${times}/${P0_TIMES}, chưa ai xử lý cảnh báo nghiêm trọng`, g, titles), focus: focusOf(g) });
-      for (const a of g) this.p0.set(a.id, { times, at: now });
-    }
+    const times = due.length ? Math.max(...due.map(([, t]) => t.times)) + 1 : 0;
+    p0.push(...p0Sentences(`Nhắc lại lần ${times}/${P0_TIMES}, chưa ai xử lý cảnh báo nghiêm trọng`, due.map(([id]) => byId.get(id)!), titles));
+    for (const [id, t] of due) this.p0.set(id, { times: t.times + 1, at: now });
     const out = p0.slice(0, MAX_P0);
     if (p0.length > MAX_P0) out.push({ level: 'P0', text: `Còn ${p0.length - MAX_P0} nhóm cảnh báo nghiêm trọng khác, bạn hỏi "đang có cảnh báo gì?" để xem.` });
 

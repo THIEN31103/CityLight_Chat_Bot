@@ -128,3 +128,40 @@ describe('the cabinet told about becomes the one in focus ("tủ đó", spec 5.4
     expect(many[0]!.focus).toBeUndefined();
   });
 });
+
+describe('many critical alarms at once (simulator stopped on the codespace, 2026-11-25)', () => {
+  const e101 = (district: string) => alarm({ code: 'E101', severity: 'critical', message: 'Không nhận frame telemetry quá 60 s', districtName: district });
+  const titles = new Map([['E101', 'Mất kết nối tủ']]);
+
+  it('one code over 3+ areas is ONE sentence with the count per area; one or two areas keep a sentence each', () => {
+    const st = started();
+    const burst = [...Array(9)].map(() => e101('Quận 1')).concat([...Array(5)].map(() => e101('Phú Nhuận')), [...Array(2)].map(() => e101('Quận 4')));
+    const told = st.look(burst, 0, T0 + 1000, titles).notices;
+    expect(told).toHaveLength(1);
+    expect(told[0]!.text).toMatch(/^Cảnh báo nghiêm trọng mới: E101 Mất kết nối tủ \(Không nhận gói tin dữ liệu đo quá 60 s\) ở 16 tủ thuộc 3 khu vực \(Quận 1 9, Phú Nhuận 5, Quận 4 2\), từ /);
+    const two = started();
+    expect(two.look([e101('Quận 1'), e101('Quận 3')], 0, T0 + 1000, titles).notices).toHaveLength(2);
+  });
+
+  it('more of the same code within a minute are not said one by one: one "Thêm N tủ" after the minute', () => {
+    const st = started();
+    const first = [e101('Quận 1'), e101('Quận 3'), e101('Quận 4')];
+    expect(st.look(first, 0, T0 + 1000, titles).notices).toHaveLength(1);
+    const later = [e101('Quận 1'), e101('Tân Bình')];
+    expect(st.look([...first, ...later], 0, T0 + 12_000, titles).notices).toEqual([]);
+    const after = st.look([...first, ...later], 0, T0 + 61_500, titles).notices;
+    expect(after.map((n) => n.text)).toEqual(['Thêm 2 tủ có cảnh báo nghiêm trọng E101 Mất kết nối tủ từ câu báo trước, tổng 5 tủ đang có cảnh báo này.']);
+  });
+
+  it('the repeat after 2 minutes is grouped the same way, all of them together', () => {
+    const st = started();
+    const first = [e101('Quận 1'), e101('Quận 3'), e101('Quận 4')];
+    st.look(first, 0, T0 + 1000, titles);
+    const later = [e101('Tân Bình')];
+    st.look([...first, ...later], 0, T0 + 12_000, titles);
+    st.look([...first, ...later], 0, T0 + 61_500, titles);
+    const again = st.look([...first, ...later], 0, T0 + 1000 + REPEAT_MS, titles).notices;
+    expect(again).toHaveLength(1);
+    expect(again[0]!.text).toMatch(/^Nhắc lại lần 2\/3, chưa ai xử lý cảnh báo nghiêm trọng: E101 Mất kết nối tủ \(.*\) ở 4 tủ thuộc 4 khu vực/);
+  });
+});
