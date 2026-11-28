@@ -61,7 +61,7 @@ Gõ đúng câu trong ngoặc; câu cần AI cách nhau ~15 giây (4 câu / phú
 
 ## Cần nhớ lần sau
 
-- **Chỉ bạn làm được:** cho người khác thử (tạo tài khoản trên web, cấp quyền Jarvis, đổi cổng 5173 + 8790 sang Public lúc thử; mỗi người tự thiết lập 2 lớp); model nghe tiếng Việt riêng (cần card đồ họa); trên máy local tắt `JARVIS_DEBUG_AUDIO` và xóa `apps/jarvis/data/voice-debug` (bản ghi giọng của bạn) khi không cần.
+- **Chỉ bạn làm được:** cho người khác thử (tạo tài khoản trên web, cấp quyền Jarvis, đổi cổng 5173 + 8790 sang Public lúc thử; mỗi người tự thiết lập 2 lớp); model nghe tiếng Việt riêng (cần card đồ họa). (28/11: đã tắt `JARVIS_DEBUG_AUDIO` trên máy local, bản ghi giọng `data/voice-debug` và 6 script thử cũ `server_citylight/.tmp/jarvis-*.mts` đã vào Thùng rác.)
 - **Cách tạo cảnh báo nghiêm trọng thật:** `pkill -f 'src/index.ts --count'` (tắt trình giả lập) → ~60 giây sau E101 cho ~64 tủ; `bash .devcontainer/start.sh` để bật lại.
 - **Vào codespace:** Chrome phải nối với Claude (biểu tượng Claude trên Chrome, đúng tài khoản). Khung trình duyệt trong ứng dụng Claude không dùng chung đăng nhập GitHub với Chrome.
 - **VS Code của codespace:** khung chat Copilot hay chiếm con trỏ, bấm vào Terminal trước khi gõ. Web (Vite) nghe ở `::1`: kiểm bằng `curl http://localhost:5173/`.
