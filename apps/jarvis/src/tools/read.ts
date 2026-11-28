@@ -573,15 +573,21 @@ async function pickArea(ctx: ToolContext, area: string): Promise<{ pick: AreaNod
   if (hits.length === 1) return done(hits[0]!, heardAs);
   // the question is built here: the model's example named districts that have no such ward ("Phường 2 (Quận 3)",
   // then "Phường 2 (Quận 9)" when there is no Quận 9, user test 2026-11-28)
-  const choices = hits.slice(0, 8).map((a) => withParent(a, areas));
   const first = hits[0]!;
-  const parent = first.kind === 'ward' ? areas.find((x) => x.id === first.parentId) : undefined;
+  const parentOf = (a: AreaNode) => (a.kind === 'ward' ? areas.find((x) => x.id === a.parentId) : undefined);
+  // one ward name in many districts: every district is named ("Có 12 khu vực" then 8 of them, user test 2026-11-28)
+  const sameWard = hits.every((a) => a.kind === 'ward' && a.name === first.name && parentOf(a));
+  const MAX = 12;
+  const choices = hits.slice(0, sameWard ? 30 : MAX).map((a) => withParent(a, areas));
+  const example = `"${[first.name, parentOf(first)?.name].filter(Boolean).join(' ')}"`;
   return {
     error: {
       error: 'ambiguous',
-      message: 'Nhiều khu vực trùng tên. Đọc nguyên văn cau_hoi, không thêm ví dụ khác.',
+      message: 'Nhiều khu vực trùng tên. Đọc nguyên văn cau_hoi, không bỏ bớt, không thêm ví dụ khác.',
       choices,
-      cau_hoi: `Có ${hits.length} khu vực tên "${first.name}": ${choices.join(', ')}${hits.length > 8 ? '…' : ''}. Bạn muốn khu vực nào? Ví dụ trả lời "${[first.name, parent?.name].filter(Boolean).join(' ')}".`,
+      cau_hoi: sameWard
+        ? `${first.name} có ở ${hits.length} quận: ${hits.slice(0, 30).map((a) => parentOf(a)!.name).join(', ')}. Bạn muốn ${first.name} của quận nào? Ví dụ trả lời ${example}.`
+        : `Có ${hits.length} khu vực tên gần giống "${first.name}"${hits.length > MAX ? `, ${MAX} khu vực đầu` : ''}: ${choices.join(', ')}. Bạn muốn khu vực nào? Ví dụ trả lời ${example}.`,
     },
   };
 }
@@ -765,8 +771,9 @@ const getShiftReport: ToolDef<{ area?: string }> = {
         nghiem_trong: sev('critical'), quan_trong: sev('major'), nhe: sev('minor'),
         nang_nhat: open.slice(0, 3).map((a) => alarmBrief(a, titles)),
         // the model named one of the three, or none (tests 2026-11-24): the sentence is built here
+        // one alarm: "1 cảnh báo đang mở (nghiêm trọng): …", not "(1 nghiêm trọng); nặng nhất: …" (user test 2026-11-28)
         cau_mau: open.length
-          ? `${open.length} cảnh báo đang mở (${[['nghiêm trọng', sev('critical')], ['quan trọng', sev('major')], ['nhẹ', sev('minor')]].filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(', ')}); nặng nhất: ${open.slice(0, 3).map((a) => `${alarmLabel(a, titles).replace(/ \(.*\)$/, '')} ở tủ ${a.cabinetCode}`).join('; ')}.`
+          ? `${open.length} cảnh báo đang mở (${open.length === 1 ? SEVERITY_VI[open[0]!.severity] : [['nghiêm trọng', sev('critical')], ['quan trọng', sev('major')], ['nhẹ', sev('minor')]].filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(', ')})${open.length > 3 ? '; 3 nặng nhất' : ''}: ${open.slice(0, 3).map((a) => `${alarmLabel(a, titles).replace(/ \(.*\)$/, '')} ở tủ ${a.cabinetCode}`).join('; ')}.`
           : 'Không có cảnh báo đang mở.',
         ...(alarms.items.length < alarms.total ? { ghi_chu: `Chỉ tính trên ${alarms.items.length} / ${alarms.total} cảnh báo mới nhất.` } : {}),
       };

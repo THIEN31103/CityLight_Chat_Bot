@@ -243,7 +243,7 @@ describe('get_shift_report (2026-11-23)', () => {
     expect(out.canh_bao).toMatchObject({ tong_so: 4, nghiem_trong: 1, quan_trong: 2, nhe: 1 });
     expect(out.canh_bao.nang_nhat.map((a: any) => a.code)).toEqual(['E301', 'E303', 'E201']);
     // a sentence the model reads out: it named one of the three, or none (tests 2026-11-24)
-    expect(out.canh_bao.cau_mau).toBe('4 cảnh báo đang mở (1 nghiêm trọng, 2 quan trọng, 1 nhẹ); nặng nhất: E301 x ở tủ TL01.0003; E303 x ở tủ TL01.0001; E201 x ở tủ TL01.0003.');
+    expect(out.canh_bao.cau_mau).toBe('4 cảnh báo đang mở (1 nghiêm trọng, 2 quan trọng, 1 nhẹ); 3 nặng nhất: E301 x ở tủ TL01.0003; E303 x ở tủ TL01.0001; E201 x ở tủ TL01.0003.');
     expect(out.su_co).toMatchObject({ dang_mo: 3, qua_han: 2 });
     expect(out.su_co.qua_han_lau_nhat.map((i: any) => i.code)).toEqual(['SC-1', 'SC-3']);
     expect(out.lech_lich).toEqual({ so_tu: 1, tu: ['TL01.0001'] });
@@ -306,6 +306,8 @@ describe('get_shift_report (2026-11-23)', () => {
     expect(JSON.stringify(shrink(out, 1200))).toContain('Bản tin đầu ca toàn hệ thống:');
     const area = (await tool().run(ctx(), { area: 'Thủ Đức' })) as Record<string, any>;
     expect(area.ban_tin).toMatch(/^Bản tin đầu ca TP Thủ Đức:\n/);
+    // one alarm: its level in the brackets, no "nặng nhất" (user test 2026-11-28)
+    expect(area.canh_bao.cau_mau).toBe('1 cảnh báo đang mở (nhẹ): E105 x ở tủ TL01.0005.');
     expect(area.ban_tin).not.toContain('Khu vực nhiều cảnh báo nhất');
   });
   it('"phường thảo điền thủ đức": a district named without "TP" after the ward (user test 2026-11-28)', async () => {
@@ -346,7 +348,7 @@ describe('area names said in a shift report (user test 2026-11-23)', () => {
     expect(out.error).toBe('ambiguous');
     expect(out.choices).toEqual(['Phường 2 (Quận 1)', 'Phường 2 (Quận 3)']);
     // the question is built here, its example one of the choices (the model said "Quận 9", user test 2026-11-28)
-    expect(out.cau_hoi).toBe('Có 2 khu vực tên "Phường 2": Phường 2 (Quận 1), Phường 2 (Quận 3). Bạn muốn khu vực nào? Ví dụ trả lời "Phường 2 Quận 1".');
+    expect(out.cau_hoi).toBe('Phường 2 có ở 2 quận: Quận 1, Quận 3. Bạn muốn Phường 2 của quận nào? Ví dụ trả lời "Phường 2 Quận 1".');
   });
   it.each(['phường 2 quận 3', 'Phường 2, Quận 3', 'phường 2 của quận 3', 'Phường 2 (Quận 3)'])('"%s" is that ward', async (q) => {
     const out = await run(q);
