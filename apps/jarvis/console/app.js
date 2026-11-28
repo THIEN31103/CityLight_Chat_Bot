@@ -156,7 +156,7 @@ $('#login-form').addEventListener('submit', async (e) => {
     render();
   } catch (err) {
     $('#login-error').textContent = err.message;
-    if (['challenge_expired', 'no_challenge', 'account_locked', 'jarvis_not_granted', 'totp_setup_required', 'jarvis_2fa_locked', 'jarvis_2fa_failed'].includes(err.code)) {
+    if (['challenge_expired', 'no_challenge', 'account_locked', 'jarvis_not_granted', 'totp_setup_required', 'jarvis_2fa_locked', 'jarvis_2fa_failed', 'jarvis_2fa_reset'].includes(err.code)) {
       session.pending2fa = false;
       session.jarvis2fa = null;
       render();

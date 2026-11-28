@@ -258,6 +258,8 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     }
     const r = twofa.check(j.user.id, code);
     if (r === 'ok') return completeLogin(s, j.user);
+    // an administrator reset it while the code box was open: no code can be right any more, start over with a new key
+    if (r === 'none') return giveUp(409, 'jarvis_2fa_reset', 'Xác thực 2 lớp Jarvis của tài khoản vừa được đặt lại. Đăng nhập lại để thiết lập mã mới.');
     audit.write({ kind: 'jarvis_2fa_wrong', userId: j.user.id, mode: 'code' });
     if (r === 'locked') return giveUp(423, 'jarvis_2fa_locked', `Nhập sai mã xác thực quá nhiều lần. Thử lại sau ${twofa.lockedFor(j.user.id) || 15} phút.`);
     throw new HttpError(422, 'invalid_totp', 'Mã xác thực không đúng. Nhập mã đang hiện trong ứng dụng (mục Jarvis CityLight).');

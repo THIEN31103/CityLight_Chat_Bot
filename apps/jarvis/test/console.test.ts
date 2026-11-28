@@ -154,6 +154,16 @@ describe('console', () => {
     expect((await adm.call('POST', '/api/admin/users/adm-no2fa/reset-2fa', {})).data).toEqual({ jarvis2fa: false, removed: true });
     const fresh = await b.signIn('adm-no2fa@demo.vn', 'mat-khau-adm-2');
     expect(fresh.data.jarvis2fa.mode).toBe('setup');
+    // a reset while the code box is open: told to sign in again, not "wrong code" forever
+    const { base32Decode, hotp, totpStep } = await import('../src/auth/totp');
+    expect((await b.call('POST', '/api/2fa', { code: hotp(base32Decode(fresh.data.jarvis2fa.key), totpStep(Date.now())) })).data.signedIn).toBe(true);
+    await b.call('POST', '/api/logout', {});
+    expect((await b.signIn('adm-no2fa@demo.vn', 'mat-khau-adm-2')).data.jarvis2fa).toEqual({ mode: 'code' });
+    await adm.call('POST', '/api/admin/users/adm-no2fa/reset-2fa', {});
+    const gone = await b.call('POST', '/api/2fa', { code: '123456' });
+    expect(gone.status).toBe(409);
+    expect(gone.data.code).toBe('jarvis_2fa_reset');
+    expect((await b.call('GET', '/api/session')).data.jarvis2fa).toBeUndefined();
     // a user who may not grant cannot reset
     const v = new Browser();
     expect((await v.call('POST', '/api/admin/users/adm-no2fa/reset-2fa', {})).status).toBeGreaterThanOrEqual(400);
