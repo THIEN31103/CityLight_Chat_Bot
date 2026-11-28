@@ -1,5 +1,8 @@
 # Jarvis làm được gì và cách dùng
 
+> Từ 28/11/2026 bản chính ở [`docs/FEATURES.md`](../../docs/FEATURES.md); file này giữ tạm, không cập nhật nữa.
+
+
 Jarvis là trợ lý vận hành của CityLight. Bạn hỏi bằng chữ hoặc bằng giọng nói tiếng Việt. Jarvis tra dữ liệu thật của hệ thống rồi trả lời, và có thể bật / tắt từng tủ sau khi bạn xác nhận.
 
 Tài liệu này dành cho người dùng (vận hành viên, quản lý, quản trị viên). Phần kỹ thuật nằm trong [README.md](README.md).

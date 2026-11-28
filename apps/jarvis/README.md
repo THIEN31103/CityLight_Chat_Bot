@@ -18,6 +18,8 @@ Hướng dẫn cho người dùng (Jarvis làm được gì, cách hỏi, cách 
 
 ## Quyết định khác đặc tả
 
+> Từ 28/11/2026 nhật ký quyết định ghi ở [`docs/DECISIONS.md`](../../docs/DECISIONS.md) (D1–D90 đã chép sang, D91 trở đi chỉ ghi ở đó). Các bảng D… trong file này giữ tạm.
+
 | # | Đặc tả | Đã chốt | Lý do |
 |---|---|---|---|
 | D1 | G9: Claude `claude-haiku-5-5` mặc định | **LLM miễn phí chạy trên máy qua Ollama**, mặc định `qwen3:4b-instruct` (đã đo, xem "Số đo") | Đức Thiện chốt 2026-11-10: không dùng API trả phí. Interface `LlmProvider` giữ nguyên để thêm Claude sau |
