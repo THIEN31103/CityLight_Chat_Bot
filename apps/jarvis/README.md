@@ -4,7 +4,7 @@ Trợ lý tiếng Việt (chữ, sau này cả giọng nói) cho phòng điều 
 
 Hướng dẫn cho người dùng (Jarvis làm được gì, cách hỏi, cách ra lệnh): [KHA_NANG.md](KHA_NANG.md).
 
-Đặc tả: `E:\CITY_LIGHT\chat_box\PROMPT_JARVIS_GOP.md`. Tài liệu này ghi những gì **đã đối chiếu với code** (`main` 018b276) và chỗ lệch với đặc tả. Code thắng.
+Đặc tả: [`docs/SPEC.md`](../../docs/SPEC.md) (trước 28/11 nằm ở `chat_box\PROMPT_JARVIS_GOP.md`). Tài liệu này ghi những gì **đã đối chiếu với code** (`main` 018b276) và chỗ lệch với đặc tả. Code thắng.
 
 ## Trạng thái
 

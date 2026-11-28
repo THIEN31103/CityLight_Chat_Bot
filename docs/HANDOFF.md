@@ -14,7 +14,7 @@ Mở phiên mới: nói **"đọc E:\CITY_LIGHT\jarvis\docs\HANDOFF.md rồi là
 
 1. Bạn thử lại các chỗ D90 vừa sửa (mục "Bạn cần thử" A); lỗi thì "đọc chat sửa đi".
 2. Bạn thử nốt mục B (những gì Claude đã thử đạt, bạn chưa thử tay).
-3. Khi bạn đồng ý: bỏ bản cũ `E:\CITY_LIGHT\chat_box\HANDOFF_JARVIS.md`, `apps/jarvis/KHA_NANG.md` và bảng D1–D90 trong `apps/jarvis/README.md` (đã chép sang `docs/`).
+3. Khi bạn đồng ý: bỏ bản cũ `apps/jarvis/KHA_NANG.md` và bảng D1–D90 trong `apps/jarvis/README.md` (đã chép sang `docs/`). Thư mục `chat_box` đã cho vào Thùng rác 28/11 (đặc tả chuyển thành `docs/SPEC.md`).
 4. Đặc tả 4.2: câu cảnh báo nghiêm trọng đang đọc chỉ dừng khi nói "dừng" / "im" (thuộc giọng nói, đang tạm dừng).
 5. Giọng nói vòng sau (đo lại bằng `JARVIS_DEBUG_AUDIO=true`; model nghe riêng: cần bạn quyết).
 6. Milestone 5 (trỏ vào hệ thống thật): phải hỏi Bảo trước.

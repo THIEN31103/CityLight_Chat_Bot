@@ -49,4 +49,5 @@ Quy trình chung: `E:\TEMPLATE\WORKFLOW.md`. Mở phiên: đọc `docs/HANDOFF.m
 - `docs/HANDOFF.md`: tình trạng, việc tiếp theo, bạn cần thử.
 - `docs/DECISIONS.md`: nhật ký quyết định D1–D90 (định dạng cũ), D91 trở đi định dạng mới.
 - `docs/FEATURES.md`: Jarvis làm được gì, câu ví dụ.
+- `docs/SPEC.md`: đặc tả gốc (gộp ý tưởng của Bảo và bạn, 10/11); "đặc tả G1", "mục 4.2"… trong nhật ký là trỏ vào file này.
 - `apps/jarvis/README.md`: API đã xác minh, cấu trúc, số đo, cách cài (tham khảo kỹ thuật).
