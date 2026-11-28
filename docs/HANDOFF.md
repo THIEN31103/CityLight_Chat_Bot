@@ -4,7 +4,7 @@ Mở phiên mới: nói **"đọc E:\CITY_LIGHT\jarvis\docs\HANDOFF.md rồi là
 
 ## Tình trạng
 
-- Nhánh `dthien_jarvis`, commit code mới nhất **`ef2c03b`** (D90), đã push lên `mine`. Việc chuyển sang template (CLAUDE.md, docs/) 28/11: <chưa commit / đã commit `…`>.
+- Nhánh `dthien_jarvis`, commit code mới nhất **`ef2c03b`** (D90), đã push lên `mine`. Việc chuyển sang template (CLAUDE.md, docs/) 28/11: đã push `4b05ee2` (chỉ tài liệu, codespace không cần chạy lại).
 - Codespace `organic space bassoon` đang chạy **`ef2c03b`**; Jarvis, bộ gửi lệnh, trình giả lập đều chạy (kiểm 28/11).
 - Test: 780 đạt.
 - Đăng nhập Jarvis: `admin@citylight.test`, mật khẩu xem bằng `cat ~/.citylight/admin-login.txt` trong Terminal codespace, rồi mã 2 lớp "Jarvis CityLight" trên điện thoại (đã thiết lập 28/11). Mỗi lần chạy lại Jarvis phải đăng nhập lại.
