@@ -56,6 +56,7 @@ Gõ đúng câu trong ngoặc; câu cần AI cách nhau ~15 giây (4 câu / phú
 
 - 28/11 D90 (`ef2c03b`): sửa 8 chỗ từ lần bạn thử (đèn cũ sau lệnh, bản tin một dòng, hỏi lại khu vực, "khu vực Quận 2", danh sách cảnh báo thiếu, "Hoàng Diệu 2", câu một tủ, chữ trên thẻ lệnh nhiều tủ).
 - 28/11 D89 (`1ca3391`): rà 2 lớp Jarvis; đặt lại 2 lớp lúc đang nhập mã → báo đăng nhập lại.
+- 28/11 D92: tổng quan hệ thống `docs/OVERVIEW.md` (sơ đồ Mermaid) + trang có hình `docs/system-map.html` (bản trên claude.ai: https://claude.ai/artifact/Esdem7pGbwpX4guyQ8Pahg).
 - 28/11: chuyển Jarvis sang template `E:\TEMPLATE` (CLAUDE.md, docs/).
 - 25/11 D81–D88: số tủ chạy tay, gộp câu báo, kết quả lệnh về muộn, đọc to mọi câu tự báo, lệnh nhiều tủ luôn cần OTP, 2 lớp riêng của Jarvis, mã QR. Chi tiết: `docs/DECISIONS.md`.
 

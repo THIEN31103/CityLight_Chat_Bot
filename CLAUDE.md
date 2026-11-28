@@ -46,6 +46,7 @@ Quy trình chung: `E:\TEMPLATE\WORKFLOW.md`. Mở phiên: đọc `docs/HANDOFF.m
 
 ## Tài liệu của dự án
 
+- `docs/OVERVIEW.md`: tổng quan hệ thống CityLight + Jarvis có sơ đồ Mermaid (các phần, cổng, 3 luồng chính, nơi chạy, vai trò); bản có hình bấm được `docs/system-map.html`.
 - `docs/HANDOFF.md`: tình trạng, việc tiếp theo, bạn cần thử.
 - `docs/DECISIONS.md`: nhật ký quyết định D1–D90 (định dạng cũ), D91 trở đi định dạng mới.
 - `docs/FEATURES.md`: Jarvis làm được gì, câu ví dụ.

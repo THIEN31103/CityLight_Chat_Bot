@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Bản chép của https://claude.ai/artifact/Esdem7pGbwpX4guyQ8Pahg (28/11/2026). Sửa ở đây thì báo Claude cập nhật lại trang trên claude.ai. -->
+<title>Bản đồ hệ thống CityLight</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (~72ch) with full-width diagram panels; night-street palette, sodium-lamp amber for commands, blue for data, red for alarms */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --sunk: #eceff3;
+  --ink: #16202c;
+  --muted: #5a6677;
+  --line: #d3d9e1;
+  --amber: #b86e00;
+  --amber-soft: #fff0d4;
+  --data: #2161a8;
+  --data-soft: #e3eefb;
+  --alarm: #b4321f;
+  --alarm-soft: #fde6e1;
+  --ok: #2c7a4b;
+  --ok-soft: #e1f3e8;
+  --font-body: "Be Vietnam Pro", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d131a; --surface: #151e28; --sunk: #1b2633; --ink: #e5eaf0; --muted: #98a4b3; --line: #2a3645;
+    --amber: #f0a73a; --amber-soft: #3a2a10; --data: #6ea9ec; --data-soft: #13283f;
+    --alarm: #f07c69; --alarm-soft: #3b1913; --ok: #6cc28c; --ok-soft: #12301f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d131a; --surface: #151e28; --sunk: #1b2633; --ink: #e5eaf0; --muted: #98a4b3; --line: #2a3645;
+  --amber: #f0a73a; --amber-soft: #3a2a10; --data: #6ea9ec; --data-soft: #13283f;
+  --alarm: #f07c69; --alarm-soft: #3b1913; --ok: #6cc28c; --ok-soft: #12301f; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 4rem;
+}
+.wrap { max-width: 1040px; margin: 0 auto; display: grid; gap: 3.5rem; }
+.prose { max-width: 72ch; }
+header.top { padding-top: 2.5rem; display: grid; gap: 1rem; }
+.eyebrow { font-size: .78rem; letter-spacing: .12em; text-transform: uppercase; color: var(--amber); font-weight: 600; }
+h1 { font-size: clamp(1.9rem, 4.5vw, 2.8rem); line-height: 1.15; margin: 0; font-weight: 700; text-wrap: balance; }
+h2 { font-size: 1.55rem; line-height: 1.25; margin: 0 0 .4rem; font-weight: 700; text-wrap: balance; }
+h3 { font-size: 1.1rem; margin: 0 0 .3rem; font-weight: 600; }
+p { margin: 0 0 .8rem; }
+.lead { font-size: 1.12rem; color: var(--muted); max-width: 62ch; }
+code, .mono { font-family: var(--font-mono); font-size: .88em; }
+code { background: var(--sunk); padding: .08em .35em; border-radius: 4px; }
+section { display: grid; gap: 1.1rem; }
+.layers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.layer { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; display: grid; gap: .3rem; align-content: start; min-width: 0; }
+.layer .tag { font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.layer strong { font-size: 1.05rem; }
+.layer p { margin: 0; color: var(--muted); font-size: .95rem; }
+.legend { display: flex; flex-wrap: wrap; gap: .5rem 1.2rem; font-size: .88rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: .45rem; }
+.legend i { width: 22px; height: 0; border-top: 3px solid; display: inline-block; }
+.legend i.data { border-color: var(--data); }
+.legend i.cmd { border-color: var(--amber); }
+.legend i.alarm { border-color: var(--alarm); border-top-style: dashed; }
+.figure { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; display: grid; gap: .8rem; min-width: 0; }
+.scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.scroll svg { display: block; min-width: 760px; width: 100%; height: auto; }
+.hint { font-size: .85rem; color: var(--muted); margin: 0; }
+/* SVG parts */
+.box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.box.hot { fill: var(--amber-soft); stroke: var(--amber); }
+.box.blue { fill: var(--data-soft); stroke: var(--data); }
+.box.red { fill: var(--alarm-soft); stroke: var(--alarm); }
+.box.green { fill: var(--ok-soft); stroke: var(--ok); }
+.box.sunk { fill: var(--sunk); stroke: var(--line); }
+.t { fill: var(--ink); font-family: var(--font-body); font-size: 14px; font-weight: 600; }
+.s { fill: var(--muted); font-family: var(--font-body); font-size: 12px; }
+.m { fill: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+.lbl { font-family: var(--font-body); font-size: 11.5px; font-weight: 500; }
+.lbl.data { fill: var(--data); } .lbl.cmd { fill: var(--amber); } .lbl.alarm { fill: var(--alarm); } .lbl.mut { fill: var(--muted); }
+.w-data { stroke: var(--data); stroke-width: 2.2; fill: none; }
+.w-cmd { stroke: var(--amber); stroke-width: 2.2; fill: none; }
+.w-alarm { stroke: var(--alarm); stroke-width: 2; fill: none; stroke-dasharray: 6 4; }
+.w-mut { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+.bus { stroke: var(--ink); stroke-width: 3; fill: none; }
+.chip { fill: var(--alarm); }
+.chip-t { fill: var(--surface); font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; }
+.ah-data { fill: var(--data); } .ah-cmd { fill: var(--amber); } .ah-alarm { fill: var(--alarm); } .ah-mut { fill: var(--muted); }
+.node { cursor: pointer; }
+.node:hover .box, .node:focus-visible .box { stroke-width: 2.6; }
+.node:focus { outline: none; }
+.node.sel .box { stroke: var(--amber); stroke-width: 3; }
+.detail { background: var(--sunk); border-radius: 10px; padding: .9rem 1rem; min-height: 5.2rem; display: grid; gap: .25rem; }
+.detail h3 { margin: 0; }
+.detail p { margin: 0; color: var(--ink); font-size: .95rem; }
+.detail .where { color: var(--muted); font-size: .85rem; }
+/* flows */
+.tabs { display: flex; flex-wrap: wrap; gap: .5rem; }
+.tabs button { font: inherit; font-size: .92rem; font-weight: 600; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: .45rem .9rem; border-radius: 999px; cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.tabs button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; counter-reset: s; }
+ol.steps li { counter-increment: s; display: grid; grid-template-columns: 2.2rem minmax(0, 1fr); gap: .8rem; padding: .7rem 0; border-top: 1px solid var(--line); }
+ol.steps li:first-child { border-top: 0; }
+ol.steps li::before { content: counter(s); width: 2rem; height: 2rem; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: .9rem; background: var(--sunk); color: var(--ink); }
+.flow-data ol.steps li::before { background: var(--data-soft); color: var(--data); }
+.flow-cmd ol.steps li::before { background: var(--amber-soft); color: var(--amber); }
+.flow-alarm ol.steps li::before { background: var(--alarm-soft); color: var(--alarm); }
+ol.steps b { display: block; }
+ol.steps span { color: var(--muted); font-size: .95rem; }
+.time { font-family: var(--font-mono); font-size: .8rem; color: var(--ok); background: var(--ok-soft); padding: .05em .45em; border-radius: 4px; white-space: nowrap; }
+/* tables */
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: .94rem; }
+th, td { text-align: left; padding: .6rem .8rem; border-top: 1px solid var(--line); vertical-align: top; }
+thead th { border-top: 0; font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: var(--sunk); }
+td:first-child { white-space: nowrap; font-weight: 600; }
+.envs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.env { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; display: grid; gap: .45rem; align-content: start; min-width: 0; }
+.env .badge { justify-self: start; font-size: .75rem; font-weight: 600; padding: .1rem .55rem; border-radius: 999px; }
+.badge.prod { background: var(--alarm-soft); color: var(--alarm); }
+.badge.test { background: var(--data-soft); color: var(--data); }
+.badge.dev { background: var(--ok-soft); color: var(--ok); }
+.env ul { margin: 0; padding-left: 1.1rem; color: var(--muted); font-size: .93rem; display: grid; gap: .2rem; }
+.roles { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.role { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: .45rem .75rem; font-weight: 600; font-size: .93rem; }
+.gt { color: var(--muted); }
+.note { border-left: 3px solid var(--amber); padding: .2rem 0 .2rem 1rem; color: var(--muted); }
+@media (max-width: 760px) {
+  .layers, .envs { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header class="top">
+  <div class="eyebrow">CityLight · tài liệu cho Đức Thiện</div>
+  <h1>Bản đồ hệ thống CityLight</h1>
+  <p class="lead">Ba tầng: <strong>tủ đèn ngoài đường</strong> gửi số đo lên <strong>server</strong>, người vận hành xem và ra lệnh qua <strong>web CityLight</strong> hoặc <strong>Jarvis</strong>. Đèn bật tắt theo lịch nằm sẵn trong tủ, nên server có sập thì đèn vẫn chạy.</p>
+</header>
+
+<section>
+  <div class="layers">
+    <div class="layer"><span class="tag">Tầng 1 · ngoài đường</span><strong>Tủ điện chiếu sáng</strong><p>PLC LOGO giữ lịch và đóng ngắt 2 nhánh đèn. 4 board STM32 đo đạc và nói chuyện với server qua 4G.</p></div>
+    <div class="layer"><span class="tag">Tầng 2 · máy chủ</span><strong>Server CityLight</strong><p>Broker MQTT nhận dữ liệu, các worker xử lý, cơ sở dữ liệu lưu lại, API phục vụ web và Jarvis.</p></div>
+    <div class="layer"><span class="tag">Tầng 3 · người dùng</span><strong>Web CityLight và Jarvis</strong><p>Web: bản đồ, chi tiết tủ, lịch, sự cố. Jarvis: hỏi và ra lệnh bằng tiếng Việt, tự báo cảnh báo.</p></div>
+  </div>
+</section>
+
+<section aria-labelledby="h-all">
+  <div class="prose">
+    <h2 id="h-all">Toàn cảnh</h2>
+    <p>Bấm vào từng khối để xem nó làm gì và code nằm ở đâu.</p>
+  </div>
+  <div class="figure">
+    <div class="legend"><span><i class="data"></i>dữ liệu đo đi lên</span><span><i class="cmd"></i>lệnh đi xuống</span><span><i class="alarm"></i>cảnh báo, thông báo</span></div>
+    <div class="scroll">
+      <svg id="overview" viewBox="0 0 960 500" role="img" aria-label="Sơ đồ toàn hệ thống CityLight">
+        <defs>
+          <marker id="a-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-data"/></marker>
+          <marker id="a-cmd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-cmd"/></marker>
+          <marker id="a-alarm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-alarm"/></marker>
+          <marker id="a-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-mut"/></marker>
+        </defs>
+
+        <!-- column labels -->
+        <text x="95" y="28" text-anchor="middle" class="lbl mut">NGOÀI ĐƯỜNG</text>
+        <text x="500" y="28" text-anchor="middle" class="lbl mut">SERVER (MỘT MÁY, DOCKER)</text>
+        <text x="895" y="28" text-anchor="middle" class="lbl mut">NGƯỜI DÙNG</text>
+
+        <!-- wires -->
+        <path d="M170 200 H218" class="w-data" marker-end="url(#a-data)"/>
+        <text x="194" y="190" text-anchor="middle" class="lbl data">mỗi 10 s</text>
+        <path d="M220 262 H172" class="w-cmd" marker-end="url(#a-cmd)"/>
+        <text x="196" y="282" text-anchor="middle" class="lbl cmd">lệnh</text>
+
+        <path d="M360 160 H382 V134 H408" class="w-data" marker-end="url(#a-data)"/>
+        <path d="M410 192 H382 V250 H362" class="w-cmd" marker-end="url(#a-cmd)"/>
+
+        <path d="M590 250 H615 V420 H638" class="w-mut" marker-start="url(#a-mut)" marker-end="url(#a-mut)"/>
+        <text x="607" y="345" class="lbl mut" transform="rotate(-90 607 345)" text-anchor="middle">ghi / đọc</text>
+        <path d="M715 322 V378" class="w-mut" marker-start="url(#a-mut)" marker-end="url(#a-mut)"/>
+
+        <path d="M500 334 V388" class="w-alarm" marker-end="url(#a-alarm)"/>
+
+        <path d="M792 150 H838" class="w-data" marker-start="url(#a-data)" marker-end="url(#a-data)"/>
+        <path d="M792 250 H838" class="w-data" marker-start="url(#a-data)" marker-end="url(#a-data)"/>
+        <path d="M895 292 V318" class="w-mut" marker-end="url(#a-mut)"/>
+
+        <!-- nodes -->
+        <g class="node" data-k="cabinet" tabindex="0" role="button" aria-label="Tủ đèn">
+          <rect x="20" y="150" width="150" height="170" rx="10" class="box hot"/>
+          <text x="95" y="182" text-anchor="middle" class="t">Tủ đèn</text>
+          <text x="95" y="206" text-anchor="middle" class="s">LOGO + 4 board</text>
+          <text x="95" y="226" text-anchor="middle" class="s">modem 4G</text>
+          <text x="95" y="258" text-anchor="middle" class="m">TM01.0001 (thật)</text>
+          <text x="95" y="276" text-anchor="middle" class="m">TL01.0009 (giả)</text>
+          <text x="95" y="302" text-anchor="middle" class="s">tới 10.000 tủ</text>
+        </g>
+        <text x="95" y="350" text-anchor="middle" class="s">Lịch nằm trong LOGO:</text>
+        <text x="95" y="367" text-anchor="middle" class="s">mất mạng đèn vẫn chạy</text>
+
+        <g class="node" data-k="emqx" tabindex="0" role="button" aria-label="Broker MQTT EMQX">
+          <rect x="220" y="140" width="140" height="140" rx="10" class="box"/>
+          <text x="290" y="178" text-anchor="middle" class="t">Broker MQTT</text>
+          <text x="290" y="200" text-anchor="middle" class="s">EMQX</text>
+          <text x="290" y="228" text-anchor="middle" class="m">cổng 1883</text>
+          <text x="290" y="246" text-anchor="middle" class="m">tài khoản + ACL</text>
+        </g>
+
+        <g class="node" data-k="ingest" tabindex="0" role="button" aria-label="ingest worker">
+          <rect x="410" y="110" width="180" height="48" rx="8" class="box blue"/>
+          <text x="500" y="131" text-anchor="middle" class="t">ingest</text>
+          <text x="500" y="149" text-anchor="middle" class="s">đọc số đo, sinh cảnh báo</text>
+        </g>
+        <g class="node" data-k="command" tabindex="0" role="button" aria-label="command-worker">
+          <rect x="410" y="168" width="180" height="48" rx="8" class="box hot"/>
+          <text x="500" y="189" text-anchor="middle" class="t">command-worker</text>
+          <text x="500" y="207" text-anchor="middle" class="s">gửi lệnh, chờ xác nhận</text>
+        </g>
+        <g class="node" data-k="scheduler" tabindex="0" role="button" aria-label="scheduler">
+          <rect x="410" y="226" width="180" height="48" rx="8" class="box"/>
+          <text x="500" y="247" text-anchor="middle" class="t">scheduler</text>
+          <text x="500" y="265" text-anchor="middle" class="s">đưa lịch xuống tủ</text>
+        </g>
+        <g class="node" data-k="notify" tabindex="0" role="button" aria-label="notify-worker">
+          <rect x="410" y="284" width="180" height="48" rx="8" class="box red"/>
+          <text x="500" y="305" text-anchor="middle" class="t">notify-worker</text>
+          <text x="500" y="323" text-anchor="middle" class="s">báo qua Telegram</text>
+        </g>
+
+        <g class="node" data-k="telegram" tabindex="0" role="button" aria-label="Telegram">
+          <rect x="410" y="390" width="180" height="60" rx="8" class="box sunk"/>
+          <text x="500" y="416" text-anchor="middle" class="t">Telegram</text>
+          <text x="500" y="436" text-anchor="middle" class="s">tin về điện thoại</text>
+        </g>
+
+        <g class="node" data-k="api" tabindex="0" role="button" aria-label="API NestJS">
+          <rect x="640" y="110" width="150" height="210" rx="10" class="box"/>
+          <text x="715" y="146" text-anchor="middle" class="t">API</text>
+          <text x="715" y="166" text-anchor="middle" class="s">NestJS</text>
+          <text x="715" y="200" text-anchor="middle" class="m">REST /api/v1</text>
+          <text x="715" y="220" text-anchor="middle" class="m">Socket.IO</text>
+          <text x="715" y="252" text-anchor="middle" class="s">đăng nhập, 2 lớp,</text>
+          <text x="715" y="270" text-anchor="middle" class="s">quyền theo khu vực</text>
+          <text x="715" y="302" text-anchor="middle" class="m">cổng 3000</text>
+        </g>
+
+        <g class="node" data-k="db" tabindex="0" role="button" aria-label="Cơ sở dữ liệu">
+          <rect x="640" y="380" width="150" height="90" rx="10" class="box"/>
+          <text x="715" y="406" text-anchor="middle" class="t">Cơ sở dữ liệu</text>
+          <text x="715" y="428" text-anchor="middle" class="s">PostgreSQL</text>
+          <text x="715" y="446" text-anchor="middle" class="s">+ TimescaleDB, PostGIS</text>
+          <text x="715" y="462" text-anchor="middle" class="m">+ Redis</text>
+        </g>
+
+        <g class="node" data-k="web" tabindex="0" role="button" aria-label="Web CityLight">
+          <rect x="840" y="110" width="110" height="80" rx="10" class="box"/>
+          <text x="895" y="142" text-anchor="middle" class="t">Web</text>
+          <text x="895" y="162" text-anchor="middle" class="s">CityLight</text>
+          <text x="895" y="180" text-anchor="middle" class="m">cổng 5173</text>
+        </g>
+        <g class="node" data-k="jarvis" tabindex="0" role="button" aria-label="Jarvis">
+          <rect x="840" y="210" width="110" height="80" rx="10" class="box hot"/>
+          <text x="895" y="242" text-anchor="middle" class="t">Jarvis</text>
+          <text x="895" y="262" text-anchor="middle" class="s">trợ lý</text>
+          <text x="895" y="280" text-anchor="middle" class="m">cổng 8790</text>
+        </g>
+        <g class="node" data-k="groq" tabindex="0" role="button" aria-label="Groq">
+          <rect x="840" y="320" width="110" height="56" rx="10" class="box sunk"/>
+          <text x="895" y="344" text-anchor="middle" class="t">Groq</text>
+          <text x="895" y="363" text-anchor="middle" class="s">AI trên mạng</text>
+        </g>
+      </svg>
+    </div>
+    <div class="detail" id="detail" aria-live="polite">
+      <h3 id="d-title">Bấm một khối trong sơ đồ</h3>
+      <p id="d-body">Mỗi khối sẽ hiện ở đây: nó làm gì, nằm ở đâu trong code.</p>
+      <p class="where" id="d-where"></p>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="h-cab">
+  <div class="prose">
+    <h2 id="h-cab">Bên trong một tủ</h2>
+    <p>Board <code>LTE_KEY</code> là board chủ: có modem 4G, gửi dữ liệu và nhận lệnh. Nó hỏi 3 board con qua một dây RS485. Mỗi mã cảnh báo đỏ dưới đây báo đúng chỗ nào hỏng.</p>
+  </div>
+  <div class="figure">
+    <div class="scroll">
+      <svg viewBox="0 0 960 480" role="img" aria-label="Các board bên trong tủ và mã cảnh báo tương ứng">
+        <defs>
+          <marker id="b-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-data"/></marker>
+          <marker id="b-cmd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-cmd"/></marker>
+        </defs>
+        <rect x="20" y="30" width="190" height="64" rx="10" class="box sunk"/>
+        <text x="115" y="58" text-anchor="middle" class="t">Mạng 4G</text>
+        <text x="115" y="78" text-anchor="middle" class="s">→ broker MQTT</text>
+        <path d="M212 52 H318" class="w-data" marker-end="url(#b-data)"/>
+        <path d="M318 74 H212" class="w-cmd" marker-end="url(#b-cmd)"/>
+
+        <rect x="320" y="20" width="320" height="86" rx="10" class="box hot"/>
+        <text x="480" y="48" text-anchor="middle" class="t">LTE_KEY · board chủ</text>
+        <text x="480" y="70" text-anchor="middle" class="s">modem 4G EC25 · GPS · pin dự phòng</text>
+        <text x="480" y="90" text-anchor="middle" class="m">gửi frame mỗi 10 s · nhận lệnh</text>
+        <rect x="652" y="30" width="54" height="20" rx="10" class="chip"/><text x="679" y="44" text-anchor="middle" class="chip-t">E101</text>
+        <text x="714" y="45" class="s">cả tủ mất kết nối ~60 s</text>
+
+        <path d="M480 106 V150" class="bus"/>
+        <path d="M120 150 H840" class="bus"/>
+        <text x="850" y="146" class="lbl mut">dây RS485</text>
+        <text x="850" y="162" class="lbl mut">(Modbus)</text>
+        <rect x="560" y="122" width="54" height="20" rx="10" class="chip"/><text x="587" y="136" text-anchor="middle" class="chip-t">E204</text>
+        <text x="622" y="137" class="s">mất cả 3 board con</text>
+
+        <path d="M170 150 V190" class="bus"/><path d="M480 150 V190" class="bus"/><path d="M790 150 V190" class="bus"/>
+
+        <rect x="60" y="190" width="220" height="96" rx="10" class="box"/>
+        <text x="170" y="218" text-anchor="middle" class="t">PLC_KEY</text>
+        <text x="170" y="240" text-anchor="middle" class="s">nói chuyện với LOGO</text>
+        <text x="170" y="258" text-anchor="middle" class="s">qua module ETH</text>
+        <text x="170" y="276" text-anchor="middle" class="m">LQ2 LQ3 PMAN PTIM</text>
+        <rect x="228" y="198" width="46" height="20" rx="10" class="chip"/><text x="251" y="212" text-anchor="middle" class="chip-t">E201</text>
+
+        <rect x="370" y="190" width="220" height="96" rx="10" class="box"/>
+        <text x="480" y="218" text-anchor="middle" class="t">PM_KEY</text>
+        <text x="480" y="240" text-anchor="middle" class="s">đồng hồ điện 3 pha</text>
+        <text x="480" y="258" text-anchor="middle" class="s">áp, dòng, công suất</text>
+        <text x="480" y="276" text-anchor="middle" class="m">MPU MPI MPOW</text>
+        <rect x="538" y="198" width="46" height="20" rx="10" class="chip"/><text x="561" y="212" text-anchor="middle" class="chip-t">E202</text>
+
+        <rect x="680" y="190" width="220" height="96" rx="10" class="box"/>
+        <text x="790" y="218" text-anchor="middle" class="t">CT_KEY</text>
+        <text x="790" y="240" text-anchor="middle" class="s">dòng rò (mA)</text>
+        <text x="790" y="258" text-anchor="middle" class="s">nhiệt độ tủ</text>
+        <text x="790" y="276" text-anchor="middle" class="m">CTVL CTTE</text>
+        <rect x="848" y="198" width="46" height="20" rx="10" class="chip"/><text x="871" y="212" text-anchor="middle" class="chip-t">E203</text>
+
+        <path d="M170 286 V318" class="w-cmd" marker-end="url(#b-cmd)"/>
+        <rect x="60" y="320" width="220" height="70" rx="10" class="box hot"/>
+        <text x="170" y="347" text-anchor="middle" class="t">PLC Siemens LOGO</text>
+        <text x="170" y="368" text-anchor="middle" class="s">giữ lịch bật / tắt</text>
+        <text x="170" y="384" text-anchor="middle" class="s">ngõ ra Q2, Q3</text>
+        <rect x="288" y="345" width="46" height="20" rx="10" class="chip"/><text x="311" y="359" text-anchor="middle" class="chip-t">E301</text>
+
+        <path d="M170 390 V418" class="w-cmd" marker-end="url(#b-cmd)"/>
+        <rect x="60" y="420" width="220" height="48" rx="10" class="box"/>
+        <text x="170" y="441" text-anchor="middle" class="t">Đèn đường</text>
+        <text x="170" y="459" text-anchor="middle" class="s">nhánh 1 (Q2) · nhánh 2 (Q3)</text>
+
+        <rect x="370" y="320" width="220" height="70" rx="10" class="box sunk"/>
+        <text x="480" y="349" text-anchor="middle" class="t">Đồng hồ điện</text>
+        <text x="480" y="370" text-anchor="middle" class="s">đo trên dây cấp cho đèn</text>
+        <path d="M480 286 V318" class="w-mut"/>
+
+        <rect x="680" y="320" width="220" height="70" rx="10" class="box sunk"/>
+        <text x="790" y="349" text-anchor="middle" class="t">Cảm biến</text>
+        <text x="790" y="370" text-anchor="middle" class="s">CT dòng rò, DS18B20 nhiệt</text>
+        <path d="M790 286 V318" class="w-mut"/>
+
+        <text x="370" y="432" class="s">E301 có nguyên nhân: PLGO = 2 module ETH không trả lời,</text>
+        <text x="370" y="450" class="s">PLGO = 3 rút cáp LAN. Mã E1xx đến E8xx khác: quá / thấp áp,</text>
+        <text x="370" y="468" class="s">mất pha, rò điện, nhiệt, lệch lịch, sai giờ, nghi giả mạo.</text>
+      </svg>
+    </div>
+    <p class="hint">Frame gửi lên có dạng <code>*#LTID'TM01.0001&amp;LQ2'1&amp;LQ3'0&amp;PMAN'1…$</code>. <code>LQ2</code> / <code>LQ3</code> là nhánh 1 / 2 đang sáng thật, <code>PMAN</code> là đang chạy tay. Khi đèn đổi, tủ gửi ngay trong 0,5 s thay vì chờ 10 s.</p>
+  </div>
+</section>
+
+<section aria-labelledby="h-flow">
+  <div class="prose">
+    <h2 id="h-flow">Ba luồng chính</h2>
+    <p>Gần như mọi thứ trong hệ thống là một trong ba luồng này.</p>
+  </div>
+  <div class="figure">
+    <div class="tabs" role="tablist" aria-label="Chọn luồng">
+      <button role="tab" id="tab-data" aria-selected="true" aria-controls="p-data">Số đo đi lên</button>
+      <button role="tab" id="tab-cmd" aria-selected="false" aria-controls="p-cmd">Lệnh đi xuống</button>
+      <button role="tab" id="tab-alarm" aria-selected="false" aria-controls="p-alarm">Cảnh báo</button>
+    </div>
+    <div class="flow-data" id="p-data" role="tabpanel" aria-labelledby="tab-data">
+      <ol class="steps">
+        <li><div><b>Tủ đo và gửi</b><span>LTE_KEY gom số đo của 3 board con thành một frame, gửi lên topic MQTT <code>electrical_cabinets_default</code> mỗi 10 giây.</span></div></li>
+        <li><div><b>Broker nhận</b><span>EMQX chỉ nhận tủ có tài khoản; frame có IMEI lạ bị bỏ (chống giả mạo, E805).</span></div></li>
+        <li><div><b>ingest đọc và lưu</b><span>Tách frame, lọc giá trị vô lý, ghi vào TimescaleDB (giữ từng frame 30 ngày, bảng tổng hợp lâu hơn), cập nhật trạng thái tủ.</span></div></li>
+        <li><div><b>API phát tức thì</b><span>Thay đổi đẩy qua Socket.IO: bản đồ trên web đổi màu, Jarvis biết ngay.</span></div></li>
+        <li><div><b>Không còn frame</b><span>Tủ im lặng khoảng 60 giây thì ingest đánh dấu mất kết nối và mở cảnh báo E101. <span class="time">52–64 s</span></span></div></li>
+      </ol>
+    </div>
+    <div class="flow-cmd" id="p-cmd" role="tabpanel" aria-labelledby="tab-cmd" hidden>
+      <ol class="steps">
+        <li><div><b>Người dùng ra lệnh</b><span>Bấm nút trên web, hoặc nói với Jarvis rồi xác nhận trên thẻ. Lệnh nhiều tủ cần mã 2 lớp 6 số.</span></div></li>
+        <li><div><b>API kiểm và xếp hàng</b><span>Kiểm quyền, khu vực, tủ có đang kết nối, firmware có hỗ trợ; rồi đưa vào hàng đợi trong PostgreSQL. Mỗi tủ chỉ một lệnh tại một thời điểm.</span></div></li>
+        <li><div><b>command-worker gửi</b><span>Gửi xuống topic riêng của tủ <code>citylight/cmd/&lt;LTID&gt;</code>. Chỉ backend được phép gửi lên topic lệnh.</span></div></li>
+        <li><div><b>Tủ nhận (ack)</b><span>LTE_KEY trả lời trên <code>stm32/ec25/echo</code>, chuyển lệnh cho PLC_KEY, PLC_KEY ghi xuống LOGO. <span class="time">0,7–2,3 s</span></span></div></li>
+        <li><div><b>Xác nhận bằng số đo thật</b><span>Server chỉ coi là xong khi frame mới cho thấy đèn đổi thật (<code>LQ2</code>, <code>LQ3</code>). Quá giờ thì báo hết hạn và có thể gửi lại. <span class="time">2,6–4,6 s</span></span></div></li>
+      </ol>
+    </div>
+    <div class="flow-alarm" id="p-alarm" role="tabpanel" aria-labelledby="tab-alarm" hidden>
+      <ol class="steps">
+        <li><div><b>ingest so với luật</b><span>Mỗi frame được so với ngưỡng (áp, dòng, rò, nhiệt…), với lịch (đèn sáng lúc lẽ ra tắt là E303), với board nào im lặng (E201–E204).</span></div></li>
+        <li><div><b>Chống nhiễu</b><span>Lỗi phải kéo dài 30 giây mới mở cảnh báo; hết lỗi thì cảnh báo tự đóng.</span></div></li>
+        <li><div><b>Báo ra ngoài</b><span>Web hiện ngay (Socket.IO), notify-worker gửi Telegram, Jarvis tự lên tiếng và đọc to. Jarvis nói cảnh báo nghiêm trọng tối đa 3 lần, cách nhau 2 phút, tới khi bạn phản hồi.</span></div></li>
+        <li><div><b>Người xử lý</b><span>"Xác nhận đã xem" chỉ ghi nhận; cần người ra hiện trường thì tạo sự cố, giao người bảo trì, chụp ảnh, đóng.</span></div></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="h-jv">
+  <div class="prose">
+    <h2 id="h-jv">Jarvis nằm ở đâu</h2>
+    <p>Jarvis là một chương trình riêng, không sửa server. Nó đăng nhập API bằng chính tài khoản của bạn, nên chỉ thấy và làm được đúng những gì bạn được phép. Câu hỏi và lệnh đi hai đường khác nhau.</p>
+  </div>
+  <div class="figure">
+    <div class="legend"><span><i class="data"></i>câu hỏi: AI chỉ được đọc</span><span><i class="cmd"></i>lệnh: code xử lý, AI không đụng tới</span><span><i class="alarm"></i>Jarvis tự lên tiếng</span></div>
+    <div class="scroll">
+      <svg viewBox="0 0 960 410" role="img" aria-label="Đường đi của câu hỏi và lệnh trong Jarvis">
+        <defs>
+          <marker id="j-data" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-data"/></marker>
+          <marker id="j-cmd" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-cmd"/></marker>
+          <marker id="j-alarm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-alarm"/></marker>
+          <marker id="j-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-mut"/></marker>
+        </defs>
+        <rect x="20" y="160" width="130" height="76" rx="10" class="box sunk"/>
+        <text x="85" y="192" text-anchor="middle" class="t">Bạn</text>
+        <text x="85" y="214" text-anchor="middle" class="s">gõ hoặc nói</text>
+        <path d="M150 198 H188" class="w-mut" marker-end="url(#j-mut)"/>
+
+        <rect x="190" y="160" width="150" height="76" rx="10" class="box"/>
+        <text x="265" y="190" text-anchor="middle" class="t">Trang Jarvis</text>
+        <text x="265" y="210" text-anchor="middle" class="s">đăng nhập + 2 lớp</text>
+        <text x="265" y="226" text-anchor="middle" class="m">console/app.js</text>
+        <path d="M340 198 H378" class="w-mut" marker-end="url(#j-mut)"/>
+
+        <rect x="380" y="160" width="150" height="76" rx="10" class="box"/>
+        <text x="455" y="190" text-anchor="middle" class="t">Phân loại câu</text>
+        <text x="455" y="210" text-anchor="middle" class="s">hỏi hay ra lệnh?</text>
+        <text x="455" y="226" text-anchor="middle" class="m">server.ts</text>
+
+        <path d="M530 180 H550 V68 H578" class="w-data" marker-end="url(#j-data)"/>
+        <text x="556" y="124" class="lbl data">câu hỏi</text>
+        <path d="M530 216 H550 V322 H578" class="w-cmd" marker-end="url(#j-cmd)"/>
+        <text x="556" y="276" class="lbl cmd">lệnh</text>
+
+        <rect x="580" y="28" width="180" height="84" rx="10" class="box blue"/>
+        <text x="670" y="56" text-anchor="middle" class="t">AI (Groq)</text>
+        <text x="670" y="76" text-anchor="middle" class="s">+ công cụ chỉ đọc</text>
+        <text x="670" y="96" text-anchor="middle" class="m">tools/read.ts</text>
+        <path d="M760 70 H868 V148" class="w-data" marker-end="url(#j-data)"/>
+        <text x="800" y="62" class="lbl data">GET (đọc)</text>
+
+        <rect x="580" y="272" width="180" height="100" rx="10" class="box hot"/>
+        <text x="670" y="298" text-anchor="middle" class="t">Code hiểu lệnh</text>
+        <text x="670" y="318" text-anchor="middle" class="s">kiểm quyền, tủ được phép,</text>
+        <text x="670" y="335" text-anchor="middle" class="s">cảnh báo; hiện thẻ xác nhận</text>
+        <text x="670" y="358" text-anchor="middle" class="m">guard/*.ts</text>
+        <path d="M760 322 H868 V244" class="w-cmd" marker-end="url(#j-cmd)"/>
+        <text x="776" y="314" class="lbl cmd">POST sau khi bạn</text>
+        <text x="776" y="342" class="lbl cmd">bấm Xác nhận</text>
+
+        <rect x="800" y="150" width="140" height="92" rx="10" class="box"/>
+        <text x="870" y="182" text-anchor="middle" class="t">API CityLight</text>
+        <text x="870" y="204" text-anchor="middle" class="s">bằng tài khoản</text>
+        <text x="870" y="222" text-anchor="middle" class="s">của bạn</text>
+
+        <path d="M928 242 V392 H265 V238" class="w-alarm" marker-end="url(#j-alarm)"/>
+        <text x="600" y="388" text-anchor="middle" class="lbl alarm">cảnh báo mới (Socket.IO) → Jarvis tự báo, đọc to</text>
+      </svg>
+    </div>
+    <p class="note">Câu trả lời quan trọng (bản tin đầu ca, danh sách cảnh báo, tình trạng một tủ) do code dựng sẵn, AI chỉ đọc lại, để không bỏ sót. Chỉ một file <code>guard/pending.ts</code> được phép gửi lệnh; một test tự động canh luật này.</p>
+  </div>
+</section>
+
+<section aria-labelledby="h-env">
+  <div class="prose">
+    <h2 id="h-env">Chạy ở đâu</h2>
+    <p>Cùng một hệ thống chạy ở ba nơi, mỗi nơi một việc. Code đi theo chiều trái sang phải: viết ở máy bạn, đẩy lên GitHub, thử trên codespace.</p>
+  </div>
+  <div class="envs">
+    <div class="env"><span class="badge dev">Máy của bạn</span><strong>Viết code</strong><ul><li>Thư mục <code>E:\CITY_LIGHT</code>: <code>jarvis</code>, <code>server_citylight</code>, <code>city_light_v2</code> (firmware)</li><li>Claude sửa code, chạy test (Jarvis: 780 test)</li><li>Đẩy lên repo của bạn: remote <code>mine</code></li></ul></div>
+    <div class="env"><span class="badge test">Codespace (thử)</span><strong>organic space bassoon</strong><ul><li>Chạy đủ server + web + Jarvis trên GitHub</li><li>1.000 tủ trong dữ liệu, trình giả lập chạy 65 tủ</li><li>Cổng: API 3000, web 5173, Jarvis 8790, giọng 8791</li><li>Tự ngủ sau 30 phút không dùng</li></ul></div>
+    <div class="env"><span class="badge prod">Máy thật (production)</span><strong>VPS AWS, Sydney</strong><ul><li>Server của Bảo, nối tủ thật <code>TM01.0001</code></li><li>87 lệnh qua 4G, 0 lỗi</li><li>Jarvis chưa trỏ vào đây: phải hỏi Bảo trước</li></ul></div>
+  </div>
+</section>
+
+<section aria-labelledby="h-role">
+  <div class="prose">
+    <h2 id="h-role">Ai được làm gì</h2>
+    <p>Mỗi khách hàng có một server riêng. Trong một server, quyền xếp theo bậc, và mỗi người chỉ thấy khu vực được giao.</p>
+  </div>
+  <div class="roles"><span class="role">Nhà cung cấp</span><span class="gt">›</span><span class="role">Quản lý</span><span class="gt">›</span><span class="role">Điều hành</span><span class="gt">›</span><span class="role">Bảo trì</span><span class="gt">·</span><span class="role">Xem</span></div>
+  <p class="prose hint">Nhà cung cấp là phía mình (bạn, Bảo). Quản lý là người cao nhất phía khách. Điều hành ra lệnh được. Bảo trì xử lý sự cố. Xem thì chỉ đọc. Dùng Jarvis còn cần quản trị viên cấp quyền riêng.</p>
+</section>
+
+<section aria-labelledby="h-words">
+  <div class="prose"><h2 id="h-words">Từ hay gặp</h2></div>
+  <div class="tbl"><table>
+    <thead><tr><th>Từ</th><th>Nghĩa</th></tr></thead>
+    <tbody>
+      <tr><td>LTID</td><td>Mã tủ, ví dụ <code>TL01.0009</code>: hai chữ, số quận, số thứ tự.</td></tr>
+      <tr><td>MQTT</td><td>Cách tủ và server nói chuyện qua mạng: gửi tin lên một "topic", ai đăng ký topic đó thì nhận.</td></tr>
+      <tr><td>Frame</td><td>Một gói số đo tủ gửi lên, dạng <code>*#KEY'VAL&amp;…$</code>.</td></tr>
+      <tr><td>Ack / xác nhận</td><td>Ack: tủ báo đã nhận lệnh. Xác nhận: số đo cho thấy đèn đổi thật.</td></tr>
+      <tr><td>Chạy tay / theo lịch</td><td>Chạy tay: đèn giữ theo lệnh vừa gửi tới mốc lịch kế tiếp. Theo lịch: LOGO tự bật tắt.</td></tr>
+      <tr><td>Mã E…</td><td>Mã cảnh báo. E1xx mất kết nối, E2xx board con, E3xx LOGO và lịch, E7xx sự kiện lệnh, E8xx bảo mật.</td></tr>
+      <tr><td>T1 / T2 / T3</td><td>Mức lệnh trong Jarvis. T1: gõ "xác nhận" là gửi. T2 (tắt đèn): phải gõ đúng chữ "xác nhận" hoặc bấm nút. T3 (nhiều tủ): chỉ bấm nút, kèm mã 6 số.</td></tr>
+      <tr><td>D…</td><td>Số quyết định trong nhật ký Jarvis (<code>docs/DECISIONS.md</code>). Server có nhật ký riêng, đánh số S….</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section aria-labelledby="h-faq">
+  <div class="prose"><h2 id="h-faq">Câu hỏi hay gặp</h2></div>
+  <div class="tbl"><table>
+    <thead><tr><th>Câu hỏi</th><th>Trả lời</th></tr></thead>
+    <tbody>
+      <tr><td>Mất 4G thì sao?</td><td>Tủ vẫn chạy theo lịch trong LOGO. Có mạng lại tủ tự nối. Server báo mất kết nối sau khoảng 60 giây.</td></tr>
+      <tr><td>Server sập, đèn có tắt?</td><td>Không. Server chỉ giám sát và điều khiển; lịch nằm trong tủ.</td></tr>
+      <tr><td>Ai đó gửi lệnh giả được không?</td><td>Không: broker cần tài khoản, chỉ backend được gửi lên topic lệnh, tủ lọc lệnh theo mã tủ, IMEI bị khóa theo tủ.</td></tr>
+      <tr><td>Jarvis tự bật tắt đèn được không?</td><td>Không. Jarvis chỉ đề xuất; lệnh chỉ đi khi bạn xác nhận, và không bao giờ do AI quyết định.</td></tr>
+      <tr><td>Dữ liệu giữ bao lâu?</td><td>Từng frame 30 ngày; số tổng hợp theo giờ, ngày giữ lâu hơn; sao lưu mỗi đêm lúc 02:15.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</div>
+
+<script>
+(function () {
+  var info = {
+    cabinet: ['Tủ đèn', 'Tủ điện ngoài đường. PLC Siemens LOGO giữ lịch và đóng ngắt 2 nhánh đèn; 4 board STM32 (LTE_KEY, PLC_KEY, PM_KEY, CT_KEY) đo đạc, gửi frame lên server mỗi 10 giây và nhận lệnh. Tủ thật hiện có: TM01.0001 (tủ bàn). Trên codespace là tủ giả TLxx.xxxx.', 'Firmware: E:\\CITY_LIGHT\\city_light_v2 · trình giả lập: server_citylight/apps/simulator'],
+    emqx: ['Broker MQTT (EMQX)', 'Trạm trung chuyển tin nhắn. Tủ gửi số đo lên, server gửi lệnh xuống qua đây; tủ và web không bao giờ nói chuyện trực tiếp với nhau. Bắt buộc tài khoản; ACL chỉ cho backend gửi lệnh.', 'Cấu hình: server_citylight/infra/emqx · chạy bằng Docker'],
+    ingest: ['ingest worker', 'Đọc từng frame, lọc giá trị vô lý, ghi vào cơ sở dữ liệu, cập nhật trạng thái tủ, so với luật để mở hoặc đóng cảnh báo, và phát hiện tủ mất kết nối sau khoảng 60 giây.', 'server_citylight/apps/workers/src/ingest.ts'],
+    command: ['command-worker', 'Lấy lệnh từ hàng đợi trong PostgreSQL, gửi xuống tủ qua MQTT, chờ tủ ack, rồi chờ số đo xác nhận đèn đổi thật. Có thử lại và hết giờ; mỗi tủ chỉ một lệnh cùng lúc.', 'server_citylight/apps/workers/src/command-worker.ts'],
+    scheduler: ['scheduler', 'Đưa lịch bật tắt (lịch riêng của tủ hoặc lịch vùng, có lịch thiên văn theo giờ mặt trời) xuống LOGO. Tủ đang mất kết nối sẽ nhận khi có mạng lại.', 'server_citylight/apps/workers/src/scheduler.ts'],
+    notify: ['notify-worker', 'Gửi cảnh báo và nhắc sự cố quá hạn qua Telegram cho người đã liên kết, đúng khu vực của họ, có gom tin để không dội.', 'server_citylight/apps/workers/src/notify-worker.ts'],
+    telegram: ['Telegram', 'Tin cảnh báo về điện thoại. Người dùng liên kết bằng lệnh /start <mã> trong bot.', 'Cấu hình trong web: Tài khoản cá nhân'],
+    api: ['API (NestJS)', 'Cửa duy nhất vào dữ liệu: đăng nhập, xác thực 2 lớp, phân quyền theo khu vực, đọc tủ / cảnh báo / sự cố, nhận lệnh rồi xếp hàng. Socket.IO đẩy thay đổi tức thì cho web và Jarvis.', 'server_citylight/apps/api · đường dẫn /api/v1'],
+    db: ['Cơ sở dữ liệu', 'PostgreSQL lưu tủ, người dùng, lệnh, cảnh báo, sự cố. TimescaleDB lưu số đo theo thời gian (nén, có bảng tổng hợp). PostGIS cho bản đồ tuyến, trụ, đèn. Redis giữ phiên và dữ liệu tạm.', 'server_citylight/packages/db (migration) · chạy bằng Docker'],
+    web: ['Web CityLight', 'Giao diện React: bản đồ tủ theo trạng thái, chi tiết tủ 12 tab, điều khiển, lịch, lệnh hàng loạt, cảnh báo, sự cố, GIS, quản trị. Tiếng Việt / Anh theo từng người. Nhánh của bạn có thêm nút ✦ mở Jarvis.', 'server_citylight/apps/web · nhánh dthien_jarvis_web'],
+    jarvis: ['Jarvis', 'Trợ lý tiếng Việt: hỏi dữ liệu, ra lệnh có xác nhận, tự báo cảnh báo và đọc to, bản tin đầu ca. Đăng nhập bằng tài khoản CityLight, thêm 2 lớp riêng của Jarvis (mã QR).', 'E:\\CITY_LIGHT\\jarvis · đọc docs/HANDOFF.md trước'],
+    groq: ['Groq', 'Dịch vụ AI trên mạng mà Jarvis dùng (model openai/gpt-oss-20b) để hiểu câu hỏi và gọi công cụ đọc; cũng dùng để nghe giọng nói. Gói miễn phí: Jarvis tự giới hạn 4 câu cần AI mỗi phút.', 'Khóa: secret GROQ_API_KEY của codespace']
+  };
+  var title = document.getElementById('d-title');
+  var body = document.getElementById('d-body');
+  var where = document.getElementById('d-where');
+  var nodes = document.querySelectorAll('#overview .node');
+  function show(k, el) {
+    var d = info[k]; if (!d) return;
+    title.textContent = d[0]; body.textContent = d[1]; where.textContent = 'Ở đâu: ' + d[2];
+    nodes.forEach(function (n) { n.classList.toggle('sel', n === el); });
+  }
+  nodes.forEach(function (n) {
+    n.addEventListener('click', function () { show(n.dataset.k, n); });
+    n.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); show(n.dataset.k, n); } });
+  });
+  var tabs = document.querySelectorAll('.tabs button');
+  tabs.forEach(function (t) {
+    t.addEventListener('click', function () {
+      tabs.forEach(function (o) {
+        var on = o === t;
+        o.setAttribute('aria-selected', on ? 'true' : 'false');
+        document.getElementById(o.getAttribute('aria-controls')).hidden = !on;
+      });
+    });
+  });
+})();
+</script>
+
+</html>

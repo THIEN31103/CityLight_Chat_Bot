@@ -7,6 +7,7 @@ Mỗi lần sửa lỗi hay chọn cách làm thì thêm một dòng, số tăng
 | # | Ngày | Việc | Lỗi / lý do | Nguyên nhân | Cách làm | Test |
 |---|---|---|---|---|---|---|
 | D91 | 28/11/2026 | Áp dụng template `E:\TEMPLATE` | Bạn muốn mọi dự án theo một khuôn để dễ kiểm soát | Luật và bàn giao nằm rải rác: bộ nhớ của Claude trên máy, `chat_box\HANDOFF_JARVIS.md` ngoài repo, nhật ký D… lẫn trong README | Thêm `CLAUDE.md`, `docs/HANDOFF.md`, `docs/DECISIONS.md` (chép D1–D90), `docs/FEATURES.md` (từ `KHA_NANG.md`), `docs/SPEC.md` (đặc tả), `docs/tasks/_TASK.md`; file cũ giữ, có dòng chỉ sang file mới; `chat_box` vào Thùng rác | Không đổi code; 902 test đạt |
+| D92 | 28/11/2026 | Tổng quan hệ thống có hình | Bạn chưa nắm rõ toàn hệ thống, muốn có hình; template thêm `docs/OVERVIEW.md` | Kiến thức nằm rải rác: README server, device-contract, start.sh của codespace, code Jarvis | `docs/OVERVIEW.md` (sơ đồ Mermaid: toàn cảnh, bên trong tủ, lệnh đi xuống, Jarvis) + `docs/system-map.html` (bản chép trang https://claude.ai/artifact/Esdem7pGbwpX4guyQ8Pahg); dựng từ code và tài liệu thật | Không đổi code |
 
 ## D1–D90 (chép nguyên từ `apps/jarvis/README.md` ngày 28/11/2026, định dạng cũ)
 
