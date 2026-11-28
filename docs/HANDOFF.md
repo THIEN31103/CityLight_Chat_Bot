@@ -4,30 +4,28 @@ Mở phiên mới: gõ **`/continue`** (hoặc nói "đọc E:\CITY_LIGHT\jarvis
 
 ## Tình trạng
 
-- Nhánh `dthien_jarvis`, commit mới nhất **`7c16ca5`** (chỉ tài liệu), đã push lên `mine`; commit code mới nhất trên repo: `ef2c03b` (D90).
-- **Chưa commit: D93** (`src/brain/system-prompt.ts`, `src/tools/read.ts`, `test/tools-read.test.ts`, `docs/DECISIONS.md`, file này).
-- Codespace `organic space bassoon` đang chạy **`ef2c03b`** (chưa có D93); đánh thức lại tối 28/11, Jarvis, bộ gửi lệnh, trình giả lập đều chạy (lệnh tới TL12.0011 xác nhận được).
+- Nhánh `dthien_jarvis`, commit mới nhất **`db791bc`** (D93), đã push lên `mine`.
+- Codespace `organic space bassoon` đang chạy **`db791bc`** (chạy lại tối 28/11): Jarvis "ok", bộ gửi lệnh + trình giả lập chạy.
 - Test: 902 đạt (cả repo, `npx vitest run --maxWorkers=2 --minWorkers=1` ở gốc).
 - Đăng nhập Jarvis: `admin@citylight.test`, mật khẩu xem bằng `cat ~/.citylight/admin-login.txt` trong Terminal codespace, rồi mã 2 lớp "Jarvis CityLight" trên điện thoại (đã thiết lập 28/11). Mỗi lần chạy lại Jarvis phải đăng nhập lại.
 - Codespace tự ngủ sau 30 phút không thao tác: github.com/codespaces → organic space bassoon → Restart, chờ 1–2 phút.
 
 ## Việc tiếp theo (theo thứ tự)
 
-1. Commit + push D93 (khi bạn bảo), chạy lại codespace, thử 3 dòng (D93) ở mục "Bạn cần thử" A (Claude tự gõ được nếu bạn đăng nhập Jarvis).
-2. Bạn thử nốt mục B (những gì Claude đã thử đạt, bạn chưa thử tay).
-3. Khi bạn đồng ý: bỏ bản cũ `apps/jarvis/KHA_NANG.md` và bảng D1–D90 trong `apps/jarvis/README.md` (đã chép sang `docs/`). Thư mục `chat_box` đã cho vào Thùng rác 28/11 (đặc tả chuyển thành `docs/SPEC.md`).
-4. Đặc tả 4.2: câu cảnh báo nghiêm trọng đang đọc chỉ dừng khi nói "dừng" / "im" (thuộc giọng nói, đang tạm dừng).
-5. Giọng nói vòng sau (đo lại bằng `JARVIS_DEBUG_AUDIO=true`; model nghe riêng: cần bạn quyết).
-6. Milestone 5 (trỏ vào hệ thống thật): phải hỏi Bảo trước.
+1. Bạn thử nốt mục B (những gì Claude đã thử đạt, bạn chưa thử tay).
+2. Khi bạn đồng ý: bỏ bản cũ `apps/jarvis/KHA_NANG.md` và bảng D1–D90 trong `apps/jarvis/README.md` (đã chép sang `docs/`). Thư mục `chat_box` đã cho vào Thùng rác 28/11 (đặc tả chuyển thành `docs/SPEC.md`).
+3. Đặc tả 4.2: câu cảnh báo nghiêm trọng đang đọc chỉ dừng khi nói "dừng" / "im" (thuộc giọng nói, đang tạm dừng).
+4. Giọng nói vòng sau (đo lại bằng `JARVIS_DEBUG_AUDIO=true`; model nghe riêng: cần bạn quyết).
+5. Milestone 5 (trỏ vào hệ thống thật): phải hỏi Bảo trước.
 
 ## Bạn cần thử
 
 Gõ đúng câu trong ngoặc; câu cần AI cách nhau ~15 giây (4 câu / phút). Đánh [x] khi ổn.
 
-**A. Thử lại sau D90** (Claude tự gõ trên codespace 28/11: 6 / 6 đạt; còn sót 3 chỗ nhỏ, đã sửa ở D93, chưa đưa lên codespace)
-- [ ] (D93) "đang có cảnh báo gì" → kể đủ 4 cảnh báo (trước sót E202).
-- [ ] (D93) "Bản tin đầu ca phường 2" → "Phường 2 có ở 12 quận: …" kể đủ quận.
-- [ ] (D93) "Bản tin đầu ca phường 2 quận 1" → "1 cảnh báo đang mở (nghiêm trọng): …".
+**A. Thử lại sau D90** (Claude tự gõ trên codespace 28/11: 6 / 6 đạt; 3 chỗ nhỏ sửa ở D93, thử lại trên `db791bc`: 3 / 3 đạt)
+- [x] (D93) "đang có cảnh báo gì" → kể đủ 4 cảnh báo (trước sót E202).
+- [x] (D93) "Bản tin đầu ca phường 2" → "Phường 2 có ở 12 quận: …" kể đủ quận.
+- [x] (D93) "Bản tin đầu ca phường 2 quận 1" → "1 cảnh báo đang mở (nghiêm trọng): …".
 - [x] Bấm "▶ Bắt đầu ca" → bản tin nhiều dòng: tủ, chạy tay, cảnh báo, sự cố, lệch lịch, lệnh 12 giờ, lô lệnh, khu vực nhiều cảnh báo.
 - [x] "Bản tin đầu ca phường 2" → chỉ kể các quận thật có Phường 2 → "phường 2 quận 1".
 - [x] "đang có cảnh báo gì" → đủ mọi cảnh báo, nghiêm trọng trước.
@@ -53,13 +51,13 @@ Gõ đúng câu trong ngoặc; câu cần AI cách nhau ~15 giây (4 câu / phú
 ## Claude đã thử
 
 - **Đạt (24–28/11, trên codespace):** hỏi dữ liệu (bản tin, khu vực trùng tên, lệch lịch, xu hướng, dòng rò, can thiệp, một tủ + "tủ đó", sự cố, tìm theo đường); điều khiển (nút chọn số, lệnh một tủ, "ok" / "đừng", tự kiểm tra, thẻ hết hạn, xác nhận đã xem cảnh báo, lệnh nhiều tủ, lệnh cả thành phố bị từ chối); tự lên tiếng (socket.io, im lặng, E101 gộp câu, nhắc lại 2/3 và 3/3, kết quả lệnh về muộn); an toàn (tài khoản, "bỏ qua mọi luật", câu rác, 4 câu / phút).
-- **Tối 28/11 (Claude tự gõ trên codespace, bản `ef2c03b`):** 6 / 6 chỗ D90 đạt (bản tin 8 dòng, hỏi lại Phường 2 rồi bản tin Phường 2 Quận 1, một tủ, tắt đèn + "Hiện…" đúng, "khu vực Quận 2"); 3 chỗ nhỏ chưa ổn → D93 (chưa thử trên codespace, chỉ có test tự động).
+- **Tối 28/11 (Claude tự gõ trên codespace, bản `ef2c03b`):** 6 / 6 chỗ D90 đạt (bản tin 8 dòng, hỏi lại Phường 2 rồi bản tin Phường 2 Quận 1, một tủ, tắt đèn + "Hiện…" đúng, "khu vực Quận 2"); 3 chỗ nhỏ chưa ổn → D93, thử lại trên `db791bc`: 3 / 3 đạt (đủ 4 cảnh báo; "Phường 2 có ở 12 quận" kể đủ; "1 cảnh báo đang mở (nghiêm trọng)").
 - **Bạn đã thử đạt 28/11:** đăng nhập 2 lớp + quét QR (D87, D88), lệnh nhiều tủ bằng mã Jarvis (D85, D87), nghe đọc to cảnh báo (D84), phần lớn danh sách tự thử (8 chỗ chưa ổn → D90).
 - **Chưa thử được:** ô "Xác thực lại" (server chưa đòi xác thực lại cho lệnh; chỉ có test tự động).
 
 ## Đã làm gần đây
 
-- 28/11 D93 (chưa commit): hướng dẫn AI đọc nguyên câu dựng sẵn (`cau_mau` / `ban_tin` / `cau_hoi`) không bỏ bớt; "Phường 2 có ở 12 quận: …"; bản tin 1 cảnh báo / "3 nặng nhất".
+- 28/11 D93 (`db791bc`): hướng dẫn AI đọc nguyên câu dựng sẵn (`cau_mau` / `ban_tin` / `cau_hoi`) không bỏ bớt; "Phường 2 có ở 12 quận: …"; bản tin 1 cảnh báo / "3 nặng nhất".
 - 28/11: lệnh tắt `/template`, `/continue`, `/update` (ở `C:\Users\THIEN\.claude\skills\`, dùng cho mọi dự án).
 - 28/11 D90 (`ef2c03b`): sửa 8 chỗ từ lần bạn thử (đèn cũ sau lệnh, bản tin một dòng, hỏi lại khu vực, "khu vực Quận 2", danh sách cảnh báo thiếu, "Hoàng Diệu 2", câu một tủ, chữ trên thẻ lệnh nhiều tủ).
 - 28/11 D89 (`1ca3391`): rà 2 lớp Jarvis; đặt lại 2 lớp lúc đang nhập mã → báo đăng nhập lại.
