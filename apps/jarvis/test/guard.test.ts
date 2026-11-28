@@ -278,6 +278,8 @@ describe('the cabinet finder (2026-11-21)', () => {
     ['Tắt đèn một tủ ở Thủ Đức', 'TP Thủ Đức'], ['ở khu vực khu đức', 'TP Thủ Đức'], ['tủ ở quận 1', 'Quận 1'], ['tủ ở quận 10', 'Quận 10'], ['phường 1', 'Phường 1'],
   ])('area: %s -> %s', (q, name) => expect(areaIn(q, areas)?.name).toBe(name));
   it('no bare number is an area', () => expect(areaIn('bật nhánh 1', areas)).toBeUndefined());
+  // "khu vuc" is two letters from "thu duc": the area that does not exist was taken for TP Thủ Đức (user test 2026-11-28)
+  it('"khu vực Quận 2" (no Quận 2) is no area, not TP Thủ Đức', () => expect(areaIn('Tui muốn điều khiển tủ ở khu vực Quận 2', areas)).toBeUndefined());
   it.each([
     ['đường Lý Thường Kiệt gì đó', 'Lý Thường Kiệt', undefined], ['Lý Thường gì đó', 'Lý Thường Kiệt', undefined], ['tủ Lý Thường Kiệc 6', 'Lý Thường Kiệt', '6'], ['Võ Văn Kiệt 6', 'Võ Văn Kiệt', '6'],
   ])('street: %s', (q, name, n) => expect(streetIn(q, all)).toMatchObject({ name, number: n }));

@@ -169,6 +169,15 @@ describe('console', () => {
     expect((await v.call('POST', '/api/admin/users/adm-no2fa/reset-2fa', {})).status).toBeGreaterThanOrEqual(400);
   });
 
+  it('"Bản tin đầu ca" (the ▶ button) is built in code and said whole, without the model (user test 2026-11-28)', async () => {
+    const b = new Browser();
+    await b.signIn('admin@demo.vn', 'mat-khau-admin-1', '111111');
+    const r = await b.chat('Bản tin đầu ca');
+    const said = r.events.filter((e) => e.event === 'text').map((e) => e.data.text).join('');
+    expect(said).toMatch(/^Bản tin đầu ca toàn hệ thống:\n- \d+ tủ: /);
+    expect(said).toMatch(/\n- .*cảnh báo/);
+  });
+
   it('an operator without a grant passes 2FA but cannot open Jarvis', async () => {
     const r = await op.signIn('op@demo.vn', 'mat-khau-op-1', '333333');
     expect(r.status).toBe(403);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { READ_TOOLS, viText } from '../src/tools/read';
+import { READ_TOOLS, SPARE_TOOLS, viText } from '../src/tools/read';
 import type { ToolContext } from '../src/tools/registry';
 
 describe('get_system_overview', () => {
@@ -38,6 +38,16 @@ describe('list_alarms', () => {
     expect(asked).toEqual([1, 2, 3, 4, 5]);
     const groups = out.nhom_lon_nhat as { district: string; count: number }[];
     expect(groups[0]).toMatchObject({ district: 'Quận 3', count: 386 });
+  });
+  it('"đang có cảnh báo gì": one sentence with every group, worst first (user test 2026-11-28: 4 said, 3 read)', async () => {
+    const a = (id: string, code: string, severity: string, cabinetCode: string, message: string) => ({ id, code, cabinetId: id, cabinetName: 'x', cabinetCode, districtName: 'Quận 1', type: 'x', severity, message, value: null, startedAt: '2026-11-25T08:31:00Z', endedAt: null, active: true, ackedBy: null, ackedAt: null });
+    const items = [a('1', 'E203', 'major', 'TL07.0065', 'Mất kết nối CT_KEY'), a('2', 'E202', 'major', 'TL01.0052', 'Mất kết nối PM_KEY'), a('3', 'E204', 'critical', 'TL01.0039', 'Mất cả 3 slave RS485'), a('4', 'E201', 'critical', 'TL01.0026', 'Mất kết nối PLC_KEY')];
+    const reads = { alarms: async () => ({ items, total: 4, page: 1, size: 100 }) };
+    const tool = READ_TOOLS.find((t) => t.name === 'list_alarms')!;
+    const out = (await tool.run({ reads, user: { id: 'alarm-sentence' }, focus: {}, userText: 'đang có cảnh báo gì' } as unknown as ToolContext, { active: true, limit: 10 })) as Record<string, any>;
+    expect(out.cau_mau).toBe('4 cảnh báo đang mở (2 nghiêm trọng, 2 quan trọng): E204 Mất cả 3 slave RS485 (nghiêm trọng) ở tủ TL01.0039, Quận 1; E201 Mất kết nối PLC_KEY (nghiêm trọng) ở tủ TL01.0026, Quận 1; E203 Mất kết nối CT_KEY (quan trọng) ở tủ TL07.0065, Quận 1; E202 Mất kết nối PM_KEY (quan trọng) ở tủ TL01.0052, Quận 1.');
+    const none = (await tool.run({ reads: { alarms: async () => ({ items: [], total: 0, page: 1, size: 100 }) }, user: { id: 'alarm-sentence' }, focus: {}, userText: 'có cảnh báo không' } as unknown as ToolContext, { active: true, limit: 10 })) as Record<string, any>;
+    expect(none.cau_mau).toBe('Không có cảnh báo đang mở.');
   });
 });
 
@@ -280,6 +290,28 @@ describe('get_shift_report (2026-11-23)', () => {
     expect(out.lech_lich).toMatchObject({ so_tu: 0 });
     expect(out.khu_vuc_nhieu_canh_bao).toBeUndefined();
   });
+  it('the whole report in sentences, first in the result, so a cut result still has it (user test 2026-11-28)', async () => {
+    const { shrink } = await import('../src/tools/registry');
+    const out = (await tool().run(ctx(), {})) as Record<string, any>;
+    expect(Object.keys(out).slice(0, 3)).toEqual(['khu_vuc', 'ban_tin', 'ghi_chu']);
+    const lines = out.ban_tin.split('\n');
+    expect(lines[0]).toBe('Bản tin đầu ca toàn hệ thống:');
+    expect(lines[1]).toBe('- 6 tủ: 4 trực tuyến, 2 mất kết nối, 2 đang sáng, 1 đang tắt, 1 có lỗi.');
+    expect(out.ban_tin).toContain(`- ${out.canh_bao.cau_mau}`);
+    expect(out.ban_tin).toContain('- 3 sự cố đang mở, 2 quá hạn (lâu nhất: SC-1 ở tủ Đường 2');
+    expect(out.ban_tin).toContain('- 1 tủ lệch lịch: TL01.0001.');
+    expect(out.ban_tin).toContain(`- ${out.lenh_12_gio.cau_mau}`);
+    expect(out.ban_tin).toContain(`- ${out.lo_lenh_12_gio.cau_mau}`);
+    expect(out.ban_tin).toContain('- Khu vực nhiều cảnh báo nhất: Quận 1 (3), TP Thủ Đức (1).');
+    expect(JSON.stringify(shrink(out, 1200))).toContain('Bản tin đầu ca toàn hệ thống:');
+    const area = (await tool().run(ctx(), { area: 'Thủ Đức' })) as Record<string, any>;
+    expect(area.ban_tin).toMatch(/^Bản tin đầu ca TP Thủ Đức:\n/);
+    expect(area.ban_tin).not.toContain('Khu vực nhiều cảnh báo nhất');
+  });
+  it('"phường thảo điền thủ đức": a district named without "TP" after the ward (user test 2026-11-28)', async () => {
+    const out = (await tool().run(ctx(), { area: 'phường thảo điền thủ đức' })) as Record<string, any>;
+    expect(out.khu_vuc).toBe('Phường Thảo Điền (TP Thủ Đức)');
+  });
   it('a role without the right to incidents: that part says so, the rest is still there', async () => {
     const { ApiProblem } = await import('../src/api/client');
     const out = (await tool().run(ctx({ incidents: async () => { throw new ApiProblem(403, 'forbidden', 'x'); } }), {})) as Record<string, any>;
@@ -313,6 +345,8 @@ describe('area names said in a shift report (user test 2026-11-23)', () => {
     const out = await run('Phường 2');
     expect(out.error).toBe('ambiguous');
     expect(out.choices).toEqual(['Phường 2 (Quận 1)', 'Phường 2 (Quận 3)']);
+    // the question is built here, its example one of the choices (the model said "Quận 9", user test 2026-11-28)
+    expect(out.cau_hoi).toBe('Có 2 khu vực tên "Phường 2": Phường 2 (Quận 1), Phường 2 (Quận 3). Bạn muốn khu vực nào? Ví dụ trả lời "Phường 2 Quận 1".');
   });
   it.each(['phường 2 quận 3', 'Phường 2, Quận 3', 'phường 2 của quận 3', 'Phường 2 (Quận 3)'])('"%s" is that ward', async (q) => {
     const out = await run(q);
@@ -443,5 +477,41 @@ describe('alarmLabel: an alarm said to a person (test 2026-11-24)', () => {
     // no rules (no right, server down): the message as before, still without the raw fields
     expect(alarmLabel({ code: 'E202', message: 'LCLI=2, MCON=0: LTE không đọc được PM_KEY' })).toBe('E202 LTE không đọc được PM_KEY');
     expect(alarmLabel({ code: 'E101', message: 'Mất dữ liệu telemetry' })).toBe('E101 Mất dữ liệu đo');
+  });
+});
+
+describe('find_cabinets by a cabinet name that does not exist (user test 2026-11-28)', () => {
+  const tool = () => SPARE_TOOLS.find((t) => t.name === 'find_cabinets')!;
+  const cab = (code: string, name: string) => ({ id: code, code, name, status: 'on' });
+  const search = async (q: string) => (q === 'Hoàng Diệu' ? [cab('TL01.0031', 'Hoàng Diệu 1'), cab('TL01.0033', 'Hoàng Diệu 3')] : []);
+  const ctx = () => ({ reads: { search }, user: { id: 'find-street' }, focus: {} }) as unknown as ToolContext;
+  it('"Hoàng Diệu 2": none of that name, the cabinets of that street instead', async () => {
+    const out = (await tool().run(ctx(), { query: 'Hoàng Diệu 2' })) as Record<string, any>;
+    expect(out.cau_mau).toBe('Không có tủ tên "Hoàng Diệu 2". Trên đường Hoàng Diệu có 2 tủ: Hoàng Diệu 1 (TL01.0031), Hoàng Diệu 3 (TL01.0033).');
+  });
+  it('a street with no cabinet at all: plain not found', async () => {
+    const out = (await tool().run(ctx(), { query: 'Pasteur 4' })) as Record<string, any>;
+    expect(out.error).toBe('not_found');
+    expect(out.cau_mau).toBeUndefined();
+  });
+});
+
+describe('get_cabinet says it in one sentence (user test 2026-11-28)', () => {
+  const tool = () => READ_TOOLS.find((t) => t.name === 'get_cabinet')!;
+  const reads = (alarms: unknown[], diagItems: unknown[] | null) => ({
+    search: async () => [{ id: 'c9', code: 'TL01.0009', name: 'Lý Thường Kiệt 9', status: 'off' }],
+    cabinet: async () => ({ cabinet: { code: 'TL01.0009', name: 'Lý Thường Kiệt 9' }, state: { status: 'off', online: true, branch1On: false, branch2On: false, manualMode: false } }),
+    diagnostics: async () => (diagItems ? { items: diagItems } : Promise.reject(new Error('x'))),
+    cabinetAlarms: async () => alarms,
+  });
+  const ctx = (r: unknown) => ({ reads: r, user: { id: 'cab-sentence' }, focus: {} }) as unknown as ToolContext;
+  it('no alarm said once, and the diagnosis is in it', async () => {
+    const out = (await tool().run(ctx(reads([], [{ subsystem: 'PLC', status: 'ok' }, { subsystem: 'PM', status: 'ok' }])), { cabinet: 'TL01.0009' })) as Record<string, any>;
+    expect(out.cau_mau).toBe('Tủ TL01.0009 (Lý Thường Kiệt 9) trực tuyến, cả hai nhánh đang tắt, chạy theo lịch. Không có cảnh báo đang mở. Chẩn đoán bình thường cả 2 mục.');
+  });
+  it('open alarms named with their level', async () => {
+    const a = { id: 'a', code: 'E201', severity: 'major', message: 'Mất kết nối PLC_KEY', startedAt: '2026-11-25T08:31:00Z', active: true };
+    const out = (await tool().run(ctx(reads([a], null)), { cabinet: 'TL01.0009' })) as Record<string, any>;
+    expect(out.cau_mau).toContain('1 cảnh báo đang mở: E201 Mất kết nối PLC_KEY (quan trọng). Chưa đọc được kết quả chẩn đoán.');
   });
 });

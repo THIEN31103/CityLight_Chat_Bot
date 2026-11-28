@@ -174,14 +174,28 @@ const findCabinets: ToolDef<{ query: string }> = {
       setFocus(ctx.focus, r.cabinet);
       return { cabinets: [brief(r.cabinet)] };
     }
-    return r.kind === 'many' ? { cabinets: r.choices.map(brief), note: 'Nhiều tủ khớp: hỏi lại người dùng' } : notResolved(r);
+    if (r.kind === 'many') return { cabinets: r.choices.map(brief), note: 'Nhiều tủ khớp: hỏi lại người dùng' };
+    // "Hoàng Diệu 2" is a cabinet's name (street + number): none of that name, so the cabinets of that street
+    // (user test 2026-11-28: "Không tìm thấy tủ nào trên đường Hoàng Diệu 2" and nothing more)
+    const street = /^(?:duong |đường )?(.+?)\s+\d+[a-z]?$/i.exec(query.trim())?.[1];
+    if (street && street.length >= 3) {
+      const near = await ctx.reads.search(street, { signal: ctx.signal }).catch(() => []);
+      if (near.length)
+        return {
+          error: 'not_found',
+          cau_mau: `Không có tủ tên "${query.trim()}". Trên đường ${street} có ${near.length === 1 ? 'tủ' : `${Math.min(near.length, 5)} tủ`}: ${near.slice(0, 5).map((c) => `${c.name} (${c.code})`).join(', ')}.`,
+          message: 'Đọc cau_mau nguyên văn.',
+          cabinets: near.slice(0, 5).map(brief),
+        };
+    }
+    return notResolved(r);
   },
 };
 
 const getCabinet: ToolDef<{ cabinet: string }> = {
   name: 'get_cabinet',
   kind: 'read',
-  description: 'Current state of ONE cabinet: connection, branch 1 / 2 lit, manual mode, voltage, current, power, leakage, temperature, diagnostics (PLGO, PLC, LOGO), open alarms. Use for "tủ X bị gì", "tủ X thế nào", "tủ X có sáng không", "chẩn đoán tủ X". Always say the chan_doan sentence in a few words.',
+  description: 'Current state of ONE cabinet: connection, branch 1 / 2 lit, manual mode, voltage, current, power, leakage, temperature, diagnostics (PLGO, PLC, LOGO), open alarms. Use for "tủ X bị gì", "tủ X thế nào", "tủ X có sáng không", "chẩn đoán tủ X". A general question ("tủ X thế nào"): say cau_mau almost word for word, nothing twice. A narrow one ("điện áp", "lịch"): answer only that.',
   schema: obj({ cabinet: CABINET_PROP }, ['cabinet']),
   input: z.object({ cabinet: ref }),
   async run(ctx, { cabinet }) {
@@ -199,7 +213,20 @@ const getCabinet: ToolDef<{ cabinet: string }> = {
     setFocus(ctx.focus, { id, code: String(cab.code), name: String(cab.name) });
     const num = (k: string) => (st[k] === null || st[k] === undefined ? null : Number(st[k]));
     const problems = (diag?.items ?? []).filter((d: DiagnosticItem) => d.status !== 'ok' && d.status !== 'unsupported');
+    const open = (alarms as Alarm[]).filter((a) => a.active);
+    const chan_doan = !diag ? 'chưa đọc được kết quả chẩn đoán'
+      : problems.length ? `${problems.length} mục chẩn đoán có vấn đề: ${problems.slice(0, 3).map((d: DiagnosticItem) => `${d.subsystem} (${d.detail ?? d.status})`).join('; ')}`
+      : `chẩn đoán bình thường cả ${diag.items.length} mục`;
+    const lit = (b: unknown) => (b === true ? 'sáng' : b === false ? 'tắt' : 'chưa rõ');
+    // the answer in one sentence: "đang tắt, trực tuyến, không có cảnh báo. Cảnh báo: không có." said the alarms twice
+    // and left the diagnosis out (user test 2026-11-28)
+    const cau_mau = [
+      `Tủ ${String(cab.code)} (${String(cab.name)}) ${st.online ? 'trực tuyến' : `mất kết nối${st.lastSeenAt ? `, lần cuối gửi dữ liệu lúc ${vnTime(st.lastSeenAt as string)}` : ''}`}`,
+      st.branch1On === st.branch2On ? `cả hai nhánh đang ${lit(st.branch1On)}` : `nhánh 1 đang ${lit(st.branch1On)}, nhánh 2 đang ${lit(st.branch2On)}`,
+      st.manualMode === true ? 'đang chạy tay' : st.manualMode === false ? 'chạy theo lịch' : '',
+    ].filter(Boolean).join(', ') + `. ${open.length ? `${open.length} cảnh báo đang mở: ${open.slice(0, 3).map((a) => `${a.code} ${viText(a.message)} (${SEVERITY_VI[a.severity]})`).join('; ')}` : 'Không có cảnh báo đang mở'}. ${chan_doan[0]!.toUpperCase()}${chan_doan.slice(1)}.`;
     return {
+      cau_mau,
       code: cab.code, name: cab.name, district: cab.districtName, ward: cab.wardName,
       status: STATUS_VI[st.status as CabinetStatus] ?? st.status,
       // never connected: "chưa từng" instead of null, which the model turned into "Không biết thời điểm" (2026-11-20)
@@ -213,14 +240,12 @@ const getCabinet: ToolDef<{ cabinet: string }> = {
       dong_ho_dien: st.pmOnline === false ? 'mất kết nối' : st.pmOnline ? 'trực tuyến' : null,
       voltageV: [num('vL1'), num('vL2'), num('vL3')], currentA: [num('iL1'), num('iL2'), num('iL3')],
       powerKw: num('pTotalKw'), leakMa: num('leakMa'), tempC: num('tempC'), cua_tu: st.doorOpen === true ? 'đang mở' : st.doorOpen === false ? 'đóng' : null,
-      openAlarms: (alarms as Alarm[]).filter((a) => a.active).slice(0, 5).map((a) => ({ code: a.code, severity: SEVERITY_VI[a.severity], message: viText(a.message), since: vnTime(a.startedAt) })),
+      openAlarms: open.slice(0, 5).map((a) => ({ code: a.code, severity: SEVERITY_VI[a.severity], message: viText(a.message), since: vnTime(a.startedAt) })),
       diagnostics: problems.slice(0, 6).map((d: DiagnosticItem) => ({ part: d.subsystem, status: d.status, code: d.code, evidence: d.evidence, detail: d.detail })),
       // "12 mục OK" (test 2026-11-24): a Vietnamese key
       so_muc_chan_doan_binh_thuong: diag ? diag.items.length - problems.length : null,
       // asked right after a self-check, the answer left the diagnosis out (test 2026-11-24): a sentence to read
-      chan_doan: !diag ? 'chưa đọc được kết quả chẩn đoán'
-        : problems.length ? `${problems.length} mục chẩn đoán có vấn đề: ${problems.slice(0, 3).map((d: DiagnosticItem) => `${d.subsystem} (${d.detail ?? d.status})`).join('; ')}`
-        : `chẩn đoán bình thường cả ${diag.items.length} mục`,
+      chan_doan,
       // Vietnamese words: with source "manual" the model said "chế độ theo lịch (manual)" (test 2026-11-24)
       lich: sched ? scheduleVi(sched) : null,
       // capabilities ("manual_control"…) left out: the model read them as "Jarvis can switch this cabinet" (2026-11-20)
@@ -365,8 +390,19 @@ const listAlarms: ToolDef<{ severity?: 'critical' | 'major' | 'minor'; district?
       if (a.startedAt < g.since) g.since = a.startedAt;
       groups.set(k, g);
     }
-    const list = [...groups.values()].sort((x, y) => y.count - x.count).slice(0, limit).map((g) => ({ ...g, since: vnTime(g.since) }));
+    const rank = (g: { severity: string }) => ([SEVERITY_VI.critical, SEVERITY_VI.major, SEVERITY_VI.minor] as string[]).indexOf(g.severity);
+    const list = [...groups.values()].sort((x, y) => y.count - x.count || rank(x) - rank(y)).slice(0, limit).map((g) => ({ ...g, since: vnTime(g.since) }));
     if (list[0]) ctx.focus.alarmCode = list[0].code;
+    // the sentence is built here: the model said "Có 4 cảnh báo" and read 3, the critical one left out and a major one
+    // first (user test 2026-11-28). Worst first; all of them when few, else the 5 worst groups and how many more
+    const worst = [...groups.values()].sort((x, y) => rank(x) - rank(y) || y.count - x.count);
+    const bySev = (['critical', 'major', 'minor'] as const).map((s) => [SEVERITY_VI[s], page.items.filter((a) => a.severity === s).length] as const).filter(([, n]) => n);
+    const parts = worst.slice(0, 5).map((g) => `${g.code} ${g.y_nghia} (${g.severity}) ở ${g.count === 1 ? `tủ ${g.cabinets[0]}` : `${g.count} tủ: ${g.cabinets.join(', ')}${g.count > g.cabinets.length ? '…' : ''}`}, ${g.district}`);
+    const what = ['cảnh báo', active ? 'đang mở' : '', severity ? `mức ${SEVERITY_VI[severity]}` : ''].filter(Boolean).join(' ');
+    const counts = bySev.length > 1 && page.items.length >= page.total ? ` (${bySev.map(([k, n]) => `${n} ${k}`).join(', ')})` : '';
+    const cau_mau = page.total
+      ? `${page.total} ${what}${counts}${worst.length > 5 ? `; ${parts.length} nhóm nặng nhất` : ''}: ${parts.join('; ')}${worst.length > 5 ? `; và ${worst.length - 5} nhóm khác` : ''}.`
+      : `Không có ${what}.`;
     // the model added up the group counts ("20 nghiêm trọng" when 486 were open, 2026-11-15): the total is named
     // plainly and the groups say they only cover the newest page
     return {
@@ -376,7 +412,8 @@ const listAlarms: ToolDef<{ severity?: 'critical' | 'major' | 'minor'; district?
         ? `Số lượng cảnh báo là tong_so_canh_bao = ${page.total}. Các nhóm dưới đây đếm đủ mọi cảnh báo (chỉ liệt kê ${list.length} nhóm lớn nhất).`
         : `Số lượng cảnh báo là tong_so_canh_bao = ${page.total}. Các nhóm dưới đây chỉ tính trên ${page.items.length} cảnh báo mới nhất, đừng cộng chúng lại.`,
       // the meaning was left out ("E204, nghiêm trọng, Quận 1, tủ TL01.0039", test 2026-11-24)
-      cach_noi: 'Mỗi nhóm nói: mã, ý nghĩa (y_nghia, ngắn gọn), quận, tủ.',
+      cau_mau,
+      cach_noi: 'Câu hỏi chung ("đang có cảnh báo gì"): đọc cau_mau gần như nguyên văn, không bỏ nhóm nào. Câu hỏi "nhiều nhất" thì dùng nhom_lon_nhat (đã xếp theo số lượng). Mỗi nhóm nói: mã, ý nghĩa (y_nghia, ngắn gọn), quận, tủ.',
       nhom_lon_nhat: list,
     };
   },
@@ -500,7 +537,18 @@ async function pickArea(ctx: ToolContext, area: string): Promise<{ pick: AreaNod
     ctx.focus.area = { id: pick.id, name: pick.name };
     return { pick, areas, ...(heardAs ? { heardAs } : {}) };
   };
-  const combo = /^((?:phuong|xa|thi tran) .+?) (?:cua |thuoc |o |tai )?((?:quan|huyen|tp|thanh pho) .+)$/.exec(f);
+  // "phường 2 thủ đức": a district named without "quận" / "TP" after the ward (user test 2026-11-28, it was not found)
+  const bareDistrict = (): [string, string, string] | null => {
+    if (!/^(?:phuong|xa|thi tran) /.test(f)) return null;
+    const w = f.split(' ');
+    for (let k = 2; k < w.length; k++) {
+      const tail = w.slice(k).join(' ').replace(/^(?:cua|thuoc|o|tai) /, '');
+      // the whole name only ("thu duc" = TP Thủ Đức), so "phường bình thạnh…" never cuts a ward name in two
+      if (!/^\d+$/.test(tail) && districts.filter((d) => bareName(d) === tail).length === 1) return [f, w.slice(0, k).join(' '), tail];
+    }
+    return null;
+  };
+  const combo = /^((?:phuong|xa|thi tran) .+?) (?:cua |thuoc |o |tai )?((?:quan|huyen|tp|thanh pho) .+)$/.exec(f) ?? bareDistrict();
   if (combo) {
     const d = fitAreas(districts, combo[2]!);
     if (d.hits.length !== 1)
@@ -523,11 +571,17 @@ async function pickArea(ctx: ToolContext, area: string): Promise<{ pick: AreaNod
       },
     };
   if (hits.length === 1) return done(hits[0]!, heardAs);
+  // the question is built here: the model's example named districts that have no such ward ("Phường 2 (Quận 3)",
+  // then "Phường 2 (Quận 9)" when there is no Quận 9, user test 2026-11-28)
+  const choices = hits.slice(0, 8).map((a) => withParent(a, areas));
+  const first = hits[0]!;
+  const parent = first.kind === 'ward' ? areas.find((x) => x.id === first.parentId) : undefined;
   return {
     error: {
       error: 'ambiguous',
-      message: 'Nhiều khu vực trùng tên. Hỏi lại người dùng muốn khu vực nào, đọc các lựa chọn đúng như ghi (kèm tên quận), để họ trả lời ví dụ "Phường 2 Quận 3".',
-      choices: hits.slice(0, 8).map((a) => withParent(a, areas)),
+      message: 'Nhiều khu vực trùng tên. Đọc nguyên văn cau_hoi, không thêm ví dụ khác.',
+      choices,
+      cau_hoi: `Có ${hits.length} khu vực tên "${first.name}": ${choices.join(', ')}${hits.length > 8 ? '…' : ''}. Bạn muốn khu vực nào? Ví dụ trả lời "${[first.name, parent?.name].filter(Boolean).join(' ')}".`,
     },
   };
 }
@@ -798,9 +852,31 @@ const getShiftReport: ToolDef<{ area?: string }> = {
       };
     }
 
+    const tu = { tong_so: scope.length, truc_tuyen: scope.length - n('offline'), mat_ket_noi: n('offline'), dang_sang: n('on') + n('dimming'), dang_tat: n('off'), dang_loi: n('fault') };
+    // the whole report in sentences, built here: the model said only "Toàn hệ thống: 1000 tủ, 936 mất kết nối." for
+    // the ▶ button (user test 2026-11-28); the console reads it as is
+    const said = (part: unknown, fallback: string) => (typeof part === 'string' ? `${part[0]!.toUpperCase()}${part.slice(1)}.` : (part as { cau_mau?: string } | undefined)?.cau_mau ?? fallback);
+    const sc = su_co as { dang_mo: number; qua_han: number; qua_han_lau_nhat: { code: string; cabinet: string; deadline: string }[] } | string;
+    const ll = lech_lich as { so_tu: number; tu: string[] } | string;
+    const top = khu_vuc_nhieu_canh_bao as { khu_vuc: string; so_canh_bao: number }[] | undefined;
+    const ban_tin = [
+      `Bản tin đầu ca ${where.khu_vuc}:`,
+      ...(where.ghi_chu_ten ? [`(Không có khu vực "${area}", tôi hiểu là ${String(where.khu_vuc)}.)`] : []),
+      `- ${tu.tong_so} tủ: ${[`${tu.truc_tuyen} trực tuyến`, `${tu.mat_ket_noi} mất kết nối`, tu.dang_sang && `${tu.dang_sang} đang sáng`, tu.dang_tat && `${tu.dang_tat} đang tắt`, tu.dang_loi && `${tu.dang_loi} có lỗi`].filter(Boolean).join(', ')}.`,
+      `- ${typeof chay_tay === 'string' ? `Số tủ chạy tay: ${chay_tay}.` : said(chay_tay, '')}`,
+      `- ${said(canh_bao, 'Không có cảnh báo đang mở.')}`,
+      `- ${typeof sc === 'string' ? said(sc, '') : sc.dang_mo ? `${sc.dang_mo} sự cố đang mở, ${sc.qua_han ? `${sc.qua_han} quá hạn (lâu nhất: ${sc.qua_han_lau_nhat.map((i) => `${i.code} ở tủ ${i.cabinet}, hạn ${i.deadline}`).join('; ')})` : 'không có sự cố quá hạn'}.` : 'Không có sự cố đang mở.'}`,
+      `- ${typeof ll === 'string' ? said(ll, '') : ll.so_tu ? `${ll.so_tu} tủ lệch lịch: ${ll.tu.join(', ')}${ll.so_tu > ll.tu.length ? '…' : ''}.` : 'Không có tủ nào lệch lịch.'}`,
+      `- ${said(lenh_12_gio, '')}`,
+      ...((lo_lenh_12_gio as { cau_mau?: string } | undefined)?.cau_mau ? [`- ${(lo_lenh_12_gio as { cau_mau: string }).cau_mau}`] : []),
+      ...(top?.length ? [`- Khu vực nhiều cảnh báo nhất: ${top.map((t) => `${t.khu_vuc} (${t.so_canh_bao})`).join(', ')}.`] : []),
+    ].join('\n');
+    // ban_tin and the note first: a long result is cut from the end (MAX_RESULT_CHARS), the whole system's was
     return {
       ...where,
-      tu: { tong_so: scope.length, truc_tuyen: scope.length - n('offline'), mat_ket_noi: n('offline'), dang_sang: n('on') + n('dimming'), dang_tat: n('off'), dang_loi: n('fault') },
+      ban_tin,
+      ghi_chu: 'Đây là bản tin đầu ca. Đọc ban_tin nguyên văn, đủ mọi dòng, không rút gọn, không thêm. Không nói ai gửi lệnh. Không đoán nguyên nhân.',
+      tu,
       chay_tay,
       canh_bao,
       su_co,
@@ -808,8 +884,6 @@ const getShiftReport: ToolDef<{ area?: string }> = {
       lenh_12_gio,
       ...(lo_lenh_12_gio ? { lo_lenh_12_gio } : {}),
       ...(khu_vuc_nhieu_canh_bao ? { khu_vuc_nhieu_canh_bao } : {}),
-      ghi_chu:
-        'Đây là bản tin đầu ca. Bắt đầu bằng tên khu vực (khu_vuc). Nói theo thứ tự: số tủ và số mất kết nối; chay_tay.cau_mau nếu có; cảnh báo: đọc canh_bao.cau_mau gần như nguyên văn; sự cố quá hạn; tủ lệch lịch; đọc lenh_12_gio.cau_mau, rồi lo_lenh_12_gio.cau_mau nếu có. Phần nào bằng 0 thì nói gọn "không có". Không nói ai gửi lệnh. Không đoán nguyên nhân.',
     };
   },
 };

@@ -22,7 +22,7 @@ export type Proposal =
 const HOW: Record<Tier, string> = {
   T1: 'Nói hoặc gõ "xác nhận" (hoặc bấm nút trên thẻ bên dưới) để gửi, "hủy lệnh" để bỏ. Thẻ hết hạn sau 60 giây.',
   T2: 'Lệnh tắt: nói hoặc gõ đúng chữ "xác nhận" (hoặc bấm nút trên thẻ bên dưới) để gửi, "hủy lệnh" để bỏ. Thẻ hết hạn sau 60 giây.',
-  T3: 'Lệnh nhiều tủ: chỉ gửi bằng nút "Xác nhận" trên thẻ bên dưới, kèm mã OTP 6 số nếu tài khoản bật xác thực 2 lớp; "hủy lệnh" để bỏ. Thẻ hết hạn sau 60 giây.',
+  T3: 'Lệnh nhiều tủ: chỉ gửi bằng nút "Xác nhận" trên thẻ bên dưới, kèm mã OTP 6 số đang hiện trong ứng dụng xác thực; "hủy lệnh" để bỏ. Thẻ hết hạn sau 60 giây.',
 };
 
 /** "Tắt tay nhánh 1 của tủ TL01.0016 (Điện Biên Phủ 7)": the card's title and the first sentence */
@@ -248,10 +248,23 @@ function stateNow(cmd: ActionCommand, st: Record<string, unknown>): string {
 /** said when Jarvis stops following a command that has not ended (its result comes later, late.ts) */
 const LATER = ' Có kết quả trong 15 phút tới thì tôi báo lại.';
 
+/**
+ * Whether the cabinet's data already shows what a confirmed command did. Right after "confirmed" the cabinet read can
+ * still carry the old lights: "đã tắt cả hai nhánh. Hiện nhánh 1 đang sáng" (user test 2026-11-28).
+ */
+export function stateAgrees(cmd: ActionCommand, st: Record<string, unknown>): boolean {
+  if (cmd.type === 'AUTO') return st.manualMode !== true;
+  if (cmd.type !== 'MANUAL_ALL' && cmd.type !== 'MANUAL_BRANCH') return true;
+  const lit = [st.branch1On === true, st.branch2On === true];
+  const branches = cmd.type === 'MANUAL_BRANCH' ? [cmd.params.branch!] : [1, 2];
+  return st.manualMode === true && branches.every((b) => lit[b - 1] === cmd.params.on);
+}
+
 export function outcomeText(p: PendingAction, o: Outcome, after?: Record<string, unknown> | null): string {
   const code = p.cabinet.code;
   const cmd = p.command;
-  const now = after ? ` Hiện ${lights(after)}.` : '';
+  // a read that does not show the change yet says nothing, never the old lights
+  const now = after && stateAgrees(cmd, after) ? ` Hiện ${lights(after)}.` : '';
   const note = p.note && (cmd.type === 'MANUAL_ALL' || cmd.type === 'MANUAL_BRANCH') ? ` ${p.note}` : '';
   if (p.batch && o.batch) {
     const b = o.batch;

@@ -142,6 +142,8 @@ export async function startStubApi(users: StubUser[]): Promise<StubApi> {
         { id: 'other', code: 'DM0099', name: 'Lý Thường Kiệt 3', status: 'offline', location: CABINET.location, districtId: 'd1', wardId: 'w1', branch1On: null, branch2On: null, connectedType: 'central' }]);
     if (req.method === 'GET' && p === '/areas/tree')
       return json(200, { areas: [{ id: 'd1', name: 'Quận 1', parentId: null, kind: 'district', cabinetCount: 2 }, { id: 'w1', name: 'Phường Bến Nghé', parentId: 'd1', kind: 'ward', cabinetCount: 2 }], unassigned: 0 });
+    // the shift report (2026-11-28): field incidents of the whole system (open alarms: GET /alarms below)
+    if (req.method === 'GET' && p === '/incidents') return json(200, { items: [], total: 0, page: 1, size: 100 });
     if (req.method === 'GET' && p === '/map/stats')
       return json(200, { cabinets: { offline: 1, fault: 1, dimming: 0, on: 6, off: 2, unknown: 0, total: 10 }, onlinePct: 90, energyTodayKwh: null, energyYesterdayKwh: null, overdueIncidents: 0 });
     // batches (T3, 2026-11-23): preview, create with the OTP 123456, then finished at the first read

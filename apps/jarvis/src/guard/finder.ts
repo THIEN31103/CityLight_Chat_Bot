@@ -53,7 +53,9 @@ export function areaIn(raw: string, areas: AreaNode[]): FindFilter['area'] {
   });
   if (!found.length) {
     // misheard names: the words after "ở", "khu vực", "quận"… within two letters of one area name
-    const words = tokens(textOf(raw));
+    // never the words "khu vực" themselves: "khu vuc" is two letters from "thu duc", so "khu vực Quận 2" (no Quận 2)
+    // became TP Thủ Đức (user test 2026-11-28)
+    const words = tokens(textOf(raw)).join(' ').replace(/\bkhu vuc\b/g, ' ').split(' ').filter(Boolean);
     const near = new Set<AreaNode>();
     for (const a of areas) {
       if (a.kind === 'unit') continue;

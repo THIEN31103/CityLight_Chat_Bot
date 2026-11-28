@@ -24,6 +24,18 @@ describe('sendAndFollow says when it stopped before the end', () => {
   });
 });
 
+describe('the lights after a confirmed command', () => {
+  it('never says the old lights: a read that does not show the change yet says nothing (user test 2026-11-28)', () => {
+    const off = { ...one, command: { type: 'MANUAL_ALL', params: { on: false } } } as unknown as PendingAction;
+    const ok = { status: 'confirmed' } as never;
+    expect(outcomeText(off, ok, { manualMode: true, branch1On: true, branch2On: false })).toBe('Đã xác nhận: tủ TL01.0009 đã tắt cả hai nhánh (chạy tay).');
+    expect(outcomeText(off, ok, { manualMode: true, branch1On: false, branch2On: false })).toMatch(/Hiện cả hai nhánh đang tắt\.$/);
+    const b1 = { ...one, command: { type: 'MANUAL_BRANCH', params: { on: true, branch: 1 } } } as unknown as PendingAction;
+    expect(outcomeText(b1, ok, { manualMode: false, branch1On: false, branch2On: false })).not.toMatch(/Hiện/);
+    expect(outcomeText(b1, ok, { manualMode: true, branch1On: true, branch2On: false })).toMatch(/Hiện nhánh 1 đang sáng, nhánh 2 đang tắt\.$/);
+  });
+});
+
 describe('LateResults', () => {
   const reads = (status: string, error: string | null = null) => ({ command: async () => ({ id: 'cmd-1', status, error }) }) as unknown as CityLightReads;
   const api = (b: Record<string, unknown> | null) => ({ get: async () => { if (!b) throw new Error('down'); return b; } }) as unknown as ApiClient;

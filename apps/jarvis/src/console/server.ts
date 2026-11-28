@@ -41,10 +41,12 @@ import { fold, normalizeCodes, wordsToDigits } from '../tools/names';
 import { batchPreviewer, sendAndFollow, type PendingAction, type Via } from '../guard/pending';
 import { CommandRate, controlUnavailable, type ActionCommand, type GuardState } from '../guard/policy';
 import { areaIn, matching, narrow, pickIn, stateIn, streetIn, type FindFilter, type Finding } from '../guard/finder';
-import { outcomeText, propose, proposeAck, STATUS_VI, type Proposal } from '../guard/propose';
+import { outcomeText, propose, proposeAck, stateAgrees, STATUS_VI, type Proposal } from '../guard/propose';
 
 /** how often a command is read while the live feed is up (its events end the wait sooner) */
 const LIVE_POLL_MS = 6_000;
+/** reads of the cabinet after a confirmed command before saying its lights (the first can still be the old ones) */
+const STATE_READS = 3;
 const STATIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../console');
 const STATIC: Record<string, string> = {
   '/': 'index.html', '/index.html': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css', '/voice.js': 'voice.js', '/mic-worklet.js': 'mic-worklet.js',
@@ -72,6 +74,8 @@ export interface ConsoleDeps {
   tools?: ToolDef[];
   /** tests: a fake CityLight fetch */
   fetch?: typeof fetch;
+  /** wait between the cabinet reads after a confirmed command (tests: 0) */
+  stateReadMs?: number;
   /** tests: how often a sent command is polled (default 2 s) */
   commandPollMs?: number;
   /** tests: the key that encrypts Jarvis's own 2FA secrets (default: JARVIS_SECRET_KEY or a key file in the data folder) */
@@ -144,6 +148,33 @@ const sameToken = (a: string, b: string) => {
   const y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
 };
+
+const SHIFT_HEADS = [['ban', 'tin', 'dau', 'ca'], ['ban', 'tin', 'giao', 'ca'], ['ban', 'tin', 'ca'], ['giao', 'ca'], ['tom', 'tat', 'ca'], ['bat', 'dau', 'ca']];
+const SHIFT_BEFORE = new Set(['xem', 'doc', 'cho', 'toi', 'tui', 'minh', 'lay', 'mo']);
+const SHIFT_LINK = new Set(['cho', 'cua', 'o', 'tai', 'khu', 'vuc']);
+const SHIFT_AFTER = new Set(['di', 'nhe', 'nha', 'giup', 'voi', 'nao']);
+const SHIFT_QUESTION = new Set(['gi', 'sao', 'khong', 'chua', 'nhu', 'the', 'la', 'co', 'bao']);
+
+/**
+ * "Bản tin đầu ca", "xem bản tin đầu ca quận 1", "giao ca phường 2 quận 3": a shift report and its area (none = the
+ * whole system). Null for anything else, and for a question about it ("bản tin đầu ca có gì?" goes to the model).
+ */
+export function parseShiftRequest(text: string): { area?: string } | null {
+  const words = text.trim().replace(/[.!?…]+$/, '').split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 12) return null;
+  const f = words.map((w) => fold(w).replace(/[^a-z0-9]/g, ''));
+  let k = 0;
+  while (k < f.length && SHIFT_BEFORE.has(f[k]!)) k++;
+  const head = SHIFT_HEADS.find((h) => h.every((w, j) => f[k + j] === w));
+  if (!head) return null;
+  k += head.length;
+  let end = f.length;
+  while (end > k && SHIFT_AFTER.has(f[end - 1]!)) end--;
+  while (k < end && SHIFT_LINK.has(f[k]!)) k++;
+  if (f.slice(k, end).some((w) => SHIFT_QUESTION.has(w))) return null;
+  const area = words.slice(k, end).join(' ').replace(/^[,:;-]+|[,:;-]+$/g, '').trim();
+  return area ? { area } : {};
+}
 
 export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessions: SessionStore } {
   const { cfg, db, llm, audit } = deps;
@@ -630,6 +661,17 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
       if (gone) send('pending_closed', { id: gone.id, state: 'expired' });
       return fixedTurn(s, user, text, gone ? `Lệnh "${gone.summary}" đã hết hạn 60 giây, bạn ra lệnh lại nếu vẫn cần.` : 'Không có lệnh nào đang chờ xác nhận.', send, speaker, extra);
     }
+    // "bản tin đầu ca" (the ▶ button) or "bản tin đầu ca quận 1": the report is built in code and said as is; the model
+    // shortened it to one line (user test 2026-11-28). An area it cannot pick alone (two Phường 2) goes to the model.
+    const shift = parseShiftRequest(text);
+    const shiftTool = shift ? tools.find((t) => t.name === 'get_shift_report') : undefined;
+    if (shift && shiftTool) {
+      send('status', { state: 'tool', label: TOOL_LABELS.get_shift_report });
+      const timeout = AbortSignal.timeout(20_000);
+      const r = await shiftTool.run({ reads: s.reads, user, focus: s.ctx.focus, userText: text, signal: AbortSignal.any([ac.signal, timeout]) }, shift).catch(() => null) as { ban_tin?: unknown } | null;
+      if (typeof r?.ban_tin === 'string') return fixedTurn(s, user, text, r.ban_tin, send, speaker, extra);
+      if (ac.signal.aborted) return true;
+    }
     // "xác nhận đã xem cảnh báo E201 tủ TL01.0026" (spec 5.3, 2026-11-23): a T1 card like the orders
     const ack = parseAck(text);
     if (ack) {
@@ -916,6 +958,20 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
   }
 
   /** Sends the confirmed action and follows it; the result is said only from the command's real status. */
+  /**
+   * The cabinet's lights after a confirmed command. The read right after "confirmed" can still carry the old lights
+   * (user test 2026-11-28): read again a few times; outcomeText says nothing about lights that do not agree yet.
+   */
+  async function stateAfter(s: ConsoleSession, p: PendingAction): Promise<Record<string, unknown> | undefined> {
+    let st: Record<string, unknown> | undefined;
+    for (let k = 0; k < STATE_READS; k++) {
+      if (k) await new Promise((r) => setTimeout(r, deps.stateReadMs ?? 1500));
+      st = (await s.reads.cabinet(p.cabinet.id).catch(() => null))?.state as Record<string, unknown> | undefined;
+      if (!st || stateAgrees(p.command, st)) break;
+    }
+    return st;
+  }
+
   async function execute(s: ConsoleSession, user: User, text: string, p: PendingAction, via: Via, send: Send, ac: AbortController, speaker: Speaker | null, extra: Record<string, unknown> = {}, otp?: string) {
     audit.write({ kind: 'pending_confirmed', userId: user.id, role: user.role, pendingId: p.id, cabinet: p.cabinet.code, command: p.command, via });
     send('pending_closed', { id: p.id, state: 'confirmed' });
@@ -937,7 +993,7 @@ export function createConsoleServer(deps: ConsoleDeps): { server: Server; sessio
     const lateId = outcome.unfinished ? (outcome.batch?.id ?? outcome.commandId) : undefined;
     if (lateId) s.late.add(lateId, p, sentAt);
     audit.write({ kind: 'command_result', userId: user.id, pendingId: p.id, commandId: outcome.commandId, status: outcome.status, error: outcome.error, apiError: outcome.code });
-    const after = outcome.status === 'confirmed' && p.command.type !== 'ACK_ALARM' ? ((await s.reads.cabinet(p.cabinet.id).catch(() => null))?.state as Record<string, unknown> | undefined) : undefined;
+    const after = outcome.status === 'confirmed' && p.command.type !== 'ACK_ALARM' ? await stateAfter(s, p) : undefined;
     let result = outcomeText(p, outcome, after);
     // a wrong OTP, or the server asking for the 2FA code again: the same card comes back to try once more (2026-11-23)
     if (outcome.status === 'not_sent' && (outcome.code === 'invalid_otp' || outcome.code === 'reauth_required')) {

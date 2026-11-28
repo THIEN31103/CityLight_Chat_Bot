@@ -75,7 +75,7 @@ export class PendingSlot {
       return { ok: false, reason: 'Lệnh đã hết hạn 60 giây, bạn ra lệnh lại nếu vẫn cần.' };
     }
     if (p.tier === 'T3' && via !== 'button')
-      return { ok: false, reason: 'Lệnh nhiều tủ chỉ gửi bằng nút "Xác nhận" trên thẻ, nhập mã OTP 6 số nếu tài khoản bật xác thực 2 lớp. Nói hay gõ "xác nhận" không gửi được.' };
+      return { ok: false, reason: 'Lệnh nhiều tủ chỉ gửi bằng nút "Xác nhận" trên thẻ, kèm mã OTP 6 số trong ứng dụng xác thực. Nói hay gõ "xác nhận" không gửi được.' };
     if (p.tier === 'T2' && via !== 'button' && !explicit) return { ok: false, reason: 'Lệnh tắt cần nói hoặc gõ đúng chữ "xác nhận", hoặc bấm nút "Xác nhận" trên màn hình.' };
     this.used.add(id);
     this.current = null;
