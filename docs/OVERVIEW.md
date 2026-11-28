@@ -105,13 +105,13 @@ sequenceDiagram
   participant W as command-worker
   participant M as EMQX
   participant T as Tủ (LTE_KEY → PLC_KEY → LOGO)
-  U->>A: lệnh (Jarvis: chỉ sau khi bạn xác nhận)
-  A->>A: kiểm quyền, khu vực, tủ online, firmware; xếp hàng
-  W->>M: citylight/cmd/<LTID>
+  U->>A: lệnh (Jarvis gửi chỉ sau khi bạn xác nhận)
+  A->>A: kiểm quyền, khu vực, tủ online, firmware rồi xếp hàng
+  W->>M: topic citylight/cmd/LTID
   M->>T: lệnh
   T-->>M: ack trên stm32/ec25/echo (0,7–2,3 s)
   M-->>W: ack
-  T-->>M: frame mới: LQ2 / LQ3 đã đổi (2,6–4,6 s)
+  T-->>M: frame mới cho thấy LQ2 / LQ3 đã đổi (2,6–4,6 s)
   W->>A: đã xác nhận
   A-->>U: kết quả (Socket.IO)
 ```
@@ -137,7 +137,7 @@ flowchart LR
   guard -- thẻ xác nhận --> page
   page -- bạn bấm Xác nhận --> send[guard/pending.ts<br/>file duy nhất được gửi lệnh]
   send -- POST --> api
-  api -. cảnh báo mới, Socket.IO .-> page
+  api -. "cảnh báo mới qua Socket.IO" .-> page
 ```
 
 - AI không bao giờ gửi lệnh. Câu trả lời quan trọng (bản tin đầu ca, danh sách cảnh báo, một tủ) do code dựng sẵn (`ban_tin`, `cau_mau`), AI chỉ đọc lại.
